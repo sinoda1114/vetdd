@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vetdd slice evidence",
+  "description": ".vetdd/evidence/<slice-id>/meta.json, written by scripts/evidence.sh and checked by scripts/check-evidence.sh (plan §2.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slice_id", "oracle", "runs"],
+  "properties": {
+    "slice_id": { "$ref": "#/$defs/sliceId" },
+    "oracle": {
+      "description": "The oracle as of the latest run; check-evidence rule 6 rehashes its files.",
+      "$ref": "#/$defs/oracle"
+    },
+    "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } }
+  },
+  "$defs": {
+    "sliceId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+    "gitObjectId": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seam", "version", "files"],
+      "properties": {
+        "seam": { "type": ["string", "null"] },
+        "version": { "type": ["string", "null"] },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "description": "Relative to the repository root.", "type": "string", "minLength": 1 },
+              "sha256": {
+                "description": "null when the file was missing at record time.",
+                "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }]
+              }
+            }
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "kind", "cmd", "exit_code", "outcome", "accepted", "started_at", "ended_at", "log", "tree", "conditions", "oracle"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "kind": { "enum": ["calibration", "before", "after", "integrated"] },
+        "cmd": { "description": "argv of the oracle command.", "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "exit_code": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "outcome": { "enum": ["pass", "target_failure", "infrastructure_error", "inconclusive"] },
+        "accepted": {
+          "description": "false when the outcome violates the kind (before must be target_failure, after/integrated must be pass). Rejected runs stay as history.",
+          "type": "boolean"
+        },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "ended_at": { "$ref": "#/$defs/timestamp" },
+        "log": { "description": "stdout+stderr, relative to the slice directory.", "type": "string", "pattern": "^runs/[0-9]{3,}-(calibration|before|after|integrated)\\.log$" },
+        "tree": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["head_sha", "tree_hash"],
+          "properties": {
+            "head_sha": { "description": "null before the first commit.", "anyOf": [{ "$ref": "#/$defs/gitObjectId" }, { "type": "null" }] },
+            "tree_hash": { "description": "Working tree incl. uncommitted changes, excluding .gitignored paths and .vetdd/.", "$ref": "#/$defs/gitObjectId" }
+          }
+        },
+        "conditions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cwd", "node_version", "env_keys"],
+          "properties": {
+            "cwd": { "description": "Relative to the repository root; \".\" for the root.", "type": "string", "minLength": 1 },
+            "node_version": { "type": ["string", "null"] },
+            "env_keys": { "description": "Sorted names (never values) of VETDD_* environment variables.", "type": "array", "items": { "type": "string", "pattern": "^VETDD_" } }
+          }
+        },
+        "oracle": { "description": "The oracle this run was measured with.", "$ref": "#/$defs/oracle" }
+      }
+    }
+  }
+}

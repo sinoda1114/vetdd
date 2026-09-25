@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# vetdd pre-commit hook (installed by vetdd setup-project.sh)
+# Checks evidence for every slice whose oracle.files intersect the staged files.
+# Blocks the commit on failure unless VETDD_BYPASS=1.
+set -u
+
+VETDD_SCRIPTS_DIR="${VETDD_SCRIPTS_DIR:-}"
+if [ -z "$VETDD_SCRIPTS_DIR" ]; then VETDD_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"; fi
+
+say() { printf 'vetdd pre-commit: %s\n' "$1" >&2; }
+
+root="$(git rev-parse --show-toplevel)" || exit 1
+evidence_dir="$root/.vetdd/evidence"
+if [ ! -d "$evidence_dir" ]; then
+  say "no .vetdd/evidence; nothing to check"
+  exit 0
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  say "jq is required but not found; install it or commit with VETDD_BYPASS=1"
+  [ "${VETDD_BYPASS:-}" = 1 ] && exit 0
+  exit 1
+fi
+
+staged="$(git diff --cached --name-only --no-renames --diff-filter=ACMRD)"
+slices=()
+for meta in "$evidence_dir"/*/meta.json; do
+  [ -f "$meta" ] || continue
+  match="$(jq -r '.oracle.files[]?.path' "$meta" 2>/dev/null | grep -Fxf - <(printf '%s\n' "$staged") | head -n 1)"
+  if [ -n "$match" ]; then
+    slice="${meta%/meta.json}"; slices+=("${slice##*/}")
+  fi
+done
+
+if [ ${#slices[@]} -eq 0 ]; then
+  say "no staged file belongs to a slice oracle; nothing to check"
+  exit 0
+fi
+
+say "staged oracle files touch slice(s): ${slices[*]}; running check-evidence.sh"
+"$VETDD_SCRIPTS_DIR/check-evidence.sh" --repo "$root" "${slices[@]}" >&2
+failed=$?
+[ "$failed" -eq 0 ] && exit 0
+
+if [ "${VETDD_BYPASS:-}" = 1 ]; then
+  say "evidence check failed for $failed slice(s); VETDD_BYPASS=1 set, so bypassing the block"
+  exit 0
+fi
+say "evidence check failed for $failed slice(s); commit blocked (set VETDD_BYPASS=1 to bypass)"
+exit 1

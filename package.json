@@ -1,0 +1,11 @@
+{
+  "name": "vetdd",
+  "private": true,
+  "scripts": {
+    "test": "bats tests"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "bats": "1.13.0"
+  }
+}
