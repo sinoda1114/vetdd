@@ -5,6 +5,13 @@ load test_helper
 
 setup() { make_repo; }
 
+@test "command arguments starting with -- are recorded verbatim, not parsed as options" {
+  run ev s1 after -- sh -c 'exit 0' --prefix sub --json
+  [ "$status" -eq 0 ]
+  [ "$(mq s1 '.runs | length')" = "1" ]
+  [ "$(mq s1 '.runs[0].cmd | join(" ")')" = "sh -c exit 0 --prefix sub --json" ]
+}
+
 @test "before run that fails is recorded as target_failure with its log" {
   run ev s1 before -- sh test.sh
   [ "$status" -eq 0 ]

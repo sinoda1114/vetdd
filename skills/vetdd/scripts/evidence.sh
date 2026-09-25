@@ -110,6 +110,8 @@ else
   files_json="$(jq -r '.oracle.files[].path' "$meta" | hash_files)"
 fi
 
+# NUL-split the argv so that arguments like --prefix never reach jq's option parser.
+cmd_json="$(printf '%s\0' "$@" | jq -Rs 'split("\u0000") | .[:-1]')"
 tmp_meta="$meta.tmp.$$"
 jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
   --arg outcome "$outcome" --argjson accepted "$accepted" \
@@ -125,7 +127,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
     | .files = $files) as $oracle
   | .oracle = $oracle
   | .runs += [{
-      seq: $seq, kind: $kind, cmd: $ARGS.positional,
+      seq: $seq, kind: $kind, cmd: $cmd,
       exit_code: $exit_code, outcome: $outcome, accepted: $accepted,
       started_at: $started_at, ended_at: $ended_at, log: $log,
       tree: {head_sha: (if $head_sha == "" then null else $head_sha end), tree_hash: $tree_hash},
@@ -135,7 +137,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
         env_keys: (env | keys | map(select(startswith("VETDD_"))) | sort)
       },
       oracle: $oracle
-    }]' --args "$@" < "$meta" > "$tmp_meta" && mv "$tmp_meta" "$meta" || {
+    }]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; die "could not update $meta"
 }
 
