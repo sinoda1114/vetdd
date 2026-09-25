@@ -1,0 +1,18 @@
+{
+  "name": "ts-kata",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "vetdd practice target: invoice closing dates and payment due dates",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "cli": "tsx src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}
