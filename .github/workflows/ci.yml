@@ -1,0 +1,19 @@
+# 標準CI呼び出し（実体: https://github.com/sinoda1114/ci-standard）
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    # secrets: inherit は付けない（最小権限。必要なリポだけ呼び出し側で secrets 明示マップ）
+    uses: sinoda1114/ci-standard/.github/workflows/node-ci.yml@main
