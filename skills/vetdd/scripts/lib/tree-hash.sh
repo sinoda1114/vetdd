@@ -22,11 +22,15 @@ vetdd_tree_hash() {
   printf '%s\n' "$hash"
 }
 
-# vetdd_sha256 <file>
+# vetdd_sha256 <file>: prints the digest; fails, printing nothing, when no digest was produced.
 vetdd_sha256() {
+  local out
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | cut -d' ' -f1
+    out="$(sha256sum "$1" 2>/dev/null)"
   else
-    shasum -a 256 "$1" | cut -d' ' -f1
+    out="$(shasum -a 256 "$1" 2>/dev/null)"
   fi
+  out="${out%% *}"
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
 }
