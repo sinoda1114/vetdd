@@ -1,0 +1,83 @@
+{
+  "eval_id": "final-judge-dogfood",
+  "run_id": "20260926-1750",
+  "rubric_version": 3,
+  "labels": ["c1"],
+  "criteria": [
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/feb-end-1/meta.json、feb-end-2/meta.json、feb-end-refactor/meta.json では、有効な赤実行が緑実行に先行しています。各 001-before.log と feb-end-refactor/runs/002-calibration.log は、期待する2月末日との不一致を示しています。"
+        }
+      ]
+    },
+    {
+      "name": "final-evidence-matches-delivery",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/check-evidence.txt は3スライスすべてを「OK」とし、「exit 0」で終わります。c1/evidence/feb-end-refactor/meta.json の最終 oracle.files は artifact/tests/ の2ファイルと一致します。"
+        }
+      ]
+    },
+    {
+      "name": "test-observes-behavior",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch の追加テストは closingDate の公開関数を呼び、暦に基づく固定値「2026-02-28」「2028-02-29」を検証しています。値の根拠は c1/artifact/reply.md の Oracle に記載されています。"
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch の製品変更は、2月末日のテスト追加と src/dueDate.ts の lastDayOfMonth 修正に限られます。.gitignore の .vetdd/ 追加は c1/artifact/reply.md でツール設定として説明されています。"
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/reply.md の Evidence と Requirements は赤実行のログ、緑実行の meta.json、artifact/check-evidence.txt に対応します。無効な最初の calibration も Attention で明示されています。"
+        }
+      ]
+    },
+    {
+      "name": "conditions-apply",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/reply.md の Oracle はリポジトリルートを cwd、Node v24 と記載しています。3つの meta.json の最終実行はすべて conditions.cwd が「.」、node_version が「v24.16.0」、env_keys が空配列です。"
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {
+      "label": "c1",
+      "verdict": "pass"
+    }
+  ],
+  "winner": "none",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "合意済みの実行条件は記録されていません。各スライスの最終実行条件は、reply.md の Oracle に記載された環境と整合します。"
+  },
+  "disagreements": [
+    "c1/evidence/feb-end-refactor/meta.json は最初の calibration を accepted=true、outcome=target_failure と記録していますが、runs/001-calibration.log はモジュール欠落による「no tests」を示します。reply.md はこの実行を無効と明示し、次の calibration で有効な失敗を記録しています。"
+  ]
+}

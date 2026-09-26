@@ -1,0 +1,3 @@
+FAIL closes on the 28th for a month-end closing in February
+AssertionError: expected '2026-03-31' to be '2026-02-28'
+Tests 1 failed | 7 passed

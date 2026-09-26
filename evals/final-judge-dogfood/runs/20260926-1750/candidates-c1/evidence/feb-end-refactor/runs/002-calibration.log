@@ -1,0 +1,52 @@
+
+> ts-kata@0.0.0 test
+> vitest run
+
+
+ RUN  v5.0.1 /private/tmp/[redacted]/-Users-sinoda-dev/cdd0f79b-61f9-4552-8489-14fa490c0aa9/scratchpad/kata-dogfood
+
+ ❯ src/dueDate.test.ts (9 tests | 2 failed) 5ms
+   ❯ closingDate (6)
+     × closes on the 28th for a month-end closing in February 3ms
+     × closes on the 29th for a month-end closing in a leap-year February 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/dueDate.test.ts > closingDate > closes on the 28th for a month-end closing in February
+AssertionError: expected '2026-03-31' to be '2026-02-28' // Object.is equality
+
+Expected: "2026-02-28"
+Received: "2026-03-31"
+
+ ❯ src/dueDate.test.ts:27:46
+     25|   it("closes on the 28th for a month-end closing in February", () => {
+     26|     // February 2026 has 28 days; invoiced on the 15th, before the cut…
+     27|     expect(closingDate("2026-02-15", "end")).toBe("2026-02-28");
+       |                                              ^
+     28|   });
+     29|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/dueDate.test.ts > closingDate > closes on the 29th for a month-end closing in a leap-year February
+AssertionError: expected '2028-03-31' to be '2028-02-29' // Object.is equality
+
+Expected: "2028-02-29"
+Received: "2028-03-31"
+
+ ❯ src/dueDate.test.ts:32:46
+     30|   it("closes on the 29th for a month-end closing in a leap-year Februa…
+     31|     // 2028 is a leap year, so February has 29 days; invoiced on the 1…
+     32|     expect(closingDate("2028-02-15", "end")).toBe("2028-02-29");
+       |                                              ^
+     33|   });
+     34| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 failed | 9 passed (11)
+   Start at  07:56:38
+   Duration  108ms (transform 68%, import 18%, tests 9%, worker 5%)
+

@@ -282,3 +282,24 @@ setup() { make_repo; }
   [ "$status" -eq 0 ]
   [ "$output" = "s1: OK" ]
 }
+
+@test "E10: --infra-exit classifies a declared exit code as infrastructure_error, which never counts as red" {
+  printf '#!/bin/sh\nexit 2\n' > could-not-observe.sh
+  run ev s1 before --infra-exit 2 -- sh could-not-observe.sh
+  [ "$status" -ne 0 ]
+  [ "$(mq s1 '.runs[-1].outcome')" = "infrastructure_error" ]
+  [ "$(mq s1 '.runs[-1].accepted')" = "false" ]
+}
+
+@test "E10: without --infra-exit the same exit code is a target_failure" {
+  printf '#!/bin/sh\nexit 2\n' > could-not-observe.sh
+  run ev s1 before -- sh could-not-observe.sh
+  [ "$(mq s1 '.runs[-1].outcome')" = "target_failure" ]
+}
+
+@test "E10: --infra-exit takes only integers from 1 to 255" {
+  run ev s1 before --infra-exit x -- sh test.sh
+  [ "$status" -eq 2 ]
+  run ev s1 before --infra-exit 0 -- sh test.sh
+  [ "$status" -eq 2 ]
+}

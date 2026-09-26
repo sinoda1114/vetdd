@@ -1,0 +1,47 @@
+diff --git a/.gitignore b/.gitignore
+index b947077..ae5edde 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,3 @@
+ node_modules/
+ dist/
++.vetdd/
+diff --git a/src/dueDate.test.ts b/src/dueDate.test.ts
+index 25ad967..ab0b53c 100644
+--- a/src/dueDate.test.ts
++++ b/src/dueDate.test.ts
+@@ -21,6 +21,16 @@ describe("closingDate", () => {
+     // April has 30 days: 2026-04-30.
+     expect(closingDate("2026-04-15", "end")).toBe("2026-04-30");
+   });
++
++  it("closes on the 28th for a month-end closing in February", () => {
++    // February 2026 has 28 days; invoiced on the 15th, before the cutoff: 2026-02-28.
++    expect(closingDate("2026-02-15", "end")).toBe("2026-02-28");
++  });
++
++  it("closes on the 29th for a month-end closing in a leap-year February", () => {
++    // 2028 is a leap year, so February has 29 days; invoiced on the 15th: 2028-02-29.
++    expect(closingDate("2028-02-15", "end")).toBe("2028-02-29");
++  });
+ });
+ 
+ describe("paymentDueDate", () => {
+diff --git a/src/dueDate.ts b/src/dueDate.ts
+index 01c502e..6e294a4 100644
+--- a/src/dueDate.ts
++++ b/src/dueDate.ts
+@@ -47,11 +47,8 @@ function nextMonth({ year, month }: YearMonth): YearMonth {
+ }
+ 
+ function lastDayOfMonth({ year, month }: YearMonth): number {
+-  // Date.UTC rolls an out-of-range day into the next month, so probe the 31st
+-  // and fall back to the 30th when this month does not have one.
+-  const probe = fromUtc(Date.UTC(year, month - 1, 31));
+-  if (probe.month === month) return 31;
+-  return fromUtc(Date.UTC(year, month - 1, 30)).day;
++  // Day 0 of the following month is the last day of this month.
++  return fromUtc(Date.UTC(year, month, 0)).day;
+ }
+ 
+ function closingDayIn(ym: YearMonth, closingDay: ClosingDay): number {

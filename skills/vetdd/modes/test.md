@@ -67,7 +67,7 @@ Read the refactorer's diff yourself. Reject any change that alters an assertion,
    ```
    All must end `pass`. Earlier `after` runs stay as history; only this last record has to match the delivered tree.
 2. `"$VETDD/scripts/check-evidence.sh" <every slice id>` on the delivered tree, with no edits in between. Quote the output.
-3. Judge: send the integrated diff, the agreement, and `meta.json` of every slice to the judge with `"$VETDD/scripts/judge.sh"` (rubric `references/final-judge-rubric.md`). Run logs are not sent unless the agreement says so. The judge's verdict goes in the reply as is. If the judge cannot run (the script is missing, the judge's CLI is not logged in, the service fails), end the task `blocked` with all evidence and say the separate verdict is the only missing step (principle 8). Never report done without it.
+3. Judge: build the directory that `references/final-judge-rubric.md` "Layout" defines (diff, reply draft, `check-evidence.sh` output, oracle files, each slice's `meta.json` and red-run log) and run `"$VETDD/scripts/judge.sh"` on it with that file as the rubric. Only what the layout names leaves the machine; other run logs stay local. The judge's verdict goes in the reply as is. If the judge cannot run (the script is missing, the judge's CLI is not logged in, the service fails), end the task `blocked` with all evidence and say the separate verdict is the only missing step (principle 8). Never report done without it.
 4. Reply in `references/reply-format.md`.
 
 ## Traps this mode guards against

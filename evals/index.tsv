@@ -1,0 +1,3 @@
+ts	eval_id	run_id	labels	winner	confidence	judge_family	promoted
+2026-09-26T09:30:00+09:00	rubric-calibration	20260926-0930	c1,c2	c1	mid	codex/gpt-6-sol	yes
+2026-09-26T17:50:00+09:00	final-judge-dogfood	20260926-1750	c1	none	mid	codex/gpt-6-sol	yes

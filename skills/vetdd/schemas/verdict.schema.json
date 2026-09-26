@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vetdd judge verdict",
+  "description": "Output of scripts/judge.sh: a blinded judge's scores for one or more candidates against a rubric. Candidate labels are opaque (c1, c2, ...). This schema is sent to the judge as codex --output-schema, so it stays inside OpenAI's strict structured-output subset (tests/verdict-schema.bats); rules strict mode cannot express (unique labels, one score per label, non-empty citations) live in scripts/check-verdict.sh.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eval_id", "run_id", "rubric_version", "labels", "criteria", "verdicts", "winner", "confidence", "conditions_check", "disagreements"],
+  "properties": {
+    "eval_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "rubric_version": { "type": "integer", "minimum": 1 },
+    "labels": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^c[0-9]+$" }
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "scores"],
+        "properties": {
+          "name": { "type": "string", "description": "The rubric heading this criterion grades, without the number." },
+          "scores": {
+            "type": "array",
+            "description": "One entry per label.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["label", "score", "evidence"],
+              "properties": {
+                "label": { "type": "string", "pattern": "^c[0-9]+$" },
+                "score": { "type": "integer", "enum": [0, 1, 2], "description": "0 = not met, 1 = partly met, 2 = met." },
+                "evidence": { "type": "string", "description": "The file path and line or quote that justifies the score." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "verdicts": {
+      "type": "array",
+      "description": "One entry per label: pass when every criterion scored 2, fail when any scored 0, otherwise partial; inconclusive when the judge could not observe the artifact.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "verdict"],
+        "properties": {
+          "label": { "type": "string", "pattern": "^c[0-9]+$" },
+          "verdict": { "type": "string", "enum": ["pass", "partial", "fail", "inconclusive"] }
+        }
+      }
+    },
+    "winner": {
+      "type": "string",
+      "description": "The label with the highest total, 'tie' when totals are equal, 'none' when only one label was judged.",
+      "pattern": "^(c[0-9]+|tie|none)$"
+    },
+    "confidence": { "type": "string", "enum": ["low", "mid", "high"] },
+    "conditions_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applies", "note"],
+      "properties": {
+        "applies": { "type": "boolean", "description": "Whether the final evidence was produced under the agreed environment and run conditions." },
+        "note": { "type": "string" }
+      }
+    },
+    "disagreements": {
+      "type": "array",
+      "description": "Places where the artifact's own claims and the evidence disagree, one string each.",
+      "items": { "type": "string" }
+    }
+  }
+}

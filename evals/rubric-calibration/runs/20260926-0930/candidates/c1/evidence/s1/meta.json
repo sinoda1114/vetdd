@@ -1,0 +1,4 @@
+{"slice_id":"s1","oracle":{"seam":"closingDate() unit","version":"1","files":[{"path":"src/dueDate.test.ts","sha256":"aaa"}]},
+ "runs":[
+  {"seq":1,"kind":"before","cmd":["npx","vitest","run","src/dueDate.test.ts"],"exit_code":1,"outcome":"target_failure","accepted":true,"started_at":"2026-09-26T01:00:00Z","ended_at":"2026-09-26T01:00:02Z","log":"runs/001-before.log","tree":{"head_sha":"111","tree_hash":"t1"},"conditions":{"cwd":".","node_version":"v24.16.0","env_keys":[]}},
+  {"seq":2,"kind":"after","cmd":["npx","vitest","run","src/dueDate.test.ts"],"exit_code":0,"outcome":"pass","accepted":true,"started_at":"2026-09-26T01:05:00Z","ended_at":"2026-09-26T01:05:02Z","log":"runs/002-after.log","tree":{"head_sha":"111","tree_hash":"t2"},"conditions":{"cwd":".","node_version":"v24.16.0","env_keys":[]}}]}

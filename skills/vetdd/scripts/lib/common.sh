@@ -14,3 +14,7 @@ vetdd_is_slice_id() {
   case "$1" in *[!A-Za-z0-9._-]*) return 1 ;; esac
   return 0
 }
+
+# vetdd_printable: copy stdin to stdout without control characters (tab and newline stay), so text
+# that came from a candidate, a verdict, or a file name cannot drive the operator's terminal.
+vetdd_printable() { LC_ALL=C tr -d '\000-\010\013-\037\177'; }

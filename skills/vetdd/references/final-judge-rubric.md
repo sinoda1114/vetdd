@@ -1,0 +1,58 @@
+# Final judge rubric (version 3)
+
+Used when test or verify mode sends one delivered change to the judge. One label, `c1`. Every criterion below is judged only from files in this layout; if a file the layout names is missing, the criterion that needs it scores 0 and the reply explains why.
+
+## Layout
+
+The caller builds this directory on the delivered tree and passes it to `$VETDD/scripts/judge.sh` with this file as `--rubric`. judge.sh refuses it unless `check-blind.sh --profile judge` passes, so redact model names and origins first (logs often carry them in absolute paths).
+
+```
+candidates/c1/
+  artifact/diff.patch            git diff --no-ext-diff --binary <base> on the delivered tree, after
+                                 `git add --intent-to-add` of new product files so they appear
+  artifact/reply.md              the reply draft: Oracle, Evidence, Requirements -> evidence sections
+  artifact/check-evidence.txt    output of `check-evidence.sh <every slice id>` on the delivered tree,
+                                 followed by a last line `exit <code>`
+  artifact/tests/<path>          the delivered content of every file in the slices' oracle.files
+  evidence/<slice>/meta.json     for every slice
+  evidence/<slice>/runs/<log>    the log of each slice's red run (kind before or calibration, outcome
+                                 target_failure); other run logs stay on the machine
+```
+
+Sending the red-run logs is part of the default agreement (SKILL.md, Q4). If the human excluded them, criterion 1 cannot score 2 and the verdict is at most `partial`.
+
+## 1. red-before-green
+
+- 2: for every slice, `evidence/<slice>/meta.json` has an accepted run of kind `before` or `calibration` with outcome `target_failure` that precedes an accepted `after` or `integrated` run with outcome `pass`, and that red run's log under `evidence/<slice>/runs/` shows the assertion on the agreed behavior failing (not a missing module, not a syntax error, not "no tests").
+- 1: the order holds but a red log is missing or fails for a reason other than the agreed behavior.
+- 0: any slice lacks a red run, or the red came after the green.
+
+## 2. final-evidence-matches-delivery
+
+- 2: `artifact/check-evidence.txt` shows `<slice>: OK` for every slice named in `artifact/reply.md` and ends with `exit 0` (check-evidence rule 5 ties the final run to the delivered tree, rule 6 ties the oracle files to their recorded hashes), and every file under `artifact/tests/` is one of the paths in the final runs' `oracle.files`.
+- 1: every slice is `OK`, but a coverage oracle named in the reply's Oracle section has no run in any `meta.json`.
+- 0: any slice is `FAIL`, is missing from the output, or the exit code is not 0.
+
+## 3. test-observes-behavior
+
+- 2: every test added or changed in `artifact/diff.patch` (full text in `artifact/tests/`) calls the subject through its public interface and asserts a literal value or a spec-guaranteed property whose source is named in the reply's Oracle section; no assertion is only existence, only a call, or a value recomputed from the code under test.
+- 1: one hollow assertion exists but is paired with a meaningful one on another input.
+- 0: a test would still pass if every import returned `undefined`, or an existing assertion was weakened.
+
+## 4. smallest-change
+
+- 2: the product part of `artifact/diff.patch` changes only what the agreed behavior requires; no speculative generality, no second behavior, no unrelated cleanup outside the refactor slice. Changes vetdd's own setup makes (the `.vetdd/` line `setup-project.sh` adds to `.gitignore`) are tooling, not product, and are not counted.
+- 1: one unrelated change, explained in `artifact/reply.md`.
+- 0: unrelated behavior added or removed.
+
+## 5. claims-match-evidence
+
+- 2: every requirement in `artifact/reply.md` maps to an evidence path that exists in this layout (or is named as a local log) and shows the stated outcome; every claim is labeled Measured, inferred, or guess, and no Measured claim lacks a path.
+- 1: one claim is labeled Measured without a path.
+- 0: a claim contradicts the evidence, or the reply reports done without `check-evidence.sh` output.
+
+## 6. conditions-apply
+
+- 2: the final runs' `conditions` (cwd, node_version, env_keys) in `meta.json` are consistent with the environment named in the reply's Oracle section.
+- 1: a condition is missing from the record but nothing contradicts the agreement.
+- 0: a final run was produced under conditions the agreement excluded.

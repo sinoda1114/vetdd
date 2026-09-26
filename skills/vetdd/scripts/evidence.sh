@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Record one oracle run as evidence for a slice.
-# Usage: evidence.sh <slice-id> <kind> [--outcome <o>] [--seam <s>] [--oracle-version <v>]
-#                    [--oracle-file <path>]... -- <command...>
+# Usage: evidence.sh <slice-id> <kind> [--outcome <o>] [--infra-exit <code>]... [--seam <s>]
+#                    [--oracle-version <v>] [--oracle-file <path>]... -- <command...>
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
+#   --infra-exit <code> declares another exit code that means "could not observe" (for example a
+#   verify script's exit 2), so it is recorded as infrastructure_error and never counts as red
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -23,11 +25,14 @@ case "$kind" in
   *) die "invalid kind '$kind' (calibration|before|after|integrated)" ;;
 esac
 
-outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0
+outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "
 oracle_files=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --outcome) [ $# -ge 2 ] || die "--outcome needs a value"; outcome_opt="$2"; shift 2 ;;
+    --infra-exit) [ $# -ge 2 ] || die "--infra-exit needs an exit code"
+      case "$2" in [1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;; *) die "--infra-exit takes an exit code from 1 to 255, got '$2'" ;; esac
+      infra_exits="$infra_exits$2 "; shift 2 ;;
     --seam) [ $# -ge 2 ] || die "--seam needs a value"; seam_opt="$2"; seam_set=1; shift 2 ;;
     --oracle-version) [ $# -ge 2 ] || die "--oracle-version needs a value"; version_opt="$2"; version_set=1; shift 2 ;;
     --oracle-file) [ $# -ge 2 ] || die "--oracle-file needs a value"; oracle_files+=("$2"); shift 2 ;;
@@ -80,8 +85,7 @@ outcome="$outcome_opt"
 if [ -z "$outcome" ]; then
   case "$exit_code" in
     0) outcome=pass ;;
-    126|127) outcome=infrastructure_error ;;
-    *) outcome=target_failure ;;
+    *) case "$infra_exits" in *" $exit_code "*) outcome=infrastructure_error ;; *) outcome=target_failure ;; esac ;;
   esac
 fi
 
