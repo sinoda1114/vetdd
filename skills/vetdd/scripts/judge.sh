@@ -2,32 +2,46 @@
 # Run the blinded judge (a different model family, via codex) over a sanitized candidates directory.
 # Usage: judge.sh --rubric <file> --candidates <dir> --out <json> --eval-id <id> --run-id <id>
 #                 --rubric-version <n> [--conditions <file>] [--model <m>] [--effort <e>]
-#                 [--extra-layout <text>] [--extra-words <file>]
+#                 [--extra-layout <text>] [--extra-words <file>] [--allow-secrets <glob>[:<kind>,...]]...
 # Steps: copy the label directories (c1/, c2/, ...) of <candidates> and the rubric (as rubric.md)
 # into a fresh private temporary directory outside any repository; refuse unless check-blind.sh
-# (judge profile, plus --extra-words) passes on that copy and on the conditions, the extra layout,
-# the eval id, and the run id; render references/judge-prompt.md; run `codex exec` read-only with
-# -C set to the copy and schemas/verdict.schema.json; write the reply verbatim to <out>, the judge
-# metadata to <out>.meta.json, and codex's own output to <git root>/.vetdd/judge-logs/<eval-id>-<run-id>.log
-# (the git root of <out>'s directory, else of the current directory; the path is printed); run
-# check-verdict.sh with the labels, the rubric, and the ids. <candidates> itself is never written.
+# (judge profile, plus --extra-words and, in an A/B eval (variants.json in the run directory above
+# <candidates>), the absolute paths of <candidates>, of the run directory, and of its git root, each
+# also with "/" as "\/") passes on that copy and on the conditions, the extra layout, the eval id,
+# and the run id. A final verdict (no variants.json) has no label-to-variant map to hide, so no
+# absolute path is refused there. Render references/judge-prompt.md; run `codex exec` read-only with
+# -C set to the copy and schemas/verdict.schema.json; refuse the reply if it holds a secret-shaped
+# string (lib/secret-patterns.sh, every kind: --allow-secrets covers input only); write the reply verbatim to
+# <out>, the judge metadata to <out>.meta.json, and codex's own output to
+# <git root>/.vetdd/judge-logs/<eval-id>-<run-id>.log (the git root of <out>'s directory, else of the
+# current directory; the path is printed); run check-verdict.sh with the labels, the rubric, and the
+# ids. <candidates> itself is never written.
+# --allow-secrets <glob>[:<kind>,...] is passed to check-blind.sh: paths of the copy that match the
+# glob (c1/artifact/..., relative to the copy; a --conditions file by its path as given) skip the
+# secret check for the kinds named, or for every kind when none is named. It never applies to the
+# reply's secret check, which covers every kind.
+# Use it only for test data a human confirmed, naming only the kinds confirmed; the values are
+# recorded in <out>.meta.json (allowed_secrets).
 # Defaults: --model `models.sh judge`, --effort `models.sh judge-effort`; both are validated by
 # models.sh. VETDD_CODEX_BIN overrides the codex binary (tests use a fake).
 # Exit: 0 verdict written and checked; 1 a local step failed (temporary directory, copy, write);
 #       2 usage error; 3 codex missing or not logged in; 4 the judge's input is not blind;
 #       5 the verdict failed its checks (left at <out>); 6 codex exec failed;
-#       7 check-verdict.sh could not run (the verdict is left at <out>, unchecked).
+#       7 check-verdict.sh could not run (the verdict is left at <out>, unchecked);
+#       8 the judge's reply holds a secret-shaped string (not written to <out>; read the judge log).
 set -u
+unset CDPATH
 
 die() { printf 'judge.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 skill="${here%/*}"
 . "$here/lib/common.sh"
+. "$here/lib/secret-patterns.sh"
 vetdd_require_jq judge.sh
 
 rubric=""; cand=""; out=""; eval_id=""; run_id=""; version=""; conditions=""; model=""; effort=""
-extra_layout=""; extra_words=""
+extra_layout=""; extra_words=""; allow_secrets=()
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || die "$1 needs a value"
   case "$1" in
@@ -42,6 +56,7 @@ while [ $# -gt 0 ]; do
     --effort) effort="$2" ;;
     --extra-layout) extra_layout="$2" ;;
     --extra-words) extra_words="$2" ;;
+    --allow-secrets) allow_secrets+=("$2") ;;
     *) die "unexpected argument '$1'" ;;
   esac
   shift 2
@@ -101,7 +116,10 @@ login="$("$codex" login status 2>&1)" \
 
 # Every temporary file lives in one private directory. The judge's working directory is a copy
 # inside it, so a relative path from there reaches only the copy and this directory, never the
-# run directory (variants.json, synthesis.md).
+# run directory (variants.json, synthesis.md). This is not isolation: the read-only sandbox stops
+# writes, not reads, and an absolute path still reaches the run directory. Keeping the judge out
+# rests on the relative paths, on nothing in the copy naming the original path (the blind check
+# below refuses those paths), and on the prompt.
 work="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-judge.XXXXXX")" || die "cannot create a temporary directory" 1
 trap 'rm -rf "$work"' EXIT
 jdir="$work/judge"
@@ -114,14 +132,56 @@ for l in "${label_list[@]}"; do
 done
 cp "$rubric" "$jdir/rubric.md" || die "cannot copy the rubric" 1
 
+# write_path_words <file>: in an A/B eval (variants.json in the run directory above the candidates),
+# the absolute paths that would lead the judge from the copy back to variants.json, one per line,
+# each as given and with symlinks resolved: the candidates directory, the run directory, and the
+# run directory's git root. A final verdict (no variants.json) has no such map to hide, and its
+# logs name the project's paths, often the candidates' own; it gets no path words. $HOME is not added
+# as such, but it becomes a word when it is the git root (a dotfiles repository), which only refuses
+# more. "/" would match every path; it is skipped. Each path is also written with every "/" as
+# JSON's "\/" (\/Users\/x\/...). sanitize-candidates.sh collects the same paths.
+write_path_words() {
+  local run d p top cdup list=""
+  : > "$1" || die "cannot write $1" 1
+  run="${cand%/*}"; [ -n "$run" ] || run="/"
+  [ -f "$run/variants.json" ] || return 0
+  # Resolve every form separately and stop on a failure, so a path never drops out of the list.
+  for d in "$cand" "$run"; do
+    p="$(cd "$d" && pwd -P)" && [ -n "$p" ] || die "cannot resolve $d" 1
+    list="$list$d
+$p
+"
+  done
+  if top="$(git -C "$run" rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ]; then
+    p="$(cd "$top" && pwd -P)" && cdup="$(git -C "$run" rev-parse --show-cdup)" && [ -n "$p" ] \
+      || die "cannot resolve the git root of $run" 1
+    list="$list$top
+$p
+"
+    # The root as the user wrote it: the run directory's path with git's "../" steps, which count
+    # from the resolved path. Through a symlink that may land elsewhere ($HOME, "/"); such a form
+    # is not the root and is dropped.
+    if d="$(cd "$run/$cdup" 2>/dev/null && pwd)" && [ "$(cd "$d" 2>/dev/null && pwd -P)" = "$p" ]; then
+      list="$list$d
+"
+    fi
+  fi
+  list="$(printf '%s' "$list" | awk '$0 != "/"')" || die "cannot list the paths of $cand" 1
+  [ -n "$list" ] || return 0
+  { printf '%s\n' "$list"; printf '%s\n' "$list" | sed 's|/|\\/|g'; } > "$1" || die "cannot write $1" 1
+}
+
 # The judge's input: the copy, and every value that reaches the prompt besides the rubric.
 printf '%s\n' "$eval_id" > "$work/args/eval-id"
 printf '%s\n' "$run_id" > "$work/args/run-id"
 printf '%s\n' "$extra_layout" > "$work/args/extra-layout"
+write_path_words "$work/args/paths"
 set -- "$jdir" --profile judge \
-  --file "$work/args/eval-id" --file "$work/args/run-id" --file "$work/args/extra-layout"
+  --file "$work/args/eval-id" --file "$work/args/run-id" --file "$work/args/extra-layout" \
+  --extra-words "$work/args/paths"
 [ -z "$conditions" ] || set -- "$@" --file "$conditions"
 [ -z "$extra_words" ] || set -- "$@" --extra-words "$extra_words"
+for g in ${allow_secrets[@]+"${allow_secrets[@]}"}; do set -- "$@" --allow-secrets "$g"; done
 blind="$("$here/check-blind.sh" "$@" 2>&1)"
 case $? in
   0) ;;
@@ -131,6 +191,9 @@ case $? in
      die "the judge's input is not blind; sanitize the candidates (sanitize-candidates.sh) and the arguments first" 4 ;;
   *) die "check-blind.sh could not run: $blind" ;;
 esac
+# The argument files sit next to the judge's working directory and name the paths it must not
+# reach (args/paths); they served the check and go before the judge starts.
+rm -rf "$work/args" && [ ! -e "$work/args" ] || die "cannot remove $work/args before the judge starts" 1
 
 # Render the first fenced block of the prompt template in one pass, so a value that contains
 # "{{slot}}" is never expanded again.
@@ -164,9 +227,29 @@ if [ "$rc" -ne 0 ]; then
 fi
 printf 'judge log: %s\n' "$log"
 
+# The reply may quote what the judge read, and a candidate's text can steer it to a file outside the
+# copy (~/.aws/credentials). <out> may be committed, so a secret-shaped reply is never written there.
+# Every kind, always: --allow-secrets covers input paths a human checked, not what the judge may
+# have read outside the copy and quoted.
+reply_hits="$(vetdd_find_secrets judge-reply < "$work/reply.json")" \
+  || die "the secret check on the judge's reply failed; nothing was written to $out" 1
+if [ -n "$reply_hits" ]; then
+  printf '%s\n' "$reply_hits" | vetdd_printable >&2
+  # Keep the reply beside the log (gitignored, outside the run directory) so a human can read it.
+  held="${log%.log}.reply.json"
+  cp "$work/reply.json" "$held" || die "cannot keep the reply at $held" 1
+  die "the judge's reply holds text shaped like a secret; it was not written to $out (--allow-secrets does not apply to the reply). Read the judge log ($log) and the reply ($held) locally: if the hit only quotes test data you allowed, copy the reply to $out and run $here/check-verdict.sh $out --rubric $rubric --labels $labels --eval-id $eval_id --run-id $run_id --rubric-version $version; otherwise treat the run as blocked" 8
+fi
+
 cp "$work/reply.json" "$out" || die "cannot write $out" 1
+allowed='[]'
+for g in ${allow_secrets[@]+"${allow_secrets[@]}"}; do
+  allowed="$(jq -c --arg g "$g" '. + [$g]' <<< "$allowed")" || die "cannot record --allow-secrets" 1
+done
 jq -n --arg model "$model" --arg effort "$effort" --arg invoked_at "$invoked_at" --arg log "$log" \
-  '{model: $model, effort: $effort, invoked_at: $invoked_at, family: "codex", log: $log}' > "$out.meta.json" \
+  --argjson allowed "$allowed" \
+  '{model: $model, effort: $effort, invoked_at: $invoked_at, family: "codex", log: $log,
+    allowed_secrets: $allowed}' > "$out.meta.json" \
   || die "cannot write $out.meta.json" 1
 
 "$here/check-verdict.sh" "$out" --rubric "$jdir/rubric.md" --labels "$labels" \

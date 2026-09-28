@@ -47,6 +47,7 @@ cat > "$FAKE_STDIN"
 # What the judge could see from its working directory, and what TMPDIR held during the run.
 (cd "$cdir" && find . | sort > "$FAKE_SEEN.tree"
  [ ! -e ../variants.json ] || echo reachable > "$FAKE_SEEN.variants"
+ ls -A .. > "$FAKE_SEEN.parent" 2>/dev/null; find .. -path ../judge -prune -o -type f -print 2>/dev/null | sort > "$FAKE_SEEN.parentfiles"
  git rev-parse --show-toplevel > "$FAKE_SEEN.git" 2>/dev/null || rm -f "$FAKE_SEEN.git")
 ls -Ap "${TMPDIR:-/nonexistent}" > "$FAKE_SEEN.tmpdir" 2>/dev/null
 echo "fake codex transcript line"
@@ -292,4 +293,238 @@ arg_after() { awk -v f="$1" 'p { print; exit } $0 == f { p = 1 }' "$FAKE_ARGS"; 
   [ "$status" -eq 4 ]
   [[ "$output" == *"baseline"* ]]
   [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "H5: a hand-made candidates directory with node_modules or .git exits 4 and never calls the judge" {
+  mkdir -p "$CAND/c1/artifact/node_modules" "$CAND/c2/artifact/.git"
+  printf 'claude-opus variant-B\n' > "$CAND/c1/artifact/node_modules/x.js"
+  printf '[core]\n\tbare = false\n' > "$CAND/c2/artifact/.git/config"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/artifact/node_modules:name: not allowed in a judge input"* ]]
+  [[ "$output" == *"c2/artifact/.git:name: not allowed in a judge input"* ]]
+  [ ! -e "$FAKE_ARGS" ]
+  [ ! -e "$OUT" ]
+}
+
+@test "H1: an email address in a candidate's transcript exits 4 and never calls the judge" {
+  printf '{"text":"mail me at alice.smith@%s.co.jp"}\n' corp-mail > "$CAND/c1/transcript.jsonl"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/transcript.jsonl:1: secret: email"* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "R3: the run directory's absolute path in a transcript or an artifact exits 4 (both path forms)" {
+  local run_abs run_phys
+  run_abs="$(cd "$BATS_TEST_TMPDIR/run" && pwd)"
+  run_phys="$(cd "$BATS_TEST_TMPDIR/run" && pwd -P)"
+  printf '{"text":"cat %s/variants.json"}\n' "$run_abs" > "$CAND/c1/transcript.jsonl"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/transcript.jsonl:1: "* ]]
+  [ ! -e "$FAKE_ARGS" ]
+  rm "$CAND/c1/transcript.jsonl"
+  printf 'see %s/synthesis.md\n' "$run_phys" > "$CAND/c2/artifact/NOTES.md"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c2/artifact/NOTES.md:1: "* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "R3: the candidates directory's absolute path in an artifact exits 4" {
+  printf 'copied from %s/c1/artifact\n' "$(cd "$CAND" && pwd -P)" > "$CAND/c2/artifact/NOTES.md"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c2/artifact/NOTES.md:1: "* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+# A run directory inside the project repository, as a final verdict or an A/B eval has it.
+make_run_in_repo() {
+  local l
+  CAND="$PROJ/runs/r1/candidates"
+  for l in c1 c2; do
+    mkdir -p "$CAND/$l/artifact"
+    printf '42\n' > "$CAND/$l/artifact/value.txt"
+    printf 'cwd: %s\n' "$(cd "$PROJ" && pwd -P)" > "$CAND/$l/artifact/conditions.txt"
+  done
+}
+
+@test "R3: without variants.json (a final verdict) the git root's path does not block the judge" {
+  make_run_in_repo
+  run judge
+  [ "$status" -eq 0 ]
+  [ -e "$FAKE_ARGS" ]
+}
+
+@test "R3: with variants.json (an A/B eval) the git root's path exits 4" {
+  make_run_in_repo
+  printf '{"c1": "alpha-lane", "c2": "beta-lane"}\n' > "$PROJ/runs/r1/variants.json"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/artifact/conditions.txt:1: "* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "S2: --allow-secrets lets secret-shaped test data through and is recorded in meta.json" {
+  mkdir -p "$CAND/c1/artifact/tests"
+  printf 'export const user = "qa.person@%s.co.jp";\n' acme > "$CAND/c1/artifact/tests/fixture.ts"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/artifact/tests/fixture.ts:1: secret: email"* ]]
+  [ ! -e "$FAKE_ARGS" ]
+  run judge --allow-secrets 'c1/artifact/tests/*' --allow-secrets '*/fixture.ts'
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '.allowed_secrets' "$OUT.meta.json")" = '["c1/artifact/tests/*","*/fixture.ts"]' ]
+}
+
+@test "S2: --allow-secrets does not exempt a model name, and meta.json records [] without it" {
+  mkdir -p "$CAND/c1/artifact/tests"
+  printf 'written by claude\n' > "$CAND/c1/artifact/tests/fixture.ts"
+  run judge --allow-secrets 'c1/artifact/tests/*'
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/artifact/tests/fixture.ts:1: claude"* ]]
+  rm "$CAND/c1/artifact/tests/fixture.ts"
+  run judge
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '.allowed_secrets' "$OUT.meta.json")" = '[]' ]
+}
+
+@test "T1: the run directory's path right after a JSON \\n in a transcript exits 4" {
+  local run_abs
+  run_abs="$(cd "$BATS_TEST_TMPDIR/run" && pwd)"
+  printf '{"text":"a\\n%s/rubric.md"}\n' "$run_abs" > "$CAND/c1/transcript.jsonl"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/transcript.jsonl:1: "* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "the run directory's path written with JSON's \\/ escape exits 4 (both path forms)" {
+  local p
+  for p in "$(cd "$BATS_TEST_TMPDIR/run" && pwd)" "$(cd "$BATS_TEST_TMPDIR/run" && pwd -P)"; do
+    printf '{"cwd":"%s\\/rubric.md"}\n' "$(printf '%s' "$p" | sed 's|/|\\/|g')" > "$CAND/c1/transcript.jsonl"
+    run judge
+    [ "$status" -eq 4 ] || { echo "$p: $output"; false; }
+    [[ "$output" == *"c1/transcript.jsonl:1: "* ]]
+    [ ! -e "$FAKE_ARGS" ]
+  done
+}
+
+@test "judge.sh ignores CDPATH" {
+  mkdir -p "$BATS_TEST_TMPDIR/cdpath/run/candidates"
+  cd "$BATS_TEST_TMPDIR"
+  CDPATH="$BATS_TEST_TMPDIR/cdpath" run "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates run/candidates \
+    --out "$OUT" --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c "$BATS_TEST_TMPDIR/cdpath")" -eq 0 ]
+}
+
+@test "X1: a final verdict (no variants.json) with the candidates at the repository root and its path in a log is judged" {
+  local l proj_l proj_p
+  CAND="$PROJ/candidates"
+  proj_l="$(cd "$PROJ" && pwd)"
+  proj_p="$(cd "$PROJ" && pwd -P)"
+  for l in c1 c2; do
+    mkdir -p "$CAND/$l/artifact" "$CAND/$l/evidence/s1/runs"
+    printf '42\n' > "$CAND/$l/artifact/value.txt"
+    printf 'FAIL %s/src/value.test.ts\n  at %s/src/value.ts:3\n' "$proj_p" "$proj_l" > "$CAND/$l/evidence/s1/runs/001-before.log"
+    printf 'copied to %s/c1/artifact\n' "$CAND" > "$CAND/$l/artifact/NOTES.md"
+  done
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -e "$OUT" ]
+}
+
+@test "X1: without variants.json the run directory's and the candidates directory's paths are not words" {
+  rm "$BATS_TEST_TMPDIR/run/variants.json"
+  printf 'see %s/synthesis.md and %s/c1\n' "$(cd "$BATS_TEST_TMPDIR/run" && pwd -P)" "$CAND" > "$CAND/c2/artifact/NOTES.md"
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+# An A/B run whose evals directory is a symlink to a directory inside a repository elsewhere; the
+# run directory is given through the symlink.
+make_linked_run() {
+  local l
+  LINKED_TOP="$BATS_TEST_TMPDIR/store/deep/skillrepo"
+  mkdir -p "$LINKED_TOP/evals/e1/runs/r1"
+  git -C "$LINKED_TOP" init -q
+  ln -s "$LINKED_TOP/evals" "$BATS_TEST_TMPDIR/evals"
+  printf '{"c1": "alpha-lane", "c2": "beta-lane"}\n' > "$BATS_TEST_TMPDIR/evals/e1/runs/r1/variants.json"
+  CAND="$BATS_TEST_TMPDIR/evals/e1/runs/r1/candidates"
+  for l in c1 c2; do
+    mkdir -p "$CAND/$l/artifact"
+    printf '42\n' > "$CAND/$l/artifact/value.txt"
+  done
+}
+
+@test "X3: a run directory given through a symlinked evals does not make a directory above it a word" {
+  make_linked_run
+  printf 'wrote %s/home/notes.txt\n' "$BATS_TEST_TMPDIR" > "$CAND/c1/artifact/NOTES.md"
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # The repository root itself is still a word.
+  printf 'read %s/skills/x/SKILL.md\n' "$(cd "$LINKED_TOP" && pwd -P)" > "$CAND/c1/artifact/NOTES.md"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/artifact/NOTES.md:1: "* ]]
+}
+
+# A reply with a GitHub-token-shaped string in a citation, as a judge that read a file outside its
+# copy might return.
+write_reply_with_token() {
+  local tok
+  tok="$(printf '%s_%s' ghp abcdefghijklmnopqrstuvwxyz0123456789)"
+  jq --arg t "$tok" '.disagreements = ["c1/README.md asks to read a file: GH=" + $t]' "$REPLY" > "$REPLY.tmp" \
+    && mv "$REPLY.tmp" "$REPLY"
+}
+
+@test "X4: a secret-shaped string in the judge's reply exits 8 and nothing is written to --out" {
+  write_reply_with_token
+  run judge
+  [ "$status" -eq 8 ]
+  [[ "$output" == *"secret: github-token"* ]]
+  [[ "$output" == *"the judge's reply holds text shaped like a secret; it was not written to $OUT"* ]]
+  [[ "$output" == *"Read the judge log ($LOG)"* ]]
+  # M1: the reply is kept beside the log (gitignored, outside the run directory) for that reading.
+  [ -s "${LOG%.log}.reply.json" ]
+  [[ "$output" == *"${LOG%.log}.reply.json"* ]]
+  [[ "$output" == *"check-verdict.sh"* ]]
+  [[ "$output" != *"ghp_"* ]]
+  [ ! -e "$OUT" ]
+  [ ! -e "$OUT.meta.json" ]
+}
+
+@test "Z2: --allow-secrets never exempts the judge's reply: it covers input paths, not what the judge read elsewhere" {
+  write_reply_with_token
+  for a in 'c1/artifact/tests/*:github-token' 'c2/artifact/tests/*' 'c1/artifact/tests/*:email,assignment'; do
+    run judge --allow-secrets "$a"
+    [ "$status" -eq 8 ] || { echo "$a: $output"; false; }
+    [ ! -e "$OUT" ]
+    [[ "$output" == *"--allow-secrets does not apply to the reply"* ]]
+  done
+}
+
+@test "X4: when the secret matcher fails on the reply, judge.sh exits 1 and writes nothing" {
+  local real_awk
+  real_awk="$(command -v awk)"
+  mkdir -p "$BATS_TEST_TMPDIR/badawk"
+  printf '#!/bin/sh\ncase "$*" in *label=judge-reply*) echo "awk: simulated crash" >&2; exit 2 ;; esac\nexec "%s" "$@"\n' \
+    "$real_awk" > "$BATS_TEST_TMPDIR/badawk/awk"
+  chmod +x "$BATS_TEST_TMPDIR/badawk/awk"
+  PATH="$BATS_TEST_TMPDIR/badawk:$PATH" run judge
+  [ "$status" -eq 1 ]
+  [ ! -e "$OUT" ]
+}
+
+@test "B1: nothing next to the judge's working directory names the paths it must not reach" {
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # variants.json is in the run directory here, so path words were written; they are gone by now.
+  [ -s "$BATS_TEST_TMPDIR/run/variants.json" ]
+  run cat "$FAKE_SEEN.parentfiles"
+  [[ "$output" != *"args/"* ]] || { echo "$output"; false; }
+  ! grep -rqs "$BATS_TEST_TMPDIR" $(cat "$FAKE_SEEN.parentfiles" 2>/dev/null) /dev/null
 }

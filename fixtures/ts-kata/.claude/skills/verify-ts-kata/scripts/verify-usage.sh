@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Drive: `due` with no date; expect exit code 2 and a stderr line starting with "usage".
+# Drive: `due` with no date; expect exit code 2 and a stderr line starting with "usage" (case-sensitive).
 # Usage: verify-usage.sh [--expect <exit code>]   default 2
 # Exit 0 observed and met, 1 observed and not met, 2 could not observe.
 set -u
-. "${BASH_SOURCE[0]%/*}/lib.sh"
+unset CDPATH  # cd prints the directory it found through CDPATH, which breaks $(cd ... && pwd)
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 expect=2
 while [ $# -gt 0 ]; do
@@ -13,10 +14,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+can_drive || exit 2
 d="$(artifact_dir usage)" || exit 2
 drive "$d" due || exit 2
 code="$(cat "$d/exit_code.txt")"
-usage_line="$(grep -im1 '^usage' "$d/stderr.txt" || true)"
+usage_line="$(grep -m1 '^usage' "$d/stderr.txt" || true)"
 printf 'expected exit: %s\nactual exit:   %s\nusage line:    %s\n' "$expect" "$code" "${usage_line:-<none>}"
 [ "$code" = "$expect" ] && [ -n "$usage_line" ] && exit 0
 exit 1

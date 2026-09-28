@@ -26,7 +26,7 @@ closingDate() unit  (unit)
   existing: yes, dueDate.test.ts
 
 cli due  (cli)
-  where:    npx tsx src/cli.ts due 2026-02-15
+  where:    ./node_modules/.bin/tsx src/cli.ts due 2026-02-15
   catches:  prints "closing: 2026-02-28"
   misses:   nothing in this path, but slower and couples the test to output format
   cost:     ~1 s (tsx startup)
