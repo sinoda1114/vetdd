@@ -30,7 +30,10 @@ vetdd_report_allowed() {
   # Exactly .vetdd/reports/: rel is already in its on-disk spelling, and only .vetdd is left out
   # of the tree hash and ignored, in that spelling.
   case "$rel" in .vetdd/reports/?*) ;; *) return 1 ;; esac
-  ! git -C "$root" ls-files --error-unmatch -- ":(literal,icase)$rel" >/dev/null 2>&1
+  # Allowed only when git says "not tracked" (1); tracked (0) or a git failure is a refusal.
+  local rc=0
+  git -C "$root" ls-files --error-unmatch -- ":(literal,icase)$rel" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 1 ]
 }
 
 # jq: a jest-json report -> {format, passed, failed, skipped, todo, other, total, tests: [...]}.

@@ -259,3 +259,19 @@ EOF
   git add -f .vetdd/reports/t.json && git commit -q -m t
   run ! vetdd_report_allowed "$(pwd -P)" .vetdd/reports/T.json
 }
+
+@test "the report's directory exists before the command runs, for runners that do not create it (J1)" {
+  [ ! -e .vetdd/reports ]
+  ev s1 calibration --test-report "jest-json:.vetdd/reports/deep/r.json" \
+    -- sh -c "cp '$FIX/vitest5-pass.json' .vetdd/reports/deep/r.json"
+  [ "$(mq s1 '.runs[0] | [.outcome, .tests.status] | join(",")')" = "pass,ok" ]
+}
+
+@test "a git failure in the tracked check refuses the report path instead of allowing it (J1)" {
+  . "$SCRIPTS/lib/common.sh"; . "$SCRIPTS/lib/test-report.sh"
+  root="$(pwd -P)"
+  mkdir -p "$BATS_TEST_TMPDIR/fakegit"
+  printf '#!/bin/sh\nexit 128\n' > "$BATS_TEST_TMPDIR/fakegit/git"; chmod +x "$BATS_TEST_TMPDIR/fakegit/git"
+  PATH="$BATS_TEST_TMPDIR/fakegit:$PATH" run vetdd_report_allowed "$root" .vetdd/reports/x.json
+  [ "$status" -ne 0 ]
+}

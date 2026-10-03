@@ -93,7 +93,11 @@ if [ -n "$report_opt" ]; then
 fi
 # A stale report from an earlier run must never be read as this run's. Removed before the evidence
 # directory is created, so a failure leaves nothing behind.
-if [ -n "$report_rel" ]; then rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_opt"; fi
+# Its directory is made here: jest does not create it.
+if [ -n "$report_rel" ]; then
+  rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_rel"
+  mkdir -p -- "$(dirname -- "$root/$report_rel")" || die "cannot create the directory for $report_rel"
+fi
 
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
