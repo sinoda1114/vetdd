@@ -275,3 +275,15 @@ EOF
   PATH="$BATS_TEST_TMPDIR/fakegit:$PATH" run vetdd_report_allowed "$root" .vetdd/reports/x.json
   [ "$status" -ne 0 ]
 }
+
+@test "a report path holding something other than a regular file is invalid, not missing (L1)" {
+  ev s1 calibration --test-report "jest-json:$R" -- sh -c "mkfifo $R"
+  [ "$(mq s1 '.runs[0].tests.status')" = "invalid" ]
+}
+
+@test "a report path through a regular file says the path is unusable, not that it is a link (L2)" {
+  mkdir -p .vetdd/reports && printf 'x\n' > .vetdd/reports/r.json
+  run ev s1 calibration --test-report "jest-json:.vetdd/reports/r.json/x.json" -- true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"is not a usable path inside the repository"* ]]
+}

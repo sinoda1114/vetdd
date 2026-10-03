@@ -87,12 +87,12 @@ fi
 report_rel=""
 if [ -n "$report_opt" ]; then
   report_rel="$(vetdd_report_rel "$root" "$report_opt")" \
-    || die "--test-report path is a symbolic link or outside the repository: $report_opt"
+    || die "--test-report path is not a usable path inside the repository (a symbolic link, outside, through a file, or unreadable): $report_opt"
   vetdd_report_allowed "$root" "$report_rel" \
     || die "--test-report path must be an untracked file under .vetdd/reports/ (resolved to $report_rel)"
 fi
 # A stale report from an earlier run must never be read as this run's. Removed before the evidence
-# directory is created, so a failure leaves nothing behind.
+# directory is created, so a usage error leaves no empty meta.json.
 # Its directory is made here: jest does not create it.
 if [ -n "$report_rel" ]; then
   rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_rel"

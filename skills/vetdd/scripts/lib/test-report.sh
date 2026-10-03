@@ -63,7 +63,9 @@ vetdd_test_report_import() {
   rm -f -- "$copy"
   # Checked again here: the command that just ran could have swapped the report for a link.
   if ! vetdd_inside_repo "$root" "$rel" || [ -d "$root/$rel" ]; then status=invalid
-  elif [ ! -f "$root/$rel" ]; then status=missing
+  elif [ ! -e "$root/$rel" ]; then status=missing
+  # Something is there but not a regular file (a FIFO, a socket): never read it.
+  elif [ ! -f "$root/$rel" ]; then status=invalid
   # Exactly one JSON object: an empty file or two concatenated reports would print no value or two.
   elif ! jq -e -s 'length == 1 and (.[0] | type) == "object"' "$root/$rel" >/dev/null 2>&1; then status=invalid
   elif ! jq --arg root "$root" "$VETDD_JEST_JSON" "$root/$rel" > "$copy" 2>/dev/null; then status=invalid
