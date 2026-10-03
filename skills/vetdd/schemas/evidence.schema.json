@@ -77,7 +77,37 @@
             "env_keys": { "description": "Sorted names (never values) of VETDD_* environment variables.", "type": "array", "items": { "type": "string", "pattern": "^VETDD_" } }
           }
         },
-        "oracle": { "description": "The oracle this run was measured with.", "$ref": "#/$defs/oracle" }
+        "oracle": { "description": "The oracle this run was measured with.", "$ref": "#/$defs/oracle" },
+        "tests": {
+          "description": "Counts from the runner's report (evidence.sh --test-report). Never changes the outcome. Absent when no report was asked for.",
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["format", "status", "passed", "failed", "skipped", "todo", "other", "total", "sha256"],
+              "properties": {
+                "format": { "enum": ["jest-json"] },
+                "status": { "enum": ["ok"] },
+                "passed": { "type": "integer", "minimum": 0 },
+                "failed": { "type": "integer", "minimum": 0 },
+                "skipped": { "description": "skipped, pending, and disabled tests.", "type": "integer", "minimum": 0 },
+                "todo": { "type": "integer", "minimum": 0 },
+                "other": { "description": "Tests with any other status; never dropped.", "type": "integer", "minimum": 0 },
+                "total": { "type": "integer", "minimum": 0 },
+                "sha256": { "description": "Of the normalized copy runs/<seq>-<kind>.tests.json.", "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["format", "status"],
+              "properties": {
+                "format": { "enum": ["jest-json"] },
+                "status": { "description": "missing: no report after the run; invalid: not a jest-json report.", "enum": ["missing", "invalid"] }
+              }
+            }
+          ]
+        }
       }
     }
   }
