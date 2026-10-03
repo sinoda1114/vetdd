@@ -287,3 +287,12 @@ EOF
   [ "$status" -eq 2 ]
   [[ "$output" == *"is not a usable path inside the repository"* ]]
 }
+
+@test "a report path ending in / or /. or /.. is a usage error and deletes nothing (N1)" {
+  mkdir -p .vetdd/reports && printf 'other\n' > .vetdd/reports/s1.json
+  for p in .vetdd/reports/s1.json/x/ .vetdd/reports/a/ .vetdd/reports/a/. .vetdd/reports/a/..; do
+    run ev s2 calibration --test-report "jest-json:$p" -- true
+    [ "$status" -eq 2 ] || { echo "$p: $output"; false; }
+  done
+  [ "$(cat .vetdd/reports/s1.json)" = "other" ]
+}
