@@ -3,10 +3,12 @@
 # Checks evidence for every slice whose oracle.files intersect the staged files.
 # Blocks the commit on failure unless VETDD_BYPASS=1.
 set -u
+unset CDPATH
 
 VETDD_SCRIPTS_DIR="${VETDD_SCRIPTS_DIR:-}"
 if [ -z "$VETDD_SCRIPTS_DIR" ]; then VETDD_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"; fi
 
+# Fixed text only until lib/common.sh is loaded.
 say() { printf 'vetdd pre-commit: %s\n' "$1" >&2; }
 
 root="$(git rev-parse --show-toplevel)" || exit 1
@@ -21,29 +23,45 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-staged="$(git diff --cached --name-only --no-renames --diff-filter=ACMRD)"
+if ! . "$VETDD_SCRIPTS_DIR/lib/common.sh" 2>/dev/null; then
+  say "cannot load the vetdd scripts (lib/common.sh); reinstall the hook or commit with VETDD_BYPASS=1"
+  [ "${VETDD_BYPASS:-}" = 1 ] && exit 0
+  exit 1
+fi
+# From here on, output can carry recorded names: drop control characters.
+say() { printf 'vetdd pre-commit: %s\n' "$1" | vetdd_printable >&2; }
+
+staged="$(git -c core.quotePath=false diff --cached --name-only --no-renames --diff-filter=ACMRD)"
+# On a case-insensitive checkout the index and the recorded on-disk spelling can differ in case.
+match_flags=-Fx
+[ "$(git config --bool core.ignorecase 2>/dev/null)" = true ] && match_flags=-iFx
 slices=()
+invalid=0
 for meta in "$evidence_dir"/*/meta.json; do
   [ -f "$meta" ] || continue
-  match="$(jq -r '.oracle.files[]?.path' "$meta" 2>/dev/null | grep -Fxf - <(printf '%s\n' "$staged") | head -n 1)"
-  if [ -n "$match" ]; then
-    slice="${meta%/meta.json}"; slices+=("${slice##*/}")
-  fi
+  # A stray name (control characters, a leading -) is never printed or passed to check-evidence.sh.
+  slice="${meta%/meta.json}"
+  vetdd_is_slice_id "${slice##*/}" || { invalid=$((invalid + 1)); continue; }
+  match="$(jq -r '.oracle.files[]?.path' "$meta" 2>/dev/null | grep "$match_flags" -f - <(printf '%s\n' "$staged") | head -n 1)"
+  [ -n "$match" ] && slices+=("${slice##*/}")
 done
+# A stray name cannot be checked, so it blocks like a failed slice.
+[ "$invalid" -gt 0 ] && say "$invalid evidence directories have names that are not slice ids; they cannot be checked"
 
-if [ ${#slices[@]} -eq 0 ]; then
+failed=0
+if [ ${#slices[@]} -gt 0 ]; then
+  say "staged oracle files touch slice(s): ${slices[*]}; running check-evidence.sh"
+  "$VETDD_SCRIPTS_DIR/check-evidence.sh" --repo "$root" "${slices[@]}" >&2
+  failed=$?
+elif [ "$invalid" -eq 0 ]; then
   say "no staged file belongs to a slice oracle; nothing to check"
   exit 0
 fi
-
-say "staged oracle files touch slice(s): ${slices[*]}; running check-evidence.sh"
-"$VETDD_SCRIPTS_DIR/check-evidence.sh" --repo "$root" "${slices[@]}" >&2
-failed=$?
-[ "$failed" -eq 0 ] && exit 0
+[ "$failed" -eq 0 ] && [ "$invalid" -eq 0 ] && exit 0
 
 if [ "${VETDD_BYPASS:-}" = 1 ]; then
-  say "evidence check failed for $failed slice(s); VETDD_BYPASS=1 set, so bypassing the block"
+  say "evidence check failed ($failed slice(s), $invalid invalid directory name(s)); VETDD_BYPASS=1 set, so bypassing the block"
   exit 0
 fi
-say "evidence check failed for $failed slice(s); commit blocked (set VETDD_BYPASS=1 to bypass)"
+say "evidence check failed ($failed slice(s), $invalid invalid directory name(s)); commit blocked (set VETDD_BYPASS=1 to bypass)"
 exit 1

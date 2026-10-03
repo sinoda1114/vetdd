@@ -532,3 +532,41 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   [ -n "$(ls | grep -x value.txt)" ]
   [ -z "$(ls | grep -x VALUE.TXT)" ]
 }
+
+@test "an --oracle-version evidence.sh would refuse is a usage error (exit 2) before the fix is parked (H1)" {
+  local before_fix
+  before_fix="$(cat value.txt)"
+  run cal unfix s1 --file value.txt --oracle-version '1.0+rc' --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--oracle-version"* ]]
+  [ "$(cat value.txt)" = "$before_fix" ]
+  [ ! -e "$REPO/.vetdd/evidence/s1/meta.json" ]
+}
+
+@test "plant and planted accept the same oracle file named twice (K3)" {
+  run cal plant s1 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '0\n' > value.txt
+  run cal planted s1 --oracle-file test.sh --oracle-file ./test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "an --oracle-file name with a control character is a usage error before the fix is parked (Q4)" {
+  local before_fix
+  before_fix="$(cat value.txt)"
+  cp test.sh "$(printf 'a\tb.sh')"
+  run cal unfix s1 --file value.txt --oracle-version v1 --oracle-file "$(printf 'a\tb.sh')" -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ "$(cat value.txt)" = "$before_fix" ]
+  [ ! -e "$REPO/.vetdd/evidence/s1/meta.json" ]
+}
+
+@test "plant and planted name one oracle file whose directory is spelled in another case (R3)" {
+  mkdir -p sub && cp test.sh sub/t.sh
+  [ -e SUB/t.sh ] || skip "the file system is case-sensitive"
+  run cal plant s1 --file value.txt --oracle-file sub/t.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '0\n' > value.txt
+  run cal planted s1 --oracle-file SUB/t.sh -- sh sub/t.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

@@ -65,14 +65,14 @@ rel() {
   case "$d/" in "$top"/*) ;; *) die "$p is outside the repository" ;; esac
   # Use the name as it is on disk, so a different letter case on a case-insensitive file system is
   # neither missed by git nor written back under the wrong spelling.
-  local name e
-  name="$(basename -- "$p")"
-  for e in "$d"/* "$d"/.[!.]*; do
-    if [ "$e" -ef "$p" ]; then name="$(basename -- "$e")"; break; fi
-  done
+  local name
+  name="$(vetdd_disk_name "$d" "$p")"
   d="${d#"$top"}"; d="${d#/}"
-  case "/$(printf '%s' "${d:+$d/}$name" | tr 'A-Z' 'a-z')/" in */.git/*) die "$p is .git or inside it" ;; esac
-  printf '%s\n' "${d:+$d/}$name"
+  # Every component under its on-disk spelling, as evidence.sh records it.
+  local path
+  path="$(vetdd_disk_path "$top" "${d:+$d/}$name")"
+  case "/$(printf '%s' "$path" | tr 'A-Z' 'a-z')/" in */.git/*) die "$p is .git or inside it" ;; esac
+  printf '%s\n' "$path"
 }
 
 files=(); oracle=(); pass=(); argv=(); have_cmd=0
@@ -81,9 +81,20 @@ parse() {
     case "$1" in
       --file) [ $# -ge 2 ] || die "--file needs a path"; files+=("$(rel "$2")") || exit 2; shift 2 ;;
       --oracle-file) [ $# -ge 2 ] || die "--oracle-file needs a path"
-        oracle+=("$(rel "$2")") || exit 2
+        o="$(rel "$2")" || exit 2
+        # evidence.sh refuses an oracle file name with a control character; refuse it before anything is parked.
+        vetdd_inside_repo "$top" "$o" || die "an oracle file name with a control character cannot be used"
+        # One entry per file: a file named twice is one oracle file (as evidence.sh records it).
+        seen=0
+        for x in ${oracle[@]+"${oracle[@]}"}; do [ "$x" = "$o" ] && seen=1; done
+        [ "$seen" -eq 1 ] || oracle+=("$o")
         case "$2" in -*) pass+=("$1" "./$2") ;; *) pass+=("$1" "$2") ;; esac; shift 2 ;;
-      --seam|--oracle-version) [ $# -ge 2 ] || die "$1 needs a value"; pass+=("$1" "$2"); shift 2 ;;
+      --seam) [ $# -ge 2 ] || die "$1 needs a value"; pass+=("$1" "$2"); shift 2 ;;
+      --oracle-version) [ $# -ge 2 ] || die "$1 needs a value"
+        # Checked here, before the fix is parked: evidence.sh refuses it with exit 2, which would
+        # otherwise read as "the calibration did not go red" (exit 1).
+        vetdd_is_slice_id "$2" || die "--oracle-version takes letters, digits, and . _ -"
+        pass+=("$1" "$2"); shift 2 ;;
       --) shift; argv=("$@"); have_cmd=1; return ;;
       *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version)" ;;
     esac

@@ -7,6 +7,16 @@
 #           (4) infrastructure_error / inconclusive never count as red or green
 # Final:    (5) the latest after/integrated tree_hash matches the current working tree
 #           (6) oracle.files sha256 match the current files
+# Oracle:   (8) the version chain of accepted runs: an oracle is its version plus the sha256 of its
+#               files. Within the final green's version the files do not change from its first red
+#               on, nor after any green of that version (edits before the first red are the test
+#               being written); the final green has a red with the same oracle before it (a red the
+#               command produced, not one forced with --outcome on exit 0, 126, or 127); the final version is
+#               not a replaced one come back; and nothing after the final green uses another oracle. A version left behind is
+#               history: bumping it and recording its red clears an earlier slip. This catches an
+#               oracle file edited after its green, and a weakening that stops the recorded command
+#               going red. It is a tripwire, not a boundary: a weakening that still goes red, a red
+#               from another command, and helpers or fixtures not named with --oracle-file pass it.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule.
 # Exit code: number of failing slices (capped at 125); 2 on usage errors.
 set -u
@@ -63,12 +73,62 @@ def neither: .outcome == "infrastructure_error" or .outcome == "inconclusive";
      | "2: before run \(.seq) is accepted but ended pass"),
     ($acc[] | select(green and .outcome == "target_failure")
      | "3: \(.kind) run \(.seq) is accepted but ended target_failure"),
+    ($acc[] | select(green and .outcome == "pass" and (.exit_code // 0) != 0)
+     | "3: \(.kind) run \(.seq) ended pass only because --outcome forced it (the command exited \(.exit_code)); the evidence cannot be edited back, so fix the cause and record the slice again under a new slice id"),
     (if $last_green != null and ($last_green.accepted == false or $last_green.outcome != "pass")
      then "3: latest \($last_green.kind) run \($last_green.seq) ended \($last_green.outcome)"
      else empty end),
     ($acc[] | select(.kind != "calibration" and neither)
      | "4: \(.kind) run \(.seq) is accepted but ended \(.outcome), which is neither red nor green"),
     (if $last_green == null then "5: no after or integrated run" else empty end)
+  )'
+
+# Rule 8, over accepted runs in seq order, each with the oracle it was measured with.
+ORACLE_RULES='
+def green: .kind == "after" or .kind == "integrated";
+# A red the command itself produced: an outcome forced with --outcome on an exit 0, or on a
+# command that could not run (126, 127), is not one.
+def red: (.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
+         and .exit_code != 0 and .exit_code != 126 and .exit_code != 127;
+def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
+def vname: if . == null then "unset" else tostring end;
+def recorded: (.oracle | type) == "object" and (.oracle.files | type) == "array";
+def usable: recorded and (.exit_code | type) == "number";
+[.runs[] | select(.accepted != false)] as $accepted
+| [$accepted[] | select(usable)] | sort_by(.seq) as $acc
+| ([$acc[] | select(green and .outcome == "pass")] | last) as $g
+| (
+    ($accepted[] | select(recorded | not) | "8: run \(.seq) has no oracle record, so the oracle chain cannot be checked"),
+    ($accepted[] | select(recorded and (usable | not)) | "8: run \(.seq) has no numeric exit_code, so it cannot count as a red or a green"),
+    (($g // ($acc | last)) as $ref
+     | select($ref != null)
+     # Edits before the oracle'"'"'s first red with this identity are the test being written, not a change.
+     | ([$acc[] | select(red and oid == ($ref | oid))] | first | .seq // 0) as $from
+     # A version that already went green is finished: editing it later needs a new version too.
+     | [$acc[] | select(oid.v == ($ref | oid).v and oid.f != ($ref | oid).f
+                       and (.seq >= $from or (green and .outcome == "pass")))] | first
+     | select(. != null)
+     | "8: the oracle files changed while the version stayed \(oid.v | vname) (run \(.seq) differs from run \($ref.seq)); bump --oracle-version, record a red for the new version (calibrate.sh unfix for a defect or a new behavior, plant and planted for a behavior-preserving slice), then the green. If another slice added its test to the same file, give each slice its own test file, or write every test before any before run (modes/test.md)"),
+    (if $g != null and ([$acc[] | select(red and .seq < $g.seq and oid == ($g | oid))] | length) == 0
+     then (if ([$acc[] | select((.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
+                                and .seq < $g.seq and oid == ($g | oid))] | length) > 0
+           then "8: the only red runs with the oracle of the final green run \($g.seq) (version \(($g | oid).v | vname)) were forced with --outcome on a command that exited 0 or could not run (126, 127); make the oracle run and report failure through its exit code (references/feedback-loop-ladder.md)"
+           else "8: no red run with the oracle of the final green run \($g.seq) (version \(($g | oid).v | vname)) precedes it; a new or edited oracle needs its own red before its green" end)
+     else empty end),
+    # Only the version that is final counts: a version left behind is history.
+    ((($g // ($acc | last)) | if . == null then null else oid.v end) as $final_v
+     | $acc | reduce .[] as $r ({prev: null, started: false, left: [], out: []};
+        ($r | oid).v as $v
+        | if .started and $v != .prev
+          then (if $v == $final_v and any(.left[]; . == $v)
+                then .out += ["8: version \($v | vname) is used again at run \($r.seq) after it was replaced; a changed oracle takes a new version"]
+                else . end)
+               | .left += [.prev] | .prev = $v
+          else .prev = $v | .started = true end)
+     | .out[]),
+    ([$acc[] | select($g != null and .seq > $g.seq and oid != ($g | oid))] | first
+     | select(. != null)
+     | "8: run \(.seq) uses oracle version \((oid).v | vname) after the final green run \($g.seq); record the green again with it")
   )'
 
 current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
@@ -83,7 +143,9 @@ check_slice() {
     echo "schema: meta.json is not valid evidence for slice '$slice'"
     return
   fi
-  jq -r "$HISTORY_RULES" "$meta"
+  # A filter that errors on a malformed record prints nothing; that must fail, never read as OK.
+  jq -r "$HISTORY_RULES" "$meta" 2>/dev/null || echo "1: could not evaluate the run history (a run record is malformed)"
+  jq -r "$ORACLE_RULES" "$meta" 2>/dev/null || echo "8: could not evaluate the oracle chain (a run's oracle record is malformed)"
 
   final_tree="$(jq -r '[.runs[] | select(.kind == "after" or .kind == "integrated")] | last | .tree.tree_hash // empty' "$meta")"
   if [ -n "$final_tree" ]; then
@@ -93,25 +155,42 @@ check_slice() {
     fi
   fi
 
+  # Each entry is a repo-relative path and a hash; anything else is never skipped, and nothing
+  # outside the repository is opened.
+  if ! jq -e '(.oracle.files | type) == "array" and all(.oracle.files[];
+        type == "object" and (.path | type) == "string" and ((.sha256 | type) == "string" or .sha256 == null)
+        and (.path | startswith("/") | not) and (.path | split("/") | index("..") == null)
+        and (.path | explode | all(. > 31 and (. < 127 or . > 159))))' "$meta" >/dev/null 2>&1; then
+    echo "6: oracle.files holds an entry that is not a repo-relative path and a hash"
+    return
+  fi
   if [ "$(jq '.oracle.files | length' "$meta")" -eq 0 ]; then
     echo "6: oracle.files is empty; nothing binds the evidence to an oracle"
   fi
   jq -r '.oracle.files[] | "\(.path)\t\(.sha256 // "")"' "$meta" |
     while IFS="$(printf '\t')" read -r path want; do
+      if ! vetdd_inside_repo "$root" "$path"; then echo "6: oracle file $path is a symbolic link or outside the repository"; continue; fi
       if [ ! -f "$root/$path" ]; then echo "6: oracle file $path is missing"; continue; fi
       have="$(vetdd_sha256 "$root/$path")"
-      [ "$have" = "$want" ] || echo "6: oracle file $path changed since it was recorded"
+      [ "$have" = "$want" ] || echo "6: oracle file $path changed since it was recorded; record the slice again with a bumped --oracle-version and a red for it (rule 8; a file shared with another slice: modes/test.md)"
     done
 }
 
 failed=0
 for slice in "${slices[@]}"; do
+  # Pass or fail is decided on the raw problems; the display filter only shapes what is shown.
   problems="$(check_slice "$slice")"
+  # A name that is not a slice id (a stray directory, possibly holding control characters or
+  # newlines) is never printed as given.
+  if vetdd_is_slice_id "$slice"; then shown="$slice"; else shown="<invalid slice name>"; fi
   if [ -z "$problems" ]; then
-    echo "$slice: OK"
+    echo "$shown: OK"
   else
     failed=$((failed + 1))
-    printf '%s\n' "$problems" | while IFS= read -r line; do echo "$slice: FAIL ($line)"; done
+    # Recorded values (versions, paths) reach the terminal: strip control characters.
+    shown_problems="$(printf '%s\n' "$problems" | vetdd_printable)"
+    [ -n "$shown_problems" ] || shown_problems="a problem that could not be displayed"
+    printf '%s\n' "$shown_problems" | while IFS= read -r line; do echo "$shown: FAIL ($line)"; done
   fi
 done
 [ "$failed" -le 125 ] || failed=125

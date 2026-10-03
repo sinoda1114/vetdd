@@ -8,7 +8,7 @@
   "properties": {
     "slice_id": { "$ref": "#/$defs/sliceId" },
     "oracle": {
-      "description": "The oracle as of the latest run; check-evidence rule 6 rehashes its files.",
+      "description": "The oracle of the latest accepted run; check-evidence rule 6 rehashes its files.",
       "$ref": "#/$defs/oracle"
     },
     "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } }

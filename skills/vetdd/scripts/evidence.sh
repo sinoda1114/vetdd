@@ -13,6 +13,7 @@ set -u
 
 die() { printf 'evidence.sh: %s\n' "$1" >&2; exit 2; }
 
+unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
 . "${BASH_SOURCE[0]%/*}/lib/common.sh"
 vetdd_require_jq evidence.sh
 . "${BASH_SOURCE[0]%/*}/lib/tree-hash.sh"
@@ -34,7 +35,10 @@ while [ $# -gt 0 ]; do
       case "$2" in [1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;; *) die "--infra-exit takes an exit code from 1 to 255, got '$2'" ;; esac
       infra_exits="$infra_exits$2 "; shift 2 ;;
     --seam) [ $# -ge 2 ] || die "--seam needs a value"; seam_opt="$2"; seam_set=1; shift 2 ;;
-    --oracle-version) [ $# -ge 2 ] || die "--oracle-version needs a value"; version_opt="$2"; version_set=1; shift 2 ;;
+    --oracle-version) [ $# -ge 2 ] || die "--oracle-version needs a value"
+      # The version is printed by check-evidence: letters, digits, . _ - only.
+      vetdd_is_slice_id "$2" || die "--oracle-version takes letters, digits, and . _ - (got an unsupported value)"
+      version_opt="$2"; version_set=1; shift 2 ;;
     --oracle-file) [ $# -ge 2 ] || die "--oracle-file needs a value"; oracle_files+=("$2"); shift 2 ;;
     --) shift; break ;;
     *) die "unexpected argument '$1' (put the command after --)" ;;
@@ -54,19 +58,39 @@ cwd_rel="${prefix%/}"; [ -n "$cwd_rel" ] || cwd_rel="."
 # Resolve oracle files to repo-relative paths before running anything.
 rel_files=()
 for f in ${oracle_files[@]+"${oracle_files[@]}"}; do
+  case "$f" in -*) f="./$f" ;; esac  # dirname would read it as an option
   [ -f "$f" ] || die "oracle file not found: $f"
-  abs="$(cd "$(dirname "$f")" && pwd -P)/$(basename "$f")"
+  fdir="$(cd "$(dirname "$f")" && pwd -P)"
+  # The on-disk spelling: an oracle is identified by its paths (check-evidence rule 8).
+  abs="$fdir/$(vetdd_disk_name "$fdir" "$f")"
   case "$abs" in
-    "$root"/*) rel_files+=("${abs#"$root"/}") ;;
-    *) die "oracle file is outside the repository: $f" ;;
+    "$root"/*) rel="$(vetdd_disk_path "$root" "${abs#"$root"/}")" ;;
+    *) die "oracle file is a symbolic link or outside the repository: $f" ;;
   esac
+  vetdd_inside_repo "$root" "$rel" || die "oracle file is a symbolic link or outside the repository: $f"
+  rel_files+=("$rel")
 done
+# One entry per file: a file named twice (test.sh and ./test.sh) is still one oracle file.
+if [ ${#rel_files[@]} -gt 1 ]; then
+  deduped=()
+  while IFS= read -r f; do deduped+=("$f"); done < <(printf '%s\n' "${rel_files[@]}" | awk '!seen[$0]++')
+  rel_files=("${deduped[@]}")
+fi
 
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
 mkdir -p "$dir/runs" || die "cannot create $dir"
 if [ ! -f "$meta" ]; then
   jq -n --arg s "$slice" '{slice_id: $s, oracle: {seam: null, version: null, files: []}, runs: []}' > "$meta"
+fi
+
+# Inherited paths come from meta.json: check them before the command runs, as for --oracle-file.
+if [ ${#rel_files[@]} -eq 0 ]; then
+  jq -e 'all(.oracle.files[]?; (.path | type) == "string" and (.path | explode | all(. > 31 and (. < 127 or . > 159))))' \
+    "$meta" >/dev/null 2>&1 || die "an inherited oracle path in $meta is malformed"
+  while IFS= read -r p; do
+    vetdd_inside_repo "$root" "$p" || die "inherited oracle file is a symbolic link or outside the repository: $p"
+  done < <(jq -r '.oracle.files[]?.path' "$meta")
 fi
 
 seq=$(( $(jq '[.runs[].seq] | max // 0' "$meta") + 1 ))
@@ -102,7 +126,8 @@ hash_files() {
   local p sum
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    sum=""; [ -f "$root/$p" ] && sum="$(vetdd_sha256 "$root/$p")"
+    # Checked again here: the command that just ran could have swapped the file for a link.
+    sum=""; vetdd_inside_repo "$root" "$p" && [ -f "$root/$p" ] && sum="$(vetdd_sha256 "$root/$p")"
     jq -n --arg p "$p" --arg s "$sum" '{path: $p, sha256: (if $s == "" then null else $s end)}'
   done | jq -s '.'
 }
@@ -129,7 +154,8 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
     | (if $seam_set == 1 then .seam = $seam else . end)
     | (if $version_set == 1 then .version = $version else . end)
     | .files = $files) as $oracle
-  | .oracle = $oracle
+  # A rejected run keeps its own record but never becomes the oracle later runs inherit.
+  | (if $accepted then .oracle = $oracle else . end)
   | .runs += [{
       seq: $seq, kind: $kind, cmd: $cmd,
       exit_code: $exit_code, outcome: $outcome, accepted: $accepted,

@@ -35,7 +35,7 @@ Label each claim Measured (you ran it) or inferred.
 `<record instructions>` depends on the role:
 
 - author: "Record `before` first; it must end target_failure for the agreed reason. Then make the smallest change and record `after`; it must end pass."
-- refactorer: "Record only `after`, once, after your final edit (or once with no edit). Do not record `before`; the parent already recorded a calibration red for this slice."
+- refactorer: "Record only `after`, once, after your final edit (or once with no edit). Do not record `before`; the parent already recorded a calibration red for this slice. Leave out `--oracle-version` and `--oracle-file`: the slice keeps the oracle the parent recorded, and naming a different set or version fails check-evidence rule 8."
 - verifier or judge-side reader: "Do not record anything; read the evidence under .vetdd/evidence/ only."
 
 Rules for the parent:
@@ -43,5 +43,5 @@ Rules for the parent:
 - Write every path as an absolute path. `$VETDD` is the skill's base directory (SKILL.md step 0); a subagent cannot resolve it.
 - Pass context by file pointer. Do not paste file contents into the brief.
 - One writer per worktree. A brief for a writing subagent names a worktree that no other writer uses.
-- The refactorer brief is the same template with Task = "refactor for clarity; behavior must not change", Oracle = every existing test, and the refactorer's record instructions. The parent records the calibration red before spawning (modes/test.md, "Calibration red without losing work").
+- The refactorer brief is the same template with Task = "refactor for clarity; behavior must not change", Oracle = every existing test, the evidence.sh line without `--oracle-version` and `--oracle-file`, and the refactorer's record instructions. The parent records the calibration red before spawning (modes/test.md, "Calibration red without losing work").
 - The parent reads the subagent's diff and evidence before summarizing. "Done" from a subagent is a claim, not a verdict.

@@ -2,7 +2,7 @@
 
 How to build an oracle when the obvious one is not available. Try the rungs in order; stop at the first that yields a loop that is red-capable, deterministic, fast, and agent-runnable. Source: mattpocock `diagnosing-bugs` Phase 1, adapted.
 
-Every rung must produce ONE command whose exit code (or one line of output) says pass or fail. Record it through `$VETDD/scripts/evidence.sh`.
+Every rung must produce ONE command whose exit code says pass or fail. When the verdict is in the output (one line, a `KEY=VALUE`), wrap the command so the exit code carries it (`grep -q`, `test`): a red forced with `--outcome` on an exit 0, or on a command that could not run (126, 127), does not count for check-evidence rule 8. Record it through `$VETDD/scripts/evidence.sh`.
 
 | # | rung | when | red signal |
 |---|---|---|---|

@@ -98,3 +98,71 @@ verified_oracle_edit() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"s1: OK"* ]]
 }
+
+@test "with core.ignorecase, a staged path matches a recorded oracle path spelled in another case (L1)" {
+  verified_oracle_edit
+  git config core.ignorecase true
+  # The index spells the file one way, the record another (a rename without git mv).
+  tamper s1 '.oracle.files[0].path = "TEST.SH"'
+  printf '# edited after green\n' >> test.sh
+  git add test.sh
+  run hook
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"running check-evidence.sh"* ]]
+}
+
+@test "without core.ignorecase, the match stays exact" {
+  verified_oracle_edit
+  git config core.ignorecase false
+  tamper s1 '.oracle.files[0].path = "TEST.SH"'
+  printf '# edited after green\n' >> test.sh
+  git add test.sh
+  run hook
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing to check"* ]]
+}
+
+@test "an evidence directory whose name is not a slice id blocks the commit, never printed or passed on (N1)" {
+  verified_oracle_edit
+  cp -R .vetdd/evidence/s1 ".vetdd/evidence/x$(printf '\033')]0;pwn$(printf '\007')"
+  cp -R .vetdd/evidence/s1 .vetdd/evidence/--repo
+  git add test.sh
+  run hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"s1: OK"* ]]
+  [[ "$output" != *$'\033'* ]]
+  [[ "$output" != *$'\007'* ]]
+  [[ "$output" == *"2 evidence directories have names that are not slice ids"* ]]
+  [[ "$output" == *"blocked"* ]]
+  VETDD_BYPASS=1 run hook
+  [ "$status" -eq 0 ]
+}
+
+@test "a staged oracle file with a non-ASCII name is matched (N2)" {
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = 42 ]\n' > 'テスト.sh'
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file 'テスト.sh' -- sh 'テスト.sh'
+  printf '42\n' > value.txt
+  ev s1 after -- sh 'テスト.sh'
+  printf '# edited after green\n' >> 'テスト.sh'
+  git add 'テスト.sh'
+  run hook
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"s1: FAIL (6: "* ]]
+}
+
+@test "a hook that cannot load the vetdd scripts blocks unless VETDD_BYPASS=1 (N4)" {
+  verified_oracle_edit
+  git add test.sh
+  VETDD_SCRIPTS_DIR="$BATS_TEST_TMPDIR/missing" run "$SCRIPTS/hooks/pre-commit"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot load the vetdd scripts"* ]]
+  VETDD_BYPASS=1 VETDD_SCRIPTS_DIR="$BATS_TEST_TMPDIR/missing" run "$SCRIPTS/hooks/pre-commit"
+  [ "$status" -eq 0 ]
+}
+
+@test "a hook whose scripts are gone still lets a commit through when there is no evidence (R1)" {
+  git add test.sh
+  VETDD_SCRIPTS_DIR="$BATS_TEST_TMPDIR/missing" run "$SCRIPTS/hooks/pre-commit"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

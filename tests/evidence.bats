@@ -303,3 +303,110 @@ setup() { make_repo; }
   run ev s1 before --infra-exit 0 -- sh test.sh
   [ "$status" -eq 2 ]
 }
+
+@test "an oracle file is recorded under its on-disk spelling, so another letter case is the same oracle (O4)" {
+  [ -e "$REPO/TEST.SH" ] || skip "the file system is case-sensitive"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after --oracle-file TEST.SH -- sh test.sh
+  run jq -r '[.runs[].oracle.files[].path] | unique | join(",")' "$REPO/.vetdd/evidence/s1/meta.json"
+  [ "$output" = "test.sh" ]
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "an oracle file is recorded under its own name, never under a hard or symbolic link to it (D1)" {
+  ln test.sh a-hard.sh
+  ln -s test.sh a-soft.sh
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  run jq -r '.runs[0].oracle.files[0].path' "$REPO/.vetdd/evidence/s1/meta.json"
+  [ "$output" = "test.sh" ]
+}
+
+@test "--oracle-version takes letters, digits, and . _ - only (D4)" {
+  run ev s1 before --oracle-version "$(printf 'v1\033[2K')" --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--oracle-version"* ]]
+  [ ! -e "$REPO/.vetdd/evidence/s1/meta.json" ]
+  run ev s1 before --oracle-version 'v1.2_rc-3' --oracle-file test.sh -- sh test.sh
+  [ "$status" -ne 2 ]
+}
+
+@test "an oracle file's directories are recorded under their on-disk spelling too (E3)" {
+  mkdir -p "$REPO/tests"
+  cp test.sh "$REPO/tests/a.sh"
+  [ -e "$REPO/TESTS/a.sh" ] || skip "the file system is case-sensitive"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file TESTS/a.sh -- sh tests/a.sh
+  run jq -r '.runs[0].oracle.files[0].path' "$REPO/.vetdd/evidence/s1/meta.json"
+  [ "$output" = "tests/a.sh" ]
+}
+
+@test "the exact name is kept when a link differing only in case sits beside it (E4)" {
+  ln test.sh TEST.SH 2>/dev/null || skip "the file system is case-insensitive"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  run jq -r '.runs[0].oracle.files[0].path' "$REPO/.vetdd/evidence/s1/meta.json"
+  [ "$output" = "test.sh" ]
+}
+
+@test "a rejected run does not change the oracle that later runs inherit (G2)" {
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '42\n' > value.txt
+  run ev s1 before --oracle-version v9 -- sh test.sh
+  [ "$status" -ne 0 ]
+  ev s1 after -- sh test.sh
+  run jq -r '.oracle.version, .runs[2].oracle.version' "$REPO/.vetdd/evidence/s1/meta.json"
+  [ "$output" = "v1
+v1" ]
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "an oracle file named twice is recorded once, so it is the same oracle as naming it once (H2)" {
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh --oracle-file ./test.sh -- sh test.sh
+  run jq -r '.runs[0].oracle.files | length' "$REPO/.vetdd/evidence/s1/meta.json"
+  [ "$output" = "1" ]
+  printf '42\n' > value.txt
+  ev s1 after --oracle-file test.sh -- sh test.sh
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "an oracle file that is a symbolic link or reached through one is refused (P1)" {
+  ln -s test.sh a-soft.sh
+  run ev s1 before --oracle-version v1 --oracle-file a-soft.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"symbolic link or outside the repository"* ]]
+  [ ! -e "$REPO/.vetdd/evidence/s1/meta.json" ]
+}
+
+@test "an inherited oracle path that leaves the repository is refused before the command runs (P1)" {
+  record_good_slice s1
+  printf 'secret\n' > "$REPO/../outside.txt"
+  ln -s .. lnk
+  jq '.oracle.files = [{"path": "lnk/outside.txt", "sha256": null}]' .vetdd/evidence/s1/meta.json > m && mv m .vetdd/evidence/s1/meta.json
+  run ev s1 after -- touch ran.txt
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"symbolic link or outside the repository"* ]]
+  [ ! -e ran.txt ]
+  jq '.oracle.files = [{"path": "x\n../outside.txt", "sha256": null}]' .vetdd/evidence/s1/meta.json > m && mv m .vetdd/evidence/s1/meta.json
+  run ev s1 after -- touch ran.txt
+  [ "$status" -eq 2 ]
+  [ ! -e ran.txt ]
+}
+
+@test "an inherited oracle path with a .. component is refused, even when a symlinked directory would make it look inside (Q2)" {
+  record_good_slice s1
+  mkdir -p "$REPO/../far/deep"; printf 'secret\n' > "$REPO/../far/outside.txt"
+  ln -s ../far/deep d
+  jq '.oracle.files = [{"path": "d/../outside.txt", "sha256": null}]' .vetdd/evidence/s1/meta.json > m && mv m .vetdd/evidence/s1/meta.json
+  run ev s1 after -- touch ran.txt
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"symbolic link or outside the repository"* ]]
+  [ ! -e ran.txt ]
+}
