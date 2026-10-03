@@ -174,3 +174,38 @@ EOF
   [ "$output" = "target_failure,ok,10,1,1,1,13" ]
   [ -z "$(git status --porcelain --untracked-files=all | grep -v '^?? .vetdd/')" ]
 }
+
+@test "a report path through a directory symlink under .vetdd/ is refused before anything is deleted (B1)" {
+  mkdir -p .vetdd sub && printf 'keep\n' > sub/keep.json && git add sub/keep.json && git commit -q -m keep
+  ln -s ../sub .vetdd/lnk
+  run ev s1 calibration --test-report "jest-json:.vetdd/lnk/keep.json" -- true
+  [ "$status" -eq 2 ]
+  [ "$(cat sub/keep.json)" = "keep" ]
+  [ ! -e "$REPO/.vetdd/evidence/s1/meta.json" ]
+}
+
+@test "a report path with // or a missing parent cannot reach the evidence (B1)" {
+  run ev s1 calibration --test-report "jest-json:.vetdd//evidence/s1/meta.json" -- true
+  [ "$status" -eq 2 ]
+  [ ! -e "$REPO/.vetdd/evidence/s1/meta.json" ]
+  mkdir -p .vetdd/evidence/s2
+  ln -s evidence/s2 .vetdd/lnk2
+  run ev s2 calibration --test-report "jest-json:.vetdd/lnk2/x/out.json" -- true
+  [ "$status" -eq 2 ]
+}
+
+@test "an empty report or two concatenated reports is status invalid and the run is still recorded (B2)" {
+  run ev s1 calibration --test-report "jest-json:$R" -- sh -c "mkdir -p .vetdd/reports && : > $R; exit 1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.runs[0] | [.outcome, .tests.status] | join(",")')" = "target_failure,invalid" ]
+  run ev s1 calibration --test-report "jest-json:$R" -- sh -c "mkdir -p .vetdd/reports && cat '$FIX/vitest5-pass.json' '$FIX/vitest5-pass.json' > $R"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.runs[1] | [.outcome, .tests.status] | join(",")')" = "pass,invalid" ]
+}
+
+@test "an absolute report path spelled through a symlink to the repository is accepted (B3)" {
+  ln -s "$REPO" "$BATS_TEST_TMPDIR/alias"
+  run ev s1 calibration --test-report "jest-json:$BATS_TEST_TMPDIR/alias/$R" -- sh -c "$(write_report "$FIX/vitest5-pass.json" 0)"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.runs[0].tests.status')" = "ok" ]
+}

@@ -140,6 +140,8 @@ tests_json=null
 if [ -n "$report_rel" ]; then
   tests_json="$(vetdd_test_report_import "$root" "$report_rel" "$dir/${log_rel%.log}.tests.json")" \
     || tests_json='{"format": "jest-json", "status": "invalid"}'  # the run is recorded regardless
+  printf '%s' "$tests_json" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || tests_json='{"format": "jest-json", "status": "invalid"}'
 fi
 if [ -n "$required" ] && [ "$outcome" != "$required" ]; then accepted=false; fi
 

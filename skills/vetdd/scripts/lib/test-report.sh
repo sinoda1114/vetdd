@@ -5,12 +5,20 @@
 # vetdd_report_rel <root> <prefix> <path>: print <path> (relative to the directory <prefix> under
 # <root>, or absolute under <root>) relative to <root>; fail when it leaves the repository.
 vetdd_report_rel() {
-  local root="$1" prefix="$2" p="$3"
+  local root="$1" prefix="$2" p="$3" d tail
   case "$p" in
-    "$root"/*) p="${p#"$root"/}" ;;
-    /*) return 1 ;;
+    /*)
+      # An absolute path may name the repository through a symlink: resolve its deepest existing
+      # directory (the report's own directory may not exist yet) and keep the rest as written.
+      d="$(dirname -- "$p")"; tail=""
+      while [ ! -d "$d" ] && [ "$d" != / ]; do tail="/${d##*/}$tail"; d="$(dirname -- "$d")"; done
+      d="$(CDPATH='' cd -P -- "$d" && pwd -P)" || return 1
+      p="${d%/}$tail/${p##*/}"
+      case "$p" in "$root"/*) p="${p#"$root"/}" ;; *) return 1 ;; esac ;;
     *) while :; do case "$p" in ./*) p="${p#./}" ;; *) break ;; esac; done; p="$prefix$p" ;;
   esac
+  # One spelling per path: a doubled slash would slip past the .vetdd/evidence/ check.
+  p="$(printf '%s' "$p" | sed 's#//*#/#g')"
   vetdd_inside_repo "$root" "$p" || return 1
   printf '%s\n' "$p"
 }
@@ -19,8 +27,16 @@ vetdd_report_rel() {
 # tree that check-evidence rule 5 hashes, nor the evidence: under .vetdd/ (not .vetdd/evidence/)
 # or a git-ignored, untracked path, and not a directory.
 vetdd_report_allowed() {
-  local root="$1" rel="$2" parent phys
+  local root="$1" rel="$2" parent phys rest cur comp
   [ ! -d "$root/$rel" ] || return 1
+  # No symbolic link anywhere on the path, so the checks below see where the file really is and the
+  # rm -f before the run cannot reach a tracked file or the evidence (existing or not yet created).
+  rest="$rel"; cur="$root"
+  while [ -n "$rest" ]; do
+    case "$rest" in */*) comp="${rest%%/*}"; rest="${rest#*/}" ;; *) comp="$rest"; rest="" ;; esac
+    cur="$cur/$comp"
+    [ ! -L "$cur" ] || return 1
+  done
   # The physical directory, so a link into the evidence is caught; letter case folded for
   # case-insensitive file systems.
   parent="$(dirname -- "$root/$rel")"
@@ -62,6 +78,8 @@ vetdd_test_report_import() {
   # Checked again here: the command that just ran could have swapped the report for a link.
   if ! vetdd_inside_repo "$root" "$rel" || [ -d "$root/$rel" ]; then status=invalid
   elif [ ! -f "$root/$rel" ]; then status=missing
+  # Exactly one JSON object: an empty file or two concatenated reports would print no value or two.
+  elif ! jq -e -s 'length == 1 and (.[0] | type) == "object"' "$root/$rel" >/dev/null 2>&1; then status=invalid
   elif ! jq --arg root "$root" "$VETDD_JEST_JSON" "$root/$rel" > "$copy" 2>/dev/null; then status=invalid
   elif ! sum="$(vetdd_sha256 "$copy")"; then status=invalid
   fi
