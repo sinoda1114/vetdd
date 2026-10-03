@@ -209,3 +209,18 @@ EOF
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(mq s1 '.runs[0].tests.status')" = "ok" ]
 }
+
+@test "the evidence directory itself is refused as a report path, and nothing is left behind (D1)" {
+  run ev s1 calibration --test-report "jest-json:.vetdd/evidence" -- true
+  [ "$status" -eq 2 ]
+  [ ! -e "$REPO/.vetdd/evidence/s1/meta.json" ]
+  run ev s1 calibration --test-report "jest-json:.VETDD/Evidence" -- true
+  [ "$status" -eq 2 ]
+}
+
+@test "a tracked file under .vetdd/ is never deleted as a stale report (D1)" {
+  mkdir -p .vetdd && printf 'keep\n' > .vetdd/tracked.json && git add -f .vetdd/tracked.json && git commit -q -m tracked
+  run ev s1 calibration --test-report "jest-json:.vetdd/tracked.json" -- true
+  [ "$status" -eq 2 ]
+  [ "$(cat .vetdd/tracked.json)" = "keep" ]
+}

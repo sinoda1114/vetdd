@@ -91,6 +91,9 @@ if [ -n "$report_opt" ]; then
   vetdd_report_allowed "$root" "$report_rel" \
     || die "--test-report path must be under .vetdd/ (not .vetdd/evidence/) or git-ignored: $report_opt"
 fi
+# A stale report from an earlier run must never be read as this run's. Removed before the evidence
+# directory is created, so a failure leaves nothing behind.
+if [ -n "$report_rel" ]; then rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_opt"; fi
 
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
@@ -115,8 +118,6 @@ tree_hash="$(vetdd_tree_hash "$root")" || die "could not hash the working tree"
 node_version=""
 if command -v node >/dev/null 2>&1; then node_version="$(node --version 2>/dev/null || true)"; fi
 
-# A stale report from an earlier run must never be read as this run's.
-if [ -n "$report_rel" ]; then rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_opt"; fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$@" 2>&1 | tee "$dir/$log_rel"
 exit_code=${PIPESTATUS[0]}

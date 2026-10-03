@@ -45,7 +45,9 @@ vetdd_report_allowed() {
   case "$(printf '%s/' "$phys" | tr 'A-Z' 'a-z')" in
     "$(printf '%s' "$root/.vetdd/evidence/" | tr 'A-Z' 'a-z')"*) return 1 ;;
   esac
-  case "$(printf '%s' "$rel" | tr 'A-Z' 'a-z')" in .vetdd/evidence/*) return 1 ;; esac
+  case "$(printf '%s' "$rel" | tr 'A-Z' 'a-z')" in .vetdd/evidence|.vetdd/evidence/*) return 1 ;; esac
+  # A tracked file is never a stale report to delete, wherever it is.
+  ! git -C "$root" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 || return 1
   case "$rel" in .vetdd/*) return 0 ;; esac
   git -C "$root" check-ignore -q -- "$rel" 2>/dev/null
 }
