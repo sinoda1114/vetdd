@@ -296,3 +296,13 @@ EOF
   done
   [ "$(cat .vetdd/reports/s1.json)" = "other" ]
 }
+
+@test "a report path running through a file or a dangling link at any depth says the path is unusable (O1)" {
+  mkdir -p .vetdd/reports && printf 'x\n' > .vetdd/reports/r.json && ln -s nowhere .vetdd/reports/dang
+  for p in .vetdd/reports/r.json/x/y.json .vetdd/reports/dang/x/y.json; do
+    run ev s1 calibration --test-report "jest-json:$p" -- true
+    [ "$status" -eq 2 ] || { echo "$p: $output"; false; }
+    [[ "$output" == *"is not a usable path inside the repository"* ]] || { echo "$p: $output"; false; }
+  done
+  [ "$(cat .vetdd/reports/r.json)" = "x" ]
+}

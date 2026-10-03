@@ -12,7 +12,11 @@ vetdd_report_rel() {
   case "$p" in ''|*/|*/.|*/..|.|..) return 1 ;; esac
   case "$p" in /*) ;; *) p="$(pwd -P)/$p" ;; esac
   d="$(dirname -- "$p")"; tail=""
-  while [ ! -d "$d" ] && [ "$d" != / ]; do tail="/${d##*/}$tail"; d="$(dirname -- "$d")"; done
+  while [ ! -d "$d" ] && [ "$d" != / ]; do
+    # A missing directory is fine; a file or a dangling link in its place is not a usable path.
+    if [ -e "$d" ] || [ -L "$d" ]; then return 1; fi
+    tail="/${d##*/}$tail"; d="$(dirname -- "$d")"
+  done
   d="$(CDPATH='' cd -P -- "$d" && pwd -P)" || return 1
   p="${d%/}$tail/${p##*/}"
   case "$p" in "$root"/*) p="${p#"$root"/}" ;; *) return 1 ;; esac
