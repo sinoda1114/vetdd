@@ -244,3 +244,18 @@ EOF
   [ "$status" -eq 2 ]
   [ "$(cat .vetdd/tracked.json)" = "keep" ]
 }
+
+@test "only .vetdd/reports/ spelled exactly is a report location; another case is refused on any file system (H1)" {
+  . "$SCRIPTS/lib/common.sh"; . "$SCRIPTS/lib/test-report.sh"
+  root="$(pwd -P)"
+  vetdd_report_allowed "$root" .vetdd/reports/x.json
+  run ! vetdd_report_allowed "$root" .VETDD/reports/x.json
+  run ! vetdd_report_allowed "$root" .vetdd/Reports/x.json
+}
+
+@test "a tracked report is refused even when the index spells it in another case (H1)" {
+  . "$SCRIPTS/lib/common.sh"; . "$SCRIPTS/lib/test-report.sh"
+  mkdir -p .vetdd/reports && printf 'keep\n' > .vetdd/reports/t.json
+  git add -f .vetdd/reports/t.json && git commit -q -m t
+  run ! vetdd_report_allowed "$(pwd -P)" .vetdd/reports/T.json
+}

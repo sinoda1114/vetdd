@@ -2,12 +2,12 @@
 # Format jest-json: the JSON reporter output of jest and vitest (vitest: --reporter=json
 # --outputFile.json=<path>). Counts come from testResults[].assertionResults[].status.
 
-# vetdd_report_rel <root> <prefix> <path>: print where <path> (relative to the current directory, or
+# vetdd_report_rel <root> <path>: print where <path> (relative to the current directory, or
 # absolute) really is, relative to <root> and spelled as on disk; fail when it leaves the repository.
 # The deepest existing directory is resolved physically (symlinks and .. included), since the
-# report's own directory may not exist yet; the rest is kept as written. <prefix> is unused.
+# report's own directory may not exist yet; the rest is kept as written.
 vetdd_report_rel() {
-  local root="$1" p="$3" d tail
+  local root="$1" p="$2" d tail
   case "$p" in /*) ;; *) p="$(pwd -P)/$p" ;; esac
   d="$(dirname -- "$p")"; tail=""
   while [ ! -d "$d" ] && [ "$d" != / ]; do tail="/${d##*/}$tail"; d="$(dirname -- "$d")"; done
@@ -27,8 +27,10 @@ vetdd_report_rel() {
 vetdd_report_allowed() {
   local root="$1" rel="$2"
   [ ! -d "$root/$rel" ] && [ ! -L "$root/$rel" ] || return 1
-  case "$(printf '%s' "$rel" | tr 'A-Z' 'a-z')" in .vetdd/reports/?*) ;; *) return 1 ;; esac
-  ! git -C "$root" ls-files --error-unmatch -- ":(literal)$rel" >/dev/null 2>&1
+  # Exactly .vetdd/reports/: rel is already in its on-disk spelling, and only .vetdd is left out
+  # of the tree hash and ignored, in that spelling.
+  case "$rel" in .vetdd/reports/?*) ;; *) return 1 ;; esac
+  ! git -C "$root" ls-files --error-unmatch -- ":(literal,icase)$rel" >/dev/null 2>&1
 }
 
 # jq: a jest-json report -> {format, passed, failed, skipped, todo, other, total, tests: [...]}.
@@ -71,5 +73,6 @@ vetdd_test_report_import() {
     jq -n --arg s "$status" '{format: "jest-json", status: $s}'
     return 0
   fi
-  jq --arg sum "$sum" '{format, status: "ok", passed, failed, skipped, todo, other, total, sha256: $sum}' "$copy"
+  jq --arg sum "$sum" '{format, status: "ok", passed, failed, skipped, todo, other, total, sha256: $sum}' "$copy" \
+    || { rm -f -- "$copy"; return 1; }
 }

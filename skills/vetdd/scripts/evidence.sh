@@ -86,7 +86,7 @@ fi
 
 report_rel=""
 if [ -n "$report_opt" ]; then
-  report_rel="$(vetdd_report_rel "$root" "$prefix" "$report_opt")" \
+  report_rel="$(vetdd_report_rel "$root" "$report_opt")" \
     || die "--test-report path is a symbolic link or outside the repository: $report_opt"
   vetdd_report_allowed "$root" "$report_rel" \
     || die "--test-report path must be an untracked file under .vetdd/reports/ (resolved to $report_rel)"
