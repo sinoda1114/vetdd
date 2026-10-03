@@ -114,19 +114,39 @@ write_report() { printf 'mkdir -p .vetdd/reports && cp "%s" %s; exit %s' "$1" "$
   [ "$status" -eq 2 ]
 }
 
-@test "a git-ignored report path is accepted, relative to the current directory, and leaves the tree clean" {
-  mkdir -p sub/ignored  # make_repo ignores ignored/ at any depth
+@test "a report path is relative to the current directory and leaves the tree clean (F1)" {
+  mkdir -p sub
   cd sub
   printf '0\n' > ../value.txt
-  "$SCRIPTS/evidence.sh" s1 before --oracle-version v1 --oracle-file ../test.sh --test-report jest-json:ignored/r.json \
-    -- sh -c "cp '$FIX/vitest5-mixed.json' ignored/r.json; cd .. && sh test.sh"
+  "$SCRIPTS/evidence.sh" s1 before --oracle-version v1 --oracle-file ../test.sh --test-report jest-json:../$R \
+    -- sh -c "mkdir -p ../.vetdd/reports && cp '$FIX/vitest5-mixed.json' ../$R; cd .. && sh test.sh"
   printf '42\n' > ../value.txt
-  "$SCRIPTS/evidence.sh" s1 after --test-report jest-json:ignored/r.json \
-    -- sh -c "cp '$FIX/vitest5-pass.json' ignored/r.json; cd .. && sh test.sh"
+  "$SCRIPTS/evidence.sh" s1 after --test-report jest-json:../$R \
+    -- sh -c "cp '$FIX/vitest5-pass.json' ../$R; cd .. && sh test.sh"
   [ "$(mq s1 '[.runs[].tests.status] | join(",")')" = "ok,ok" ]
   [ "$(mq s1 '.runs[1].tests.passed')" = "9" ]
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "a report path outside .vetdd/reports/ is a usage error, even when git-ignored (F1)" {
+  mkdir -p ignored && printf 'keep\n' > ignored/r.json
+  run ev s1 calibration --test-report "jest-json:ignored/r.json" -- true
+  [ "$status" -eq 2 ]
+  [ "$(cat ignored/r.json)" = "keep" ]
+  mkdir -p .vetdd/judge-logs && printf 'keep\n' > .vetdd/judge-logs/x.log
+  run ev s1 calibration --test-report "jest-json:.vetdd/judge-logs/x.log" -- true
+  [ "$status" -eq 2 ]
+  [ "$(cat .vetdd/judge-logs/x.log)" = "keep" ]
+}
+
+@test "a tracked report spelled in another letter case is never deleted (F1)" {
+  mkdir -p .vetdd/reports && printf 'keep\n' > .vetdd/reports/tracked.json
+  git add -f .vetdd/reports/tracked.json && git commit -q -m tracked
+  [ -e .vetdd/reports/TRACKED.json ] || skip "the file system is case-sensitive"
+  run ev s1 calibration --test-report "jest-json:.vetdd/reports/TRACKED.json" -- true
+  [ "$status" -eq 2 ]
+  [ "$(cat .vetdd/reports/tracked.json)" = "keep" ]
 }
 
 @test "without --test-report the run has no tests field" {
@@ -166,8 +186,8 @@ it.skip("is skipped", () => {});
 it.todo("is a todo");
 EOF
   cd "$K" && git init -q && printf 'node_modules\n' > .gitignore && git add -A && git commit -q -m init
-  run "$SCRIPTS/evidence.sh" k1 calibration --test-report jest-json:.vetdd/vitest.json \
-    -- ./node_modules/.bin/vitest run --reporter=default --reporter=json --outputFile.json=.vetdd/vitest.json
+  run "$SCRIPTS/evidence.sh" k1 calibration --test-report jest-json:.vetdd/reports/vitest.json \
+    -- ./node_modules/.bin/vitest run --reporter=default --reporter=json --outputFile.json=.vetdd/reports/vitest.json
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   run jq -r '.runs[0] | [.outcome, .tests.status, .tests.passed, .tests.failed, .tests.skipped, .tests.todo, .tests.total] | join(",")' \
     "$K/.vetdd/evidence/k1/meta.json"

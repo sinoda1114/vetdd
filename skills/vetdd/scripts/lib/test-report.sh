@@ -2,54 +2,33 @@
 # Format jest-json: the JSON reporter output of jest and vitest (vitest: --reporter=json
 # --outputFile.json=<path>). Counts come from testResults[].assertionResults[].status.
 
-# vetdd_report_rel <root> <prefix> <path>: print <path> (relative to the directory <prefix> under
-# <root>, or absolute under <root>) relative to <root>; fail when it leaves the repository.
+# vetdd_report_rel <root> <prefix> <path>: print where <path> (relative to the current directory, or
+# absolute) really is, relative to <root> and spelled as on disk; fail when it leaves the repository.
+# The deepest existing directory is resolved physically (symlinks and .. included), since the
+# report's own directory may not exist yet; the rest is kept as written. <prefix> is unused.
 vetdd_report_rel() {
-  local root="$1" prefix="$2" p="$3" d tail
-  case "$p" in
-    /*)
-      # An absolute path may name the repository through a symlink: resolve its deepest existing
-      # directory (the report's own directory may not exist yet) and keep the rest as written.
-      d="$(dirname -- "$p")"; tail=""
-      while [ ! -d "$d" ] && [ "$d" != / ]; do tail="/${d##*/}$tail"; d="$(dirname -- "$d")"; done
-      d="$(CDPATH='' cd -P -- "$d" && pwd -P)" || return 1
-      p="${d%/}$tail/${p##*/}"
-      case "$p" in "$root"/*) p="${p#"$root"/}" ;; *) return 1 ;; esac ;;
-    *) while :; do case "$p" in ./*) p="${p#./}" ;; *) break ;; esac; done; p="$prefix$p" ;;
-  esac
-  # One spelling per path: a doubled slash would slip past the .vetdd/evidence/ check.
+  local root="$1" p="$3" d tail
+  case "$p" in /*) ;; *) p="$(pwd -P)/$p" ;; esac
+  d="$(dirname -- "$p")"; tail=""
+  while [ ! -d "$d" ] && [ "$d" != / ]; do tail="/${d##*/}$tail"; d="$(dirname -- "$d")"; done
+  d="$(CDPATH='' cd -P -- "$d" && pwd -P)" || return 1
+  p="${d%/}$tail/${p##*/}"
+  case "$p" in "$root"/*) p="${p#"$root"/}" ;; *) return 1 ;; esac
+  # One spelling per path: no doubled slash, and every component as it is on disk, so another
+  # letter case on a case-insensitive file system names the file git and the checks below see.
   p="$(printf '%s' "$p" | sed 's#//*#/#g')"
   vetdd_inside_repo "$root" "$p" || return 1
-  printf '%s\n' "$p"
+  vetdd_disk_path "$root" "$p"
 }
 
-# vetdd_report_allowed <root> <rel>: true when deleting and writing the report cannot change the
-# tree that check-evidence rule 5 hashes, nor the evidence: under .vetdd/ (not .vetdd/evidence/)
-# or a git-ignored, untracked path, and not a directory.
+# vetdd_report_allowed <root> <rel>: true when deleting and writing the report cannot touch
+# anything but an earlier report: <rel> (as vetdd_report_rel prints it) is a file directly or
+# deeper under .vetdd/reports/, not a directory, not a symbolic link, and not tracked by git.
 vetdd_report_allowed() {
-  local root="$1" rel="$2" parent phys rest cur comp
-  [ ! -d "$root/$rel" ] || return 1
-  # No symbolic link anywhere on the path, so the checks below see where the file really is and the
-  # rm -f before the run cannot reach a tracked file or the evidence (existing or not yet created).
-  rest="$rel"; cur="$root"
-  while [ -n "$rest" ]; do
-    case "$rest" in */*) comp="${rest%%/*}"; rest="${rest#*/}" ;; *) comp="$rest"; rest="" ;; esac
-    cur="$cur/$comp"
-    [ ! -L "$cur" ] || return 1
-  done
-  # The physical directory, so a link into the evidence is caught; letter case folded for
-  # case-insensitive file systems.
-  parent="$(dirname -- "$root/$rel")"
-  phys="$parent"
-  if [ -d "$parent" ]; then phys="$(CDPATH='' cd -P -- "$parent" && pwd -P)" || return 1; fi
-  case "$(printf '%s/' "$phys" | tr 'A-Z' 'a-z')" in
-    "$(printf '%s' "$root/.vetdd/evidence/" | tr 'A-Z' 'a-z')"*) return 1 ;;
-  esac
-  case "$(printf '%s' "$rel" | tr 'A-Z' 'a-z')" in .vetdd/evidence|.vetdd/evidence/*) return 1 ;; esac
-  # A tracked file is never a stale report to delete, wherever it is.
-  ! git -C "$root" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 || return 1
-  case "$rel" in .vetdd/*) return 0 ;; esac
-  git -C "$root" check-ignore -q -- "$rel" 2>/dev/null
+  local root="$1" rel="$2"
+  [ ! -d "$root/$rel" ] && [ ! -L "$root/$rel" ] || return 1
+  case "$(printf '%s' "$rel" | tr 'A-Z' 'a-z')" in .vetdd/reports/?*) ;; *) return 1 ;; esac
+  ! git -C "$root" ls-files --error-unmatch -- ":(literal)$rel" >/dev/null 2>&1
 }
 
 # jq: a jest-json report -> {format, passed, failed, skipped, todo, other, total, tests: [...]}.

@@ -8,7 +8,7 @@
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
 #   --infra-exit <code> declares another exit code that means "could not observe" (for example a
 #   verify script's exit 2), so it is recorded as infrastructure_error and never counts as red
-# --test-report: the runner's JSON report at <path> (under .vetdd/ or git-ignored) is deleted before
+# --test-report: the runner's JSON report at <path> (under .vetdd/reports/) is deleted before
 #   the run and read after it; its counts go on the run as `tests`. It never changes the outcome.
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
@@ -89,7 +89,7 @@ if [ -n "$report_opt" ]; then
   report_rel="$(vetdd_report_rel "$root" "$prefix" "$report_opt")" \
     || die "--test-report path is a symbolic link or outside the repository: $report_opt"
   vetdd_report_allowed "$root" "$report_rel" \
-    || die "--test-report path must be under .vetdd/ (not .vetdd/evidence/) or git-ignored: $report_opt"
+    || die "--test-report path must be an untracked file under .vetdd/reports/ (resolved to $report_rel)"
 fi
 # A stale report from an earlier run must never be read as this run's. Removed before the evidence
 # directory is created, so a failure leaves nothing behind.
