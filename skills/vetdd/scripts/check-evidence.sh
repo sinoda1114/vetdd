@@ -311,7 +311,7 @@ def num: if type == "number" then . else error("not a number") end;
 # Per command, among the runs of the version the final green rests on: the commands that asked for a
 # report at some point, each with its own latest green (after or integrated). A command that never
 # asked for one (a type check) is not asked about.
-[.runs[] | select(.accepted != false and .oracle.version == $fv)] as $acc
+[.runs[] | select(.accepted != false and .oracle.version == $fv and .audit == null)] as $acc
 | ($acc | group_by(.cmd | tojson)[])
 | select(any(.[]; (.tests | type) == "object"))
 | ([.[] | select(.kind == "after" or .kind == "integrated")] | max_by(.seq)) as $l

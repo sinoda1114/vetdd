@@ -199,6 +199,8 @@ drop_pyc() {
   case "$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')" in *.py) ;; *) return 0 ;; esac
   local dir stem
   dir="$(dirname -- "$top/$1")"; stem="$(basename -- "$1")"; stem="${stem%.*}"
+  # A __pycache__ that is a link points somewhere this script has not checked: leave it alone.
+  [ -d "$dir/__pycache__" ] && [ ! -L "$dir/__pycache__" ] || return 0
   rm -f "$dir/__pycache__/$stem".*.pyc 2>/dev/null
   return 0
 }

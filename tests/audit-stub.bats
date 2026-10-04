@@ -779,3 +779,35 @@ audit_run() {
   grep -q 'oracle-version.sh.*calibrate.sh unfix' "$doc"
   ! grep -q 'record its `before` again, and audit again' "$doc"
 }
+
+# --- round 3 ---------------------------------------------------------------------------------------
+
+@test "a symlinked __pycache__ is left alone: the pyc files it points at survive a python stub run" {
+  mkdir outside_cache
+  printf 'keep' > outside_cache/mod.cpython-399.pyc
+  ln -s "$PWD/outside_cache" __pycache__
+  git add -A && git commit -q -m link
+  run cal stub py2 --file mod.py --oracle-file spy.sh -- sh spy.sh mod.py
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ -e outside_cache/mod.cpython-399.pyc ]
+  [ "$(cat mod.py)" = "$(printf 'def f(n):\n    return n * 2')" ]
+}
+
+@test "an audit run that asked for a report does not make 9c warn about the real green (round 3)" {
+  printf 'mkdir -p .vetdd/reports\n[ -z "${REPORT:-}" ] || cp "$REPORT" .vetdd/reports/r.json\nexit "${EXIT:-0}"\n' > runner.sh
+  printf 'echo t\n' > test.sh
+  FIX="$BATS_TEST_DIRNAME/fixtures/reports"; PASS="$FIX/vitest5-pass.json"; R=.vetdd/reports/r.json
+  # The same command throughout, so the audit run and the real green fall in one group.
+  EXIT=1 ev s1 before --oracle-version v1 --oracle-file test.sh -- sh runner.sh >/dev/null 2>&1 || true
+  EXIT=0 ev s1 after --oracle-version v1 --oracle-file test.sh -- sh runner.sh >/dev/null 2>&1 || true
+  REPORT="$PASS" EXIT=1 ev s1 calibration --audit undefined-imports --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
+  run check s1
+  [[ "$output" != *"9c"* ]] || { echo "$output"; false; }
+}
+
+@test "the rubric judges the test text whether or not an audit ran, and wants the audit log to show the test's own failure" {
+  local rub="$BATS_TEST_DIRNAME/../skills/vetdd/references/final-judge-rubric.md" sec
+  sec="$(sed -n '/^## 3\. /,/^## 4\. /p' "$rub")"
+  ! printf '%s' "$sec" | grep -q 'where a slice has no `audit` run'
+  printf '%s' "$sec" | grep -q 'does not provide an export named'
+}
