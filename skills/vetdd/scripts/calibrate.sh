@@ -16,7 +16,8 @@
 #       imports with a stub whose exports are all undefined, run the command as a calibration marked
 #       audit: {"kind": "undefined-imports"}, then put the files back. It must end target_failure
 #       (exit 0): a test that still passes (exit 1) observes nothing. Stubs: .ts .tsx .jsx .mjs .mts ->
-#       `export {};`; .cjs .cts -> `module.exports = {};`; .js -> by the nearest package.json "type"
+#       `export {};` (.ts .tsx .jsx: `module.exports = {};` when the nearest package.json says
+#       "commonjs"); .cjs .cts -> `module.exports = {};`; .js -> by the nearest package.json "type"
 #       (an empty CommonJS module, or `export {};` for "module"); .py -> a module __getattr__ returning
 #       None; any other extension is a usage error before anything changes. Run it once the test is green; it is
 #       also the rule 10b record (check-evidence), unless audit-note.sh says it does not apply.
@@ -235,6 +236,14 @@ restore() {
       drop_pyc "$f"
     done < "$state/files"
   fi
+  if [ -f "$state/tmps" ]; then
+    # Temp files a stub write was interrupted on: only paths inside the repository, never a directory.
+    while IFS= read -r f; do
+      case "$f" in "$top"/*) ;; *) continue ;; esac
+      case "/$f/" in */../*|*/./*) continue ;; esac
+      [ ! -d "$f" ] && rm -f -- "$f"
+    done < "$state/tmps"
+  fi
   if [ -f "$state/saved" ] && [ -f "$state/files" ]; then
     local rec path mode sha restored=$'\n'
     while IFS= read -r -d '' rec; do
@@ -285,7 +294,10 @@ stub_text() {
     *.js)
       if [ "$(nearest_package_type "$1")" = module ]; then printf 'export {};\n'
       else printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'; fi ;;
-    *.ts|*.tsx|*.jsx|*.mjs|*.mts) printf 'export {};\n' ;;
+    *.ts|*.tsx|*.jsx)
+      if [ "$(nearest_package_type "$1")" = commonjs ]; then printf 'module.exports = {};\n'
+      else printf 'export {};\n'; fi ;;
+    *.mjs|*.mts) printf 'export {};\n' ;;
     *.py) printf "def __getattr__(name):\n    if name.startswith('__') and name.endswith('__'):\n        raise AttributeError(name)\n    return None\n" ;;
     *) return 1 ;;
   esac
@@ -297,16 +309,23 @@ mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 write_stub() {
   local f="$1" tmp
   # Write the stub before taking over the old mode: a read-only original would make the temp file unwritable.
-  tmp="$(mktemp "$top/$f.XXXXXX")" && stub_text "$f" > "$tmp" && chmod "$(mode_of "$top/$f")" "$tmp" \
+  # The temp file is listed in the state before anything can interrupt the write; restore removes it.
+  tmp="$(mktemp "$top/$f.XXXXXX")" && printf '%s\n' "$tmp" >> "$state/tmps" \
+    && stub_text "$f" > "$tmp" && chmod "$(mode_of "$top/$f")" "$tmp" \
     && mv -f "$tmp" "$top/$f" && drop_pyc "$f" || { rm -f "$tmp"; return 1; }
 }
 
 audit=""  # undefined-imports while a stub run is going
 run_oracle() {
   local meta="$top/.vetdd/evidence/$slice/meta.json" last rc outcome audit_opt=()
-  # The stubbed run must leave no bytecode of the stub anywhere (PYTHONPYCACHEPREFIX moves it out of
-  # reach of drop_pyc), so Python is told not to write any while it runs.
-  [ -z "$audit" ] || { audit_opt=(--audit "$audit"); export PYTHONDONTWRITEBYTECODE=1; }
+  # Python reads and writes bytecode only in an empty directory of its own while the stub is in place:
+  # no cache of the original can be mistaken for the stub, and none of the stub outlives it (the state
+  # directory goes with the run). PYTHONPYCACHEPREFIX redirects both, wherever the caller had put it.
+  if [ -n "$audit" ]; then
+    audit_opt=(--audit "$audit")
+    mkdir -p "$state/pycache" || { warn "cannot create $state/pycache"; return 1; }
+    export PYTHONPYCACHEPREFIX="$state/pycache" PYTHONDONTWRITEBYTECODE=1
+  fi
   last="$(jq '[.runs[].seq] | max // 0' "$meta" 2>/dev/null || echo 0)"
   [ "${VETDD_TEST_HOOKS:-}" != 1 ] || export VETDD_CALIBRATE_PID=$$
   "$here/evidence.sh" "$slice" calibration ${pass[@]+"${pass[@]}"} ${audit_opt[@]+"${audit_opt[@]}"} -- "${argv[@]}"; rc=$?

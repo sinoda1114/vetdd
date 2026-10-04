@@ -42,7 +42,7 @@ A `<slice>: WARN (...)` line in `artifact/check-evidence.txt` (check-evidence ru
 
 - 2: every test added or changed in `artifact/diff.patch` (full text in `artifact/tests/`) calls the subject through its public interface and asserts a literal value or a spec-guaranteed property whose source is named in the reply's Oracle section; no assertion is only existence, only a call, or a value recomputed from the code under test; the check-evidence output has no `10:`, `10a`, or `10b` line (rule 10: every import stubbed with `undefined` must turn the oracle red); no test would still pass if every import returned `undefined`, judged from the test text whether or not the slice has an `audit` run (rule 10 only asks slices that opted in, and an audit run only shows the oracle went red, not why); and, for a slice with an audit run, its log (`runs/<seq>-calibration.log`) shows a `TypeError` on an undefined export or the test's own assertion failing, not a load-time error (`TS2305`, `does not provide an export named`, `SyntaxError`, `Cannot find module`), which is red for the wrong reason and proves nothing.
 - 1: one hollow assertion exists but is paired with a meaningful one on another input.
-- 0: a test would still pass if every import returned `undefined` (a `10a` or `10b` line in the check-evidence output shows it mechanically; otherwise judge it from the test text), or an existing assertion was weakened.
+- 0: a test would still pass if every import returned `undefined` (a `10a` line in the check-evidence output shows it mechanically; otherwise judge it from the test text; a missing audit record only keeps the score below 2; it is not proof of a hollow test), or an existing assertion was weakened.
 
 ## 4. smallest-change
 

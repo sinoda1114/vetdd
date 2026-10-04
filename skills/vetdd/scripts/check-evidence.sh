@@ -51,8 +51,9 @@
 #               oracle imports replaced by a stub with undefined exports) that is accepted and ended pass,
 #               with the oracle of the final green (an audit of a version left behind is history): the
 #               test observes nothing.
-#           (10b) the oracle of the final green run has an accepted audit run that ended target_failure
-#               (not forced with --outcome), or an audits[] entry not_applicable with a reason
+#           (10b) the oracle of the final green run has an accepted audit run, recorded after a green run
+#               of that oracle, that ended target_failure (not forced with --outcome; the command is
+#               not compared with the green's, a blind spot), or an audits[] entry not_applicable with a reason
 #               (audit-note.sh). Asked only of a slice whose meta.json has an audits key or a run with
 #               an audit mark (evidence from before the audit, and a slice that never opts in, are not
 #               asked: a blind spot, since a slice that never runs `calibrate.sh stub` is never told to).
@@ -242,12 +243,15 @@ def audited: .audit.kind == "undefined-imports";
      then "10: audits is not an array, so the audit notes cannot be checked"
      elif $opted and $g != null then
        ($g | oid) as $fo
+       | [$acc[] | select(green and .outcome == "pass" and oid == $fo)] as $greens
+       # A caught audit comes after a green run of the same oracle: before that, the red is the unfixed product.
        | ([$acc[] | select(.kind == "calibration" and audited and .outcome == "target_failure"
-                           and .exit_code != 0 and .exit_code != 126 and .exit_code != 127 and oid == $fo)] | length) as $caught
+                           and .exit_code != 0 and .exit_code != 126 and .exit_code != 127 and oid == $fo)
+                  | . as $a | select(any($greens[]; .seq < $a.seq))] | length) as $caught
        | ((($meta.audits // []) | map(select(type == "object" and .kind == "undefined-imports" and .status == "not_applicable"
                                               and (.reason | type) == "string" and (.reason | length) > 0)) | length)) as $noted
        | if $caught + $noted == 0
-         then "10b: no undefined-imports audit for the final oracle; run calibrate.sh stub \($slice) --file <product files> --oracle-file <test files> -- <command> (it must end target_failure), or record why it does not apply with audit-note.sh \($slice) --kind undefined-imports --not-applicable --reason-file <path>"
+         then "10b: no undefined-imports audit for the final oracle after a green run of it; run calibrate.sh stub \($slice) --file <product files> --oracle-file <test files> -- <command> (it must end target_failure), or record why it does not apply with audit-note.sh \($slice) --kind undefined-imports --not-applicable --reason-file <path>"
          else empty end
      else empty end)
   )'

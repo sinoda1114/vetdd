@@ -532,7 +532,7 @@ audit_run() {
   tamper s1 '.audits = []'
   run check s1
   [ "$status" -eq 1 ]
-  [[ "$output" == *"s1: FAIL (10b: no undefined-imports audit for the final oracle; run calibrate.sh stub"* ]]
+  [[ "$output" == *"s1: FAIL (10b: no undefined-imports audit for the final oracle after a green run of it; run calibrate.sh stub"* ]]
   [[ "$output" == *"audit-note.sh s1 --kind undefined-imports --not-applicable --reason-file"* ]]
   [[ "$output" != *"10a"* ]]
 }
@@ -830,4 +830,61 @@ audit_run() {
 
 @test "audit-note.sh does not name a skill eval as a slice it applies to" {
   ! sed -n 1,8p "$SCRIPTS/audit-note.sh" | grep -q 'eval'
+}
+
+# --- round 5 ---------------------------------------------------------------------------------------
+
+@test "10b does not count an audit recorded before any green of the same oracle (round 5)" {
+  # The red of an unfixed product looks the same as the red of a stubbed one.
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1 || true
+  audit_run s1 sh -c 'exit 1'
+  printf '42\n' > value.txt
+  ev s1 after --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"s1: FAIL (10b: no undefined-imports audit for the final oracle"* ]]
+  [[ "$output" == *"after a green run"* ]]
+}
+
+@test "restore removes the temporary file a stub write left, and only inside the repository (round 5)" {
+  local st; st="$(state_dir lt1)"
+  mkdir -p "$st"
+  printf 'export {};\n' > lib.ts.AbC123
+  printf 'outside\n' > "$BATS_TEST_TMPDIR/outside.txt"
+  printf '%s\n%s\n' "$(git rev-parse --show-toplevel)/lib.ts.AbC123" "$BATS_TEST_TMPDIR/outside.txt" > "$st/tmps"
+  run cal restore lt1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -e lib.ts.AbC123 ]
+  [ -e "$BATS_TEST_TMPDIR/outside.txt" ]
+  [ ! -e "$st" ]
+}
+
+@test "write_stub records its temporary file for restore before it can be interrupted" {
+  grep -q 'tmps' "$SCRIPTS/calibrate.sh"
+}
+
+@test "criterion 3 scores 0 only for what the audit shows (10a); a missing audit record (10b) is not proof of a hollow test" {
+  local rub="$BATS_TEST_DIRNAME/../skills/vetdd/references/final-judge-rubric.md" zero
+  zero="$(sed -n '/^## 3\. /,/^## 4\. /p' "$rub" | grep '^- 0:')"
+  [[ "$zero" == *"10a"* ]]
+  [[ "$zero" != *"10b"* ]]
+}
+
+@test "a .ts file in a package that says commonjs gets the CommonJS stub (round 5)" {
+  printf '{"type": "commonjs"}\n' > package.json
+  printf 'export const g = 1;\n' > cj.ts
+  git add -A && git commit -q -m cjts
+  run cal stub ct1 --file cj.ts --oracle-file spy.sh -- sh spy.sh cj.ts
+  [ "$(cat seen.out)" = 'module.exports = {};' ] || { echo "ts: $(cat seen.out)"; false; }
+  [ "$(cat cj.ts)" = 'export const g = 1;' ]
+}
+
+@test "the python stub run reads and writes bytecode only in an empty cache directory of its own (round 5)" {
+  printf '#!/bin/sh\nprintf "%%s" "${PYTHONPYCACHEPREFIX:-unset}" > env.out\nls -A "$PYTHONPYCACHEPREFIX" | wc -l | tr -d " " > env.count\nexit 0\n' > envspy.sh
+  unset PYTHONPYCACHEPREFIX
+  run cal stub pp1 --file mod.py --oracle-file envspy.sh -- sh envspy.sh
+  [ "$status" -eq 1 ]
+  [ "$(cat env.count)" = 0 ]
+  case "$(cat env.out)" in "$(cd "$(git rev-parse --git-dir)" && pwd -P)"/*) ;; *) echo "prefix: $(cat env.out)"; false ;; esac
+  [ ! -e "$(cat env.out)" ]
 }
