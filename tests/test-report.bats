@@ -314,3 +314,14 @@ EOF
     [ "$(mq s1 '.runs[0].tests.status')" = "invalid" ] || { echo "$body"; false; }
   done
 }
+
+@test "a report path with a trailing or embedded newline is a usage error, not a renamed path (P1)" {
+  for p in "$(printf '.vetdd/reports/r.json\n_')" "$(printf '.vetdd/reports/x\n/r.json')"; do
+    run ev s2 calibration --test-report "jest-json:$p" -- true
+    [ "$status" -eq 2 ] || { echo "$output"; false; }
+  done
+  # A bare trailing newline: command substitution would strip it, so build the argument without it.
+  arg=".vetdd/reports/r.json"$'\n'
+  run ev s2 calibration --test-report "jest-json:$arg" -- true
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+}

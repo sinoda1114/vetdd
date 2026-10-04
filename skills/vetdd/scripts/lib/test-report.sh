@@ -10,6 +10,9 @@ vetdd_report_rel() {
   local root="$1" p="$2" d tail
   # A report is a file: a path ending in /, /. or /.. would lose or change its last component.
   case "$p" in ''|*/|*/.|*/..|.|..) return 1 ;; esac
+  # Checked on the raw argument: command substitution below strips trailing newlines, which would
+  # turn a path with a newline into another name. Control characters are never part of a report path.
+  case "$p" in *[[:cntrl:]]*) return 1 ;; esac
   case "$p" in /*) ;; *) p="$(pwd -P)/$p" ;; esac
   d="$(dirname -- "$p")"; tail=""
   while [ ! -d "$d" ] && [ "$d" != / ]; do
