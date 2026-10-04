@@ -236,7 +236,12 @@ def audited: .audit.kind == "undefined-imports";
 | [$accepted[] | select(usable)] as $acc
 | ([$acc[] | select(green and .outcome == "pass")] | sort_by(.seq) | last) as $g
 | [$accepted[] | select(.kind == "calibration" and audited)] as $audits
-| (($meta | has("audits")) or ([$meta.runs[] | .audit != null] | any)) as $opted
+# Opted in to the undefined-imports audit: a run with its mark, or an audits key that is empty, not an
+# array, or holds any entry but a mutation note (an unknown kind fails closed). A mutation run or note
+# alone opts in to nothing here.
+| (($meta | has("audits")) and (($meta.audits | type) != "array" or ($meta.audits | length) == 0
+     or any($meta.audits[]; type != "object" or .kind != "mutation"))) as $noted_key
+| ($noted_key or ([$meta.runs[] | .audit.kind? == "undefined-imports"] | any)) as $opted
 | (
     ($audits[] | select(.outcome == "pass") | select($g == null or oid == ($g | oid))
      | "10a: the audit run \(.seq | num) (every import stubbed with undefined) still passed, so the test observes nothing; make the test call or check the product code"),

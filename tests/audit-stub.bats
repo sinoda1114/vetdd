@@ -495,13 +495,14 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
   [ "$status" -eq 0 ]
 }
 
+# A mutation note is valid since PR7a (S3b); an unknown kind is still refused, and opts in to rule 10.
 @test "the schema rejects a tampered audit or audits entry" {
   printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
   ev s1 calibration --audit undefined-imports --oracle-file test.sh -- sh test.sh
   an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
   local f
   for f in '.runs[0].audit.kind = "mutation"' '.runs[0].audit.extra = 1' '.runs[0].audit = {}' '.runs[0].audit = "undefined-imports"' \
-           '.audits[0].kind = "mutation"' '.audits[0].status = "done"' '.audits[0].status = "applicable"' '.audits[0].reason = ""' \
+           '.audits[0].kind = "stryker"' '.audits[0].status = "done"' '.audits[0].status = "applicable"' '.audits[0].reason = ""' \
            'del(.audits[0].reason)' 'del(.audits[0].recorded_at)' '.audits[0].recorded_at = "yesterday"' '.audits[0].extra = 1' \
            'del(.audits[0].kind)' 'del(.audits[0].status)' '.audits = {}'; do
     cp "$REPO/.vetdd/evidence/s1/meta.json" "$BATS_TEST_TMPDIR/ok.json"
@@ -560,7 +561,7 @@ audit_run() {
   printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
   an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
   local f
-  for f in '.audits[0].reason = ""' '.audits[0].reason = 5' '.audits[0].status = "done"' '.audits[0].kind = "mutation"'; do
+  for f in '.audits[0].reason = ""' '.audits[0].reason = 5' '.audits[0].status = "done"' '.audits[0].kind = "stryker"'; do
     cp "$REPO/.vetdd/evidence/s1/meta.json" "$BATS_TEST_TMPDIR/keep.json"
     tamper s1 "$f"
     run check s1

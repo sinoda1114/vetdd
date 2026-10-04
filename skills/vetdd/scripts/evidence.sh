@@ -2,7 +2,8 @@
 # Record one oracle run as evidence for a slice.
 # Usage: evidence.sh <slice-id> <kind> [--outcome <o>] [--infra-exit <code>]... [--seam <s>]
 #                    [--oracle-version <v>] [--oracle-file <path>]... [--test-report jest-json:<path>]
-#                    [--audit undefined-imports] -- <command...>
+#                    [--audit undefined-imports | --audit mutation --mutation-report stryker-json:<path>]
+#                    -- <command...>
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
@@ -14,7 +15,13 @@
 #   is recorded with audit: {"kind": "undefined-imports"}, meaning every product file the oracle
 #   imports was replaced by a stub whose exports are all undefined for this run. check-evidence
 #   rule 10 reads the mark, and a marked run is never counted as a red (the product was stubbed, not
-#   defective). It is validated before the command runs; no other value exists.
+#   defective). It is validated before the command runs.
+# --audit mutation --mutation-report stryker-json:<path> (calibration runs only, always together): the
+#   command is a mutation testing run (StrykerJS with the json reporter, mutating the lines the slice
+#   changed). The report at <path> (under .vetdd/reports/, the --test-report rules) is deleted before
+#   the run and read after it; the run gets audit: {"kind": "mutation", "report": {...}} with the
+#   counts by mutant status, the sha256 of each mutated file's source, and a copy of the report in
+#   runs/<seq>-mutation.json. A marked run is never a red. It never changes the outcome.
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -26,6 +33,7 @@ unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
 vetdd_require_jq evidence.sh
 . "${BASH_SOURCE[0]%/*}/lib/tree-hash.sh"
 . "${BASH_SOURCE[0]%/*}/lib/test-report.sh"
+. "${BASH_SOURCE[0]%/*}/lib/mutation-report.sh"
 
 [ $# -ge 2 ] || die "usage: evidence.sh <slice-id> <kind> [options] -- <command...>"
 slice="$1"; kind="$2"; shift 2
@@ -36,7 +44,7 @@ case "$kind" in
 esac
 
 outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "
-oracle_files=(); report_opt=""; audit_opt=""
+oracle_files=(); report_opt=""; audit_opt=""; mreport_opt=""; mreport_set=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --outcome) [ $# -ge 2 ] || die "--outcome needs a value"; outcome_opt="$2"; shift 2 ;;
@@ -52,8 +60,11 @@ while [ $# -gt 0 ]; do
     --test-report) [ $# -ge 2 ] || die "--test-report needs jest-json:<path>"
       case "$2" in jest-json:?*) report_opt="${2#jest-json:}" ;; *) die "--test-report takes jest-json:<path>" ;; esac
       shift 2 ;;
-    --audit) [ $# -ge 2 ] || die "--audit needs undefined-imports"
-      case "$2" in undefined-imports) audit_opt="$2" ;; *) die "--audit takes undefined-imports" ;; esac
+    --audit) [ $# -ge 2 ] || die "--audit needs undefined-imports or mutation"
+      case "$2" in undefined-imports|mutation) audit_opt="$2" ;; *) die "--audit takes undefined-imports or mutation" ;; esac
+      shift 2 ;;
+    --mutation-report) [ $# -ge 2 ] || die "--mutation-report needs stryker-json:<path>"
+      case "$2" in stryker-json:?*) mreport_opt="${2#stryker-json:}"; mreport_set=1 ;; *) die "--mutation-report takes stryker-json:<path>" ;; esac
       shift 2 ;;
     --) shift; break ;;
     *) die "unexpected argument '$1' (put the command after --)" ;;
@@ -61,6 +72,11 @@ while [ $# -gt 0 ]; do
 done
 [ $# -ge 1 ] || die "no command given after --"
 [ -z "$audit_opt" ] || [ "$kind" = calibration ] || die "--audit goes with a calibration run only"
+if [ "$audit_opt" = mutation ]; then
+  [ "$mreport_set" -eq 1 ] || die "--audit mutation needs --mutation-report stryker-json:<path>"
+elif [ "$mreport_set" -eq 1 ]; then
+  die "--mutation-report goes with --audit mutation only"
+fi
 case "$outcome_opt" in
   ""|pass|target_failure|infrastructure_error|inconclusive) ;;
   *) die "invalid outcome '$outcome_opt' (pass|target_failure|infrastructure_error|inconclusive)" ;;
@@ -100,6 +116,14 @@ if [ -n "$report_opt" ]; then
   vetdd_report_allowed "$root" "$report_rel" \
     || die "--test-report path must be an untracked file under .vetdd/reports/ (resolved to $report_rel)"
 fi
+mreport_rel=""
+if [ -n "$mreport_opt" ]; then
+  mreport_rel="$(vetdd_report_rel "$root" "$mreport_opt")" \
+    || die "--mutation-report path is not a usable path inside the repository (a symbolic link, outside, through a file, or unreadable): $mreport_opt"
+  vetdd_report_allowed "$root" "$mreport_rel" \
+    || die "--mutation-report path must be an untracked file under .vetdd/reports/ (resolved to $mreport_rel)"
+  [ "$mreport_rel" != "$report_rel" ] || die "--mutation-report and --test-report must be different files"
+fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
 mkdir -p "$dir/runs" || die "cannot create $dir"
@@ -130,6 +154,10 @@ if [ -n "$report_rel" ]; then
   rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_rel"
   mkdir -p -- "$(dirname -- "$root/$report_rel")" || die "cannot create the directory for $report_rel"
 fi
+if [ -n "$mreport_rel" ]; then
+  rm -f -- "$root/$mreport_rel" || die "cannot remove the stale mutation report $mreport_rel"
+  mkdir -p -- "$(dirname -- "$root/$mreport_rel")" || die "cannot create the directory for $mreport_rel"
+fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$@" 2>&1 | tee "$dir/$log_rel"
 exit_code=${PIPESTATUS[0]}
@@ -155,6 +183,15 @@ if [ -n "$report_rel" ]; then
     || tests_json='{"format": "jest-json", "status": "invalid"}'  # the run is recorded regardless
   printf '%s' "$tests_json" | jq -e 'type == "object"' >/dev/null 2>&1 \
     || tests_json='{"format": "jest-json", "status": "invalid"}'
+fi
+audit_json=null
+if [ "$audit_opt" = undefined-imports ]; then audit_json='{"kind": "undefined-imports"}'
+elif [ "$audit_opt" = mutation ]; then
+  mreport_json="$(vetdd_mutation_report_import "$root" "$mreport_rel" "$dir/runs/$(printf '%03d' "$seq")-mutation.json" \
+    "runs/$(printf '%03d' "$seq")-mutation.json")" || mreport_json=""
+  printf '%s' "$mreport_json" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || mreport_json="$(jq -n --arg p "$mreport_rel" '{format: "stryker-json", path: $p, status: "invalid"}')"
+  audit_json="$(printf '%s' "$mreport_json" | jq -c '{kind: "mutation", report: .}')"
 fi
 if [ -n "$required" ] && [ "$outcome" != "$required" ]; then accepted=false; fi
 
@@ -185,7 +222,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
   --arg started_at "$started_at" --arg ended_at "$ended_at" --arg log "$log_rel" \
   --arg head_sha "$head_sha" --arg tree_hash "$tree_hash" \
   --arg cwd "$cwd_rel" --arg node_version "$node_version" \
-  --arg audit "$audit_opt" \
+  --argjson audit "$audit_json" \
   --argjson seam_set "$seam_set" --arg seam "$seam_opt" \
   --argjson version_set "$version_set" --arg version "$version_opt" \
   --argjson files "$files_json" --argjson tests "$tests_json" '
@@ -207,7 +244,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
       },
       oracle: $oracle
     } + (if $tests == null then {} else {tests: $tests} end)
-      + (if $audit == "" then {} else {audit: {kind: $audit}} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
+      + (if $audit == null then {} else {audit: $audit} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; die "could not update $meta"
 }
 
