@@ -306,3 +306,11 @@ EOF
   done
   [ "$(cat .vetdd/reports/r.json)" = "x" ]
 }
+
+@test "a report without a numeric numTotalTests is invalid (P2 from review)" {
+  for body in '{"testResults":[]}' '{"testResults":[],"numTotalTests":"0"}'; do
+    rm -rf "$REPO/.vetdd/evidence/s1"
+    ev s1 calibration --test-report "jest-json:$R" -- sh -c "mkdir -p .vetdd/reports && printf '%s' '$body' > $R"
+    [ "$(mq s1 '.runs[0].tests.status')" = "invalid" ] || { echo "$body"; false; }
+  done
+}

@@ -43,7 +43,7 @@ vetdd_report_allowed() {
 }
 
 # jq: a jest-json report -> {format, passed, failed, skipped, todo, other, total, tests: [...]}.
-# Errors (and so status invalid) when the shape is not jest-json or numTotalTests disagrees.
+# Errors (and so status invalid) when the shape is not jest-json, or numTotalTests is missing or disagrees.
 VETDD_JEST_JSON='
   def bucket: if . == "passed" or . == "failed" or . == "todo" then .
     elif . == "skipped" or . == "pending" or . == "disabled" then "skipped" else "other" end;
@@ -56,7 +56,8 @@ VETDD_JEST_JSON='
   | [.testResults[] | ((.name // "") | tostring | ltrimstr($root + "/")) as $f
      | .assertionResults[] | {file: $f, name: ((.fullName // .title // "") | tostring), status,
                               bucket: (.status | bucket)}] as $t
-  | if ($declared | type) == "number" and $declared != ($t | length) then error("numTotalTests disagrees") else . end
+  # jest and vitest always write numTotalTests; without it as a number the report is not jest-json.
+  | if ($declared | type) != "number" or $declared != ($t | length) then error("numTotalTests missing or disagrees") else . end
   | {format: "jest-json", passed: ($t | n("passed")), failed: ($t | n("failed")),
      skipped: ($t | n("skipped")), todo: ($t | n("todo")), other: ($t | n("other")),
      total: ($t | length), tests: [$t[] | del(.bucket)]}'
