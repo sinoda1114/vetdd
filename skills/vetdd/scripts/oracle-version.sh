@@ -31,7 +31,11 @@ text_file() {
   local opt="$1" path="$2" content
   [ -f "$path" ] && [ ! -L "$path" ] || die "$opt: $(printf '%s' "$path" | vetdd_printable) is not a regular file"
   [ "$(wc -c < "$path" | tr -d ' ')" -le 4096 ] || die "$opt: the file is larger than 4096 bytes"
-  content="$(cat -- "$path")" || die "$opt: cannot read the file"
+  # A NUL byte would be dropped by the command substitution below, leaving a different text.
+  [ "$(LC_ALL=C tr -d '\000' < "$path" | wc -c | tr -d ' ')" -eq "$(wc -c < "$path" | tr -d ' ')" ] \
+    || die "$opt: the file holds a NUL byte"
+  # Read through a redirection: a name of - is this file, not standard input.
+  content="$(cat < "$path")" || die "$opt: cannot read the file"
   case "$content" in *$'\n'*) die "$opt: the file must hold one line" ;; esac
   text_opt "$opt" "$content"
   TEXT_FILE_VALUE="$content"

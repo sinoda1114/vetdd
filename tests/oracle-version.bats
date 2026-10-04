@@ -291,3 +291,25 @@ perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(mq s1 '.oracle_versions[0].reason')" = "from the file" ]
 }
+
+# --- review round 4 ---------------------------------------------------------------------------
+
+@test "a text file named - is the file, not standard input (H2)" {
+  printf 'from the dash file\n' > ./-
+  run ov s1 --version v1 --change initial --reason-file - < /dev/null
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.oracle_versions[0].reason')" = "from the dash file" ]
+}
+
+@test "a text file holding a NUL byte is refused, never recorded without it (H3)" {
+  printf 'ab\000cd\n' > "$BATS_TEST_TMPDIR/nul.txt"
+  run ov s1 --version v1 --change initial --reason-file "$BATS_TEST_TMPDIR/nul.txt"
+  [ "$status" -eq 2 ]
+  [ ! -e .vetdd/evidence/s1 ]
+}
+
+@test "the docs say where the text files go and that verify bumps are recorded too (H1, H4)" {
+  grep -q '\.vetdd/notes/' "$SCRIPTS/../SKILL.md"
+  grep -q 'oracle-version.sh' "$SCRIPTS/../modes/verify.md"
+  grep -q 'reason-file' "$SCRIPTS/../modes/verify.md"
+}
