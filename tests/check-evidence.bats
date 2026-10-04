@@ -867,7 +867,7 @@ v1_then_v2_red() {
   tamper s1 '.oracle_versions[1].reason = "r" | .oracle_versions[1].change = "initial"'
   run check s1
   [ "$status" -eq 1 ]
-  [[ "$output" == *"8: "*"v2"*"initial"* ]]
+  [[ "$output" == *"8: "*"v2"*"not implementation or meaning"* ]]
 }
 
 @test "rule 8d fails when oracle_versions is not an array or after_seq is not a number" {
@@ -900,7 +900,7 @@ v1_then_v2_red() {
   tamper s1 '.oracle_versions += [{"version": "v2", "change": "x\u001b[2Jy\u009b2K", "reason": "r\u001b[2J", "agreement": {"via": "chat\u001b", "question": "q", "answer": "a"}, "after_seq": 0, "recorded_at": "2026-10-04T00:00:00Z"}]'
   run check s1
   [ "$status" -eq 1 ]
-  [[ "$output" == *"8: "*"recorded with change"* ]]
+  [[ "$output" == *"8: "*"not implementation or meaning"* ]]
   [[ "$output" != *$'\033'* ]]
   [[ "$output" != *$'\xc2\x9b'* ]]
 }
@@ -966,7 +966,7 @@ slip_slice() {
   tamper s1 '.oracle_versions[-1].change = ["meaning"]'
   run check s1
   [ "$status" -eq 1 ]
-  [[ "$output" == *"8: oracle version v3 is recorded with change"* ]]
+  [[ "$output" == *"8: oracle version v3 is recorded with a change that is not implementation or meaning"* ]]
   tamper s1 '.oracle_versions[-1].change = "meaning" | .oracle_versions[-1].agreement.via = ["chat"]'
   run check s1
   [ "$status" -eq 1 ]

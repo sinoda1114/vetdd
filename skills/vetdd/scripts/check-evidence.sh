@@ -156,7 +156,7 @@ def usable: recorded and (.exit_code | type) == "number";
        | (if $e == null or ($e.reason | type) != "string" or ($e.reason | length) == 0
           then (if $r == null
                 then "8: oracle version \($v | vname) has no recorded reason; record it with oracle-version.sh \($slice) --version \($v | vname) --change implementation --reason-file <path> (--change meaning plus --agreement-via, --question-file, --answer-file when the agreed behavior changed) before its red"
-                else "8: oracle version \($v | vname) has no recorded reason and its red is already recorded, so an entry now would come after it; bump --oracle-version, record the new version with oracle-version.sh first (--change implementation, or --change meaning with --agreement-via, --question-file, --answer-file when the agreed behavior changed), then its red and green" end)
+                else "8: oracle version \($v | vname) has no recorded reason and its red is already recorded, so an entry now would come after it; bump --oracle-version, record the new version with oracle-version.sh first (--change implementation --reason-file <path>, or --change meaning with --agreement-via, --question-file, --answer-file when the agreed behavior changed), then its red and green" end)
           else empty end),
          (if $e == null then empty
           elif ($e.change != "implementation" and $e.change != "meaning")
