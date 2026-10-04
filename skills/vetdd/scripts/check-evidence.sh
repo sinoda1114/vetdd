@@ -54,7 +54,8 @@
 #           (10b) the oracle of the final green run has an accepted audit run, recorded after a green run
 #               of that oracle, that ended target_failure (not forced with --outcome; the command is
 #               not compared with the green's, a blind spot), or an audits[] entry not_applicable with a reason
-#               (audit-note.sh). Asked only of a slice whose meta.json has an audits key or a run with
+#               (audit-note.sh) recorded after the final oracle first ran, so a note written for an older
+#               version stops counting once a new one has run. Asked only of a slice whose meta.json has an audits key or a run with
 #               an audit mark (evidence from before the audit, and a slice that never opts in, are not
 #               asked: a blind spot, since a slice that never runs `calibrate.sh stub` is never told to).
 #               An audit run is never a red for rules 1 and 8 (the product was stubbed, not defective)
@@ -248,8 +249,12 @@ def audited: .audit.kind == "undefined-imports";
        | ([$acc[] | select(.kind == "calibration" and audited and .outcome == "target_failure"
                            and .exit_code != 0 and .exit_code != 126 and .exit_code != 127 and oid == $fo)
                   | . as $a | select(any($greens[]; .seq < $a.seq))] | length) as $caught
+       # A note counts for the final oracle when it was recorded after that oracle first ran (the entry
+       # has no version of its own); with no start time to compare, it counts for nothing.
+       | ([$acc[] | select(oid == $fo) | .started_at | select(type == "string")] | min) as $first
        | ((($meta.audits // []) | map(select(type == "object" and .kind == "undefined-imports" and .status == "not_applicable"
-                                              and (.reason | type) == "string" and (.reason | length) > 0)) | length)) as $noted
+                                              and (.reason | type) == "string" and (.reason | length) > 0
+                                              and $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first)) | length)) as $noted
        | if $caught + $noted == 0
          then "10b: no undefined-imports audit for the final oracle after a green run of it; run calibrate.sh stub \($slice) --file <product files> --oracle-file <test files> -- <command> (it must end target_failure), or record why it does not apply with audit-note.sh \($slice) --kind undefined-imports --not-applicable --reason-file <path>"
          else empty end

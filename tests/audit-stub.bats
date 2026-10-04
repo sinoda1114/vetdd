@@ -875,7 +875,7 @@ audit_run() {
   printf 'export const g = 1;\n' > cj.ts
   git add -A && git commit -q -m cjts
   run cal stub ct1 --file cj.ts --oracle-file spy.sh -- sh spy.sh cj.ts
-  [ "$(cat seen.out)" = 'module.exports = {};' ] || { echo "ts: $(cat seen.out)"; false; }
+  [ "$(cat seen.out)" = 'if (typeof module !== "undefined") { module.exports = {}; }' ] || { echo "ts: $(cat seen.out)"; false; }
   [ "$(cat cj.ts)" = 'export const g = 1;' ]
 }
 
@@ -887,4 +887,50 @@ audit_run() {
   [ "$(cat env.count)" = 0 ]
   case "$(cat env.out)" in "$(cd "$(git rev-parse --git-dir)" && pwd -P)"/*) ;; *) echo "prefix: $(cat env.out)"; false ;; esac
   [ ! -e "$(cat env.out)" ]
+}
+
+# --- round 6 ---------------------------------------------------------------------------------------
+
+@test "a not_applicable note recorded before the final oracle's first run does not satisfy 10b (round 6)" {
+  record_good_slice s1
+  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  run check s1
+  [ "$output" = "s1: OK" ]
+  tamper s1 '.audits[0].recorded_at = "2000-01-01T00:00:00Z"'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"s1: FAIL (10b:"* ]]
+}
+
+@test "a note written for version 1 stops counting once version 2 has run (round 6)" {
+  record_good_slice s1
+  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  sleep 1
+  printf '\n# the test now checks the product\n' >> test.sh
+  ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"10b:"* ]]
+}
+
+@test "a note is not counted when no run of the final oracle has a start time (fail closed)" {
+  record_good_slice s1
+  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  tamper s1 '.runs |= map(del(.started_at))'
+  run check s1
+  [[ "$output" == *"10b:"* ]]
+}
+
+@test "the rubric scores a missing audit record at 1 and lists the CommonJS load errors (round 6)" {
+  local rub="$BATS_TEST_DIRNAME/../skills/vetdd/references/final-judge-rubric.md" sec one
+  sec="$(sed -n '/^## 3\. /,/^## 4\. /p' "$rub")"
+  one="$(printf '%s\n' "$sec" | grep '^- 1:')"
+  [[ "$one" == *"audit record"* ]]
+  [[ "$sec" == *"TS2580"* ]]
+  [[ "$sec" == *"module is not defined"* ]]
 }

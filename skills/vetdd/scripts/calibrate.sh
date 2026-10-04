@@ -16,8 +16,8 @@
 #       imports with a stub whose exports are all undefined, run the command as a calibration marked
 #       audit: {"kind": "undefined-imports"}, then put the files back. It must end target_failure
 #       (exit 0): a test that still passes (exit 1) observes nothing. Stubs: .ts .tsx .jsx .mjs .mts ->
-#       `export {};` (.ts .tsx .jsx: `module.exports = {};` when the nearest package.json says
-#       "commonjs"); .cjs .cts -> `module.exports = {};`; .js -> by the nearest package.json "type"
+#       `export {};` (.ts .tsx .jsx: the same guarded CommonJS module as .js when the nearest
+#       package.json says "commonjs"); .cjs .cts -> `module.exports = {};`; .js -> by the nearest package.json "type"
 #       (an empty CommonJS module, or `export {};` for "module"); .py -> a module __getattr__ returning
 #       None; any other extension is a usage error before anything changes. Run it once the test is green; it is
 #       also the rule 10b record (check-evidence), unless audit-note.sh says it does not apply.
@@ -295,7 +295,7 @@ stub_text() {
       if [ "$(nearest_package_type "$1")" = module ]; then printf 'export {};\n'
       else printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'; fi ;;
     *.ts|*.tsx|*.jsx)
-      if [ "$(nearest_package_type "$1")" = commonjs ]; then printf 'module.exports = {};\n'
+      if [ "$(nearest_package_type "$1")" = commonjs ]; then printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'
       else printf 'export {};\n'; fi ;;
     *.mjs|*.mts) printf 'export {};\n' ;;
     *.py) printf "def __getattr__(name):\n    if name.startswith('__') and name.endswith('__'):\n        raise AttributeError(name)\n    return None\n" ;;
