@@ -147,7 +147,8 @@ current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
 # break allowed between the tokens, or fdescribe(. The root name must stand alone (not myit.only, not
 # this.it.only, however spaced). Not covered, so a tripwire and not a boundary: fit( (a common name
 # for other functions), code inside ${...} in a template, a regular-expression literal after a keyword
-# such as return (it reads as division), JSX text (read as code: an it.only( written there is
+# such as return (it reads as division), a division written right after a > (it reads as a regular
+# expression), JSX text (read as code: an it.only( written there is
 # reported, and a bare backtick or quote there can hide what follows), and a focus API renamed or
 # wrapped.
 focused_lines() {
@@ -167,14 +168,14 @@ focused_lines() {
       return 0
     }
     BEGIN {
-      block = 0; tpl = 0; carry = ""; tail = ""
-      re = "(^|[^A-Za-z0-9_$.])(it|test|describe|suite|context|specify)([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*\\.[ \t]*only([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*[(`]"
+      block = 0; tpl = 0; carry = ""; tail = ""; prev = ""
+      re = "(^|[^A-Za-z0-9_$.])(it|test|describe|suite|context|specify)([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*\\.[ \t]*only([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*(<[^()]*>)?[ \t]*[(`]"
       fre = "(^|[^A-Za-z0-9_$.])fdescribe[ \t]*\\("
     }
     {
       line = $0; sub(/\r$/, "", line); n = length(line)
       if (n > 20000) { print "!" NR; next }
-      out = ""; i = 1; str = carry; carry = ""; prev = ""
+      out = ""; i = 1; str = carry; carry = ""
       if (tpl) str = "`"
       while (i <= n) {
         c = substr(line, i, 1); d = substr(line, i + 1, 1)
@@ -193,7 +194,7 @@ focused_lines() {
         if (c == "/" && d == "/") break
         if (c == "/" && d == "*") { block = 1; out = out "  "; i += 2; continue }
         if (c == "\"" || c == sq || c == "`") { str = c; if (c == "`") tpl = 1; out = out c; prev = c; i++; continue }
-        if (c == "/" && (prev == "" || index("(,=:[!&|?{};+-*%~^", prev) > 0)) {
+        if (c == "/" && (prev == "" || index("(,=:[!&|?{};+-*%~^>", prev) > 0)) {
           # A regular-expression literal: skip to its closing slash (not inside [...], not escaped).
           j = i + 1; incls = 0; e = 0
           while (j <= n) {

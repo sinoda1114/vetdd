@@ -313,3 +313,34 @@ record_oracle() {
   run check s1
   [ "$status" -eq 1 ]
 }
+
+# --- round 4: a division that continues on the next line, an arrow function returning a regex -------
+
+@test "rule 9a keeps what the previous line ended with, so a slash that starts a line is a division (F1)" {
+  record_oracle a.test.ts $'const ratio = width\n  / height; it.only("w/h", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 2 "* ]]
+  rm -rf .vetdd
+  record_oracle a.test.ts $'const re =\n  /x"y/;\nit.only("a", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 3 "* ]]
+}
+
+@test "rule 9a reads a regular expression after an arrow as a regular expression (F1)" {
+  record_oracle a.test.ts $'const hasTick = (s) => /`/.test(s);\nit.only("a", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 2 "* ]]
+  rm -rf .vetdd
+  record_oracle a.test.ts $'const f = (s) => /\\/*$/.test(s);\nit.only("a", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+}
+
+@test "rule 9a sees a focused call with a type argument (test.only<T>)" {
+  record_oracle a.test.ts $'test.only<number>("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+}
