@@ -38,6 +38,8 @@ Before any product code, present the agreement through `AskUserQuestion`: exactl
 
 Q3 carries one recommended default for all four of its parts when the change is small and reversible; break it out into a second call only when the human rejects the default. Record the answers in the reply's Oracle section.
 
+Record the first agreement in the evidence as well: `"$VETDD/scripts/oracle-version.sh" <slice> --version <v> --change initial --reason "<agreed behavior>"` (check-evidence rule 8d then asks for a recorded reason on every later version).
+
 If the human says the task is unclear, stop vetdd and run a hearing first (`Call the Skill tool with "hearing"` when it exists; otherwise ask in chat).
 
 ## 3. Choose the parallel shape

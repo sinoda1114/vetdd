@@ -749,3 +749,158 @@ only_path() {
   . "$SCRIPTS/lib/common.sh"
   [ "$(printf 'a\nb' | vetdd_printable | od -An -c | tr -d ' \n')" = 'a\nb' ]
 }
+
+# --- rule 8d: the oracle version log (oracle-version.sh) ----------------------------
+# A version after the first needs a recorded reason; a change in meaning needs a re-agreement; and
+# the new version's first red comes after the entry. Evidence without an oracle_versions key is
+# older than the log and is not asked for it.
+
+ov() { "$SCRIPTS/oracle-version.sh" "$@"; }
+
+# before (red) under v1, then the test is edited and the new version v2 is calibrated red.
+v1_then_v2_red() {
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '# v2\n' >> test.sh
+  ev s1 calibration --oracle-version v2 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+}
+
+@test "rule 8d does not apply to evidence without an oracle_versions key" {
+  v1_then_v2_red
+  [ "$(mq s1 'has("oracle_versions")')" = "false" ]
+  run check s1
+  [ "$status" -eq 0 ]
+  [ "$output" = "s1: OK" ]
+}
+
+@test "rule 8d fails a version after the first that has no entry once the log exists" {
+  ov s1 --version v1 --change initial --reason "agreed behavior"
+  v1_then_v2_red
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"s1: FAIL (8: "*"v2"*"oracle-version.sh"* ]]
+}
+
+@test "rule 8d passes the correct flow for an implementation change" {
+  ov s1 --version v1 --change initial --reason "agreed behavior"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '# v2\n' >> test.sh
+  ov s1 --version v2 --change implementation --reason "clearer message"
+  ev s1 calibration --oracle-version v2 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "rule 8d passes the correct flow for a change in meaning with its re-agreement" {
+  ov s1 --version v1 --change initial --reason "agreed behavior"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '# v2: the agreed value changed\n' >> test.sh
+  ov s1 --version v2 --change meaning --reason "value changed" \
+    --agreement-via AskUserQuestion --question "Is 42 still right?" --answer "Yes"
+  ev s1 calibration --oracle-version v2 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "rule 8d fails a meaning entry whose agreement was removed from meta.json" {
+  ov s1 --version v1 --change initial --reason "agreed behavior"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '# v2\n' >> test.sh
+  ov s1 --version v2 --change meaning --reason "value changed" \
+    --agreement-via chat --question q --answer a
+  ev s1 calibration --oracle-version v2 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  tamper s1 '.oracle_versions[1].agreement = null'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"s1: FAIL (8: "*"v2"*"agreement"* ]]
+  tamper s1 '.oracle_versions[1].agreement = {"via": "chat", "question": "q", "answer": ""}'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: "*"agreement"* ]]
+  tamper s1 '.oracle_versions[1].agreement = {"via": "email", "question": "q", "answer": "a"}'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: "*"agreement"* ]]
+}
+
+@test "rule 8d fails when the new version's only red came before its entry" {
+  ov s1 --version v1 --change initial --reason "agreed behavior"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '# v2\n' >> test.sh
+  ev s1 calibration --oracle-version v2 -- sh test.sh
+  ov s1 --version v2 --change meaning --reason "value changed" \
+    --agreement-via chat --question q --answer a
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"s1: FAIL (8: "*"v2"*"after_seq"* ]]
+}
+
+@test "rule 8d fails an entry with an empty reason, or one marked initial for a later version" {
+  ov s1 --version v1 --change initial --reason "agreed behavior"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '# v2\n' >> test.sh
+  ov s1 --version v2 --change implementation --reason "clearer message"
+  ev s1 calibration --oracle-version v2 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  tamper s1 '.oracle_versions[1].reason = ""'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: "*"v2"*"reason"* ]]
+  tamper s1 '.oracle_versions[1].reason = "r" | .oracle_versions[1].change = "initial"'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: "*"v2"*"initial"* ]]
+}
+
+@test "rule 8d fails when oracle_versions is not an array or after_seq is not a number" {
+  ov s1 --version v1 --change initial --reason "agreed behavior"
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '# v2\n' >> test.sh
+  ov s1 --version v2 --change implementation --reason "clearer message"
+  ev s1 calibration --oracle-version v2 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  tamper s1 '.oracle_versions[1].after_seq = "1"'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: "*"v2"*"after_seq"* ]]
+  tamper s1 '.oracle_versions = "x"'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: "*"oracle_versions"* ]]
+  tamper s1 '.oracle_versions = [1, null, "x"]'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: "*"v2"* ]]
+  [[ "$output" != *"s1: OK"* ]]
+}
+
+@test "rule 8d keeps control characters in the log out of the terminal" {
+  ov s1 --version v1 --change initial --reason "agreed behavior"
+  v1_then_v2_red
+  tamper s1 '.oracle_versions += [{"version": "v2", "change": "x\u001b[2Jy\u009b2K", "reason": "r\u001b[2J", "agreement": {"via": "chat\u001b", "question": "q", "answer": "a"}, "after_seq": 0, "recorded_at": "2026-10-04T00:00:00Z"}]'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: "*"recorded with change"* ]]
+  [[ "$output" != *$'\033'* ]]
+  [[ "$output" != *$'\xc2\x9b'* ]]
+}
