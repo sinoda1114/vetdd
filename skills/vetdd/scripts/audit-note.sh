@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Record why the undefined-imports audit does not apply to a slice.
-# Usage: audit-note.sh <slice-id> --kind undefined-imports --not-applicable --reason-file <path>
+# Record why an audit does not apply to a slice.
+# Usage: audit-note.sh <slice-id> --kind undefined-imports|mutation --not-applicable --reason-file <path>
 # Appends {kind, status: "not_applicable", reason, recorded_at} to audits[] in
-# .vetdd/evidence/<slice>/meta.json. The audit itself is `calibrate.sh stub`; this note is for a
-# slice with nothing to stub (a verify slice that drives the running app, a test with no product import).
-# check-evidence rule 10b accepts either one for the final oracle. The reason is one line in a file
-# (a regular file, no control characters, 4096 bytes at most), so text from outside never passes
-# through the shell. A second entry of the same kind is a usage error. Rule 10b is a tripwire, not a
-# boundary: it checks that the note exists, not that the reason is true.
+# .vetdd/evidence/<slice>/meta.json. The audits themselves are `calibrate.sh stub` (undefined-imports)
+# and `evidence.sh --audit mutation` (mutation); this note is for a slice where one cannot apply (a
+# verify slice that drives the running app, a test with no product import, a language with no mutation
+# tool). check-evidence rules 10b and 10c accept the note when it was recorded after the final oracle
+# first ran. The reason is one line in a file (a regular file, no control characters, 4096 bytes at
+# most), so text from outside never passes through the shell. A second entry of the same kind is a
+# usage error. Rules 10b and 10c are tripwires, not boundaries: they check that the note exists, not
+# that the reason is true.
 # Exit 0 on success, 2 on usage errors (nothing is written).
 set -u
 
@@ -18,7 +20,7 @@ unset CDPATH
 . "${BASH_SOURCE[0]%/*}/lib/text.sh"
 vetdd_require_jq audit-note.sh
 
-usage="usage: audit-note.sh <slice-id> --kind undefined-imports --not-applicable --reason-file <path>"
+usage="usage: audit-note.sh <slice-id> --kind undefined-imports|mutation --not-applicable --reason-file <path>"
 [ $# -ge 1 ] || die "$usage"
 slice="$1"; shift
 vetdd_is_slice_id "$slice" || die "invalid slice id (letters, digits, . _ -; starting with a letter or digit)"
@@ -27,7 +29,7 @@ kind=""; have_na=0; reason=""; have_reason=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --kind) [ $# -ge 2 ] || die "--kind needs a value"; [ -z "$kind" ] || die "--kind given twice"
-      case "$2" in undefined-imports) kind="$2" ;; *) die "--kind takes undefined-imports" ;; esac
+      case "$2" in undefined-imports|mutation) kind="$2" ;; *) die "--kind takes undefined-imports or mutation" ;; esac
       shift 2 ;;
     --not-applicable) have_na=1; shift ;;
     --reason-file) [ $# -ge 2 ] || die "--reason-file needs a path"; [ "$have_reason" -eq 0 ] || die "--reason-file given twice"
@@ -36,7 +38,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$kind" ] || die "--kind is required"
-[ "$have_na" -eq 1 ] || die "--not-applicable is required (it is the only status there is; a run of calibrate.sh stub records the audit itself)"
+[ "$have_na" -eq 1 ] || die "--not-applicable is required (it is the only status there is; calibrate.sh stub and evidence.sh --audit mutation record the audits themselves)"
 [ "$have_reason" -eq 1 ] || die "--reason-file is required"
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"

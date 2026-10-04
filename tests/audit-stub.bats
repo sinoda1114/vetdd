@@ -693,8 +693,8 @@ audit_run() {
 
 # --- docs ----------------------------------------------------------------------------------------
 
-@test "the rubric is version 5 and names rule 10, and the test mode says to run calibrate.sh stub" {
-  head -1 "$SCRIPTS/../references/final-judge-rubric.md" | grep -qx '# Final judge rubric (version 5)'
+@test "the rubric is version 5 or later and names rule 10, and the test mode says to run calibrate.sh stub" {
+  head -1 "$SCRIPTS/../references/final-judge-rubric.md" | grep -qxE '# Final judge rubric \(version ([5-9]|[1-9][0-9]+)\)'
   grep -q '10a' "$SCRIPTS/../references/final-judge-rubric.md"
   grep -q '10b' "$SCRIPTS/../references/final-judge-rubric.md"
   # The content test stays (round 1, N2): the rubric names the undefined-imports case itself.
