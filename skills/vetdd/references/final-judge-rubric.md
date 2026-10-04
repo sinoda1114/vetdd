@@ -1,4 +1,4 @@
-# Final judge rubric (version 3)
+# Final judge rubric (version 4)
 
 Used when test or verify mode sends one delivered change to the judge. One label, `c1`. Every criterion below is judged only from files in this layout; if a file the layout names is missing, the criterion that needs it scores 0 and the reply explains why.
 
@@ -32,6 +32,8 @@ Sending the red-run logs is part of the default agreement (SKILL.md, Q4). If the
 - 2: `artifact/check-evidence.txt` shows `<slice>: OK` for every slice named in `artifact/reply.md` and ends with `exit 0` (check-evidence rule 5 ties the final run to the delivered tree, rule 6 ties the oracle files to their recorded hashes), and every file under `artifact/tests/` is one of the paths in the final runs' `oracle.files`.
 - 1: every slice is `OK`, but a coverage oracle named in the reply's Oracle section has no run in any `meta.json`.
 - 0: any slice is `FAIL`, is missing from the output, or the exit code is not 0.
+
+A `<slice>: WARN (...)` line in `artifact/check-evidence.txt` (check-evidence rule 9c) is not a `FAIL` and does not lower this score, but it goes into the reply's Attention section (`references/reply-format.md`).
 
 ## 3. test-observes-behavior
 
