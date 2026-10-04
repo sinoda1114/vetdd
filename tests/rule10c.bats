@@ -121,7 +121,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   ev s1 after -- sh test.sh >/dev/null 2>&1
   run check s1
   [ "$status" -eq 1 ]
-  [[ "$output" == *"10c: no mutation audit for the final oracle after a green run of it"* ]]
+  [[ "$output" == *"10c: no mutation audit for the final oracle after its last green run"* ]]
   [[ "$output" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]]
 }
 
@@ -408,4 +408,27 @@ SH
 @test "Q4 names the mutation report copy and its full source; the judge gets the judged run's copy only (L2)" {
   grep -n 'Q4 what leaves the machine' "$SCRIPTS/../SKILL.md" | grep -q 'mutation report'
   grep -q 'the copy of the mutation run that check-evidence judged' "$SCRIPTS/../references/final-judge-rubric.md"
+}
+
+# --- PR review (#17) -----------------------------------------------------------------------------
+
+@test "a mutation run counts only after the final green run: a later integrated run needs a new audit (Codex P1)" {
+  record_good_slice s1
+  mutation s1 "$(killed)"
+  run check s1
+  [ "$output" = "s1: OK" ]
+  # The tree changes outside the mutated file (a runner setting, a helper), then the final green.
+  printf 'setting\n' > sub/config.txt
+  git add sub/config.txt && git commit -q -m config
+  ev s1 integrated -- sh test.sh >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"10c: no mutation audit for the final oracle after its last green run"* ]]
+  mutation s1 "$(killed)"
+  run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+}
+
+@test "test mode limits the mutation run to the slice's own test files (Devin)" {
+  grep -q -- "--testFiles '<the slice's test files>'" "$SCRIPTS/../modes/test.md"
 }

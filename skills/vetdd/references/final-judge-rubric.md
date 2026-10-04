@@ -19,7 +19,7 @@ candidates/c1/
                                  target_failure), the undefined-imports audit run included; other run
                                  logs stay on the machine
   evidence/<slice>/runs/<seq>-mutation.json   the copy of the mutation run that check-evidence judged
-                                 (the latest after a green of the final oracle): config.mutate, and
+                                 (the latest after the final green run): config.mutate, and
                                  each mutated file's full source and mutants
 ```
 

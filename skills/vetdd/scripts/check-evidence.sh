@@ -64,8 +64,8 @@
 #               only the files named with --file (one left out is not stubbed), a runner that fails
 #               on the stub at import time is red for the wrong reason (the log must show the test's
 #               own failure), and a not_applicable note is a claim, not a proof.
-#           (10c) the latest accepted mutation run (evidence.sh --audit mutation) recorded after a green
-#               run of the final oracle has a usable report (status ok, its copy present with the
+#           (10c) the latest accepted mutation run (evidence.sh --audit mutation) recorded after the final
+#               green run has a usable report (status ok, its copy present with the
 #               recorded sha256), mutated and tested something, let no mutant survive or go uncovered,
 #               and its mutated files still hold the source it mutated; with no such run, a mutation
 #               note written after the final oracle first ran. Ignored mutants are a WARN (10c). Asked
@@ -304,15 +304,16 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
 | if ($opted | not) or $g == null then {problems: [], warns: [], files: [], copy: null}
   else
     ($g | oid) as $fo
-    | [$acc[] | select(green and .outcome == "pass" and oid == $fo) | .seq] as $gseqs
-    | ([$acc[] | select(.kind == "calibration" and mut and oid == $fo) | . as $r | select(any($gseqs[]; . < $r.seq))]
+    # Only an audit after the final green counts: a later change outside the mutated files (runner
+    # settings, dependencies, a helper) is not covered by their hashes.
+    | ([$acc[] | select(.kind == "calibration" and mut and oid == $fo and .seq > $g.seq)]
        | sort_by(.seq) | last) as $m
     | ([$acc[] | select(oid == $fo) | .started_at | select(type == "string")] | min) as $first
     | ([$acc[] | select(oid == $fo) | .seq | numbers] | min) as $first_seq
     | ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation" and .status == "not_applicable"
           and (.reason | type) == "string" and (.reason | length) > 0 and counts_for($first; $first_seq))] | length) as $noted
     | if $m == null then
-        {copy: null, problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after a green run of it; run evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
+        {copy: null, problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after its last green run; run evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
          warns: [], files: []}
       else
         ($m.seq | num) as $s | $m.audit.report as $rep
