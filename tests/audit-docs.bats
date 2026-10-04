@@ -75,3 +75,34 @@ EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
   grep -q 'index.tsv .*promoted  rubric_sha256' "$EVAL"
   grep -q 'runs/<run-id>/rubric.md`, in `synthesis.md` and in the `rubric_sha256` column' "$EVAL"
 }
+
+# --- review round 2 ------------------------------------------------------------------------------
+
+@test "the mutation item says a timed-out mutant counts as caught and must be read, and Stryker gets more time than the script (N1)" {
+  local m; m="$(grep -- '- \*\*Mutation\.\*\*' "$VERIFY")"
+  [[ "$m" == *"Timeout"* ]]
+  [[ "$m" == *"timeoutMS"* ]]
+  [[ "$m" != *"never as killed"* ]]
+}
+
+@test "the planted defect names the slice's oracle files, not only the verify scripts (N2)" {
+  local p; p="$(grep 'Planted defect' "$VERIFY")"
+  [[ "$p" == *"the slice's oracle files"* ]]
+  [[ "$p" != *"<the verify scripts>"* ]]
+}
+
+@test "the wrapper and the Stryker config are made before the first run and named as oracle files; the audits are run again after the final integrated runs (N4, N5)" {
+  local m; m="$(grep -- '- \*\*Mutation\.\*\*' "$VERIFY")"
+  [[ "$m" == *"before step 1"* ]]
+  [[ "$m" == *"--oracle-file"* ]]
+  sed -n '/^### B\./,/^### C\./p' "$VERIFY" | grep -q 'after the final `integrated`'
+}
+
+@test "the label swap is graded under its own run id, so the first grading is kept" {
+  sed -n '/^## Audits/,/^## /p' "$EVAL" | grep -q -- '-swap'
+}
+
+@test "calibrate.sh names --infra-exit in its usage and in the unknown-option message (N3)" {
+  grep -q 'unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit)' "$SCRIPTS/calibrate.sh"
+  sed -n 13,14p "$SCRIPTS/calibrate.sh" | grep -q -- '--infra-exit'
+}

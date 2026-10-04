@@ -11,7 +11,7 @@
 #       Check the mutation is in <f>... only and the oracle is untouched, run the oracle, put the
 #       saved files and their index entries back.
 #   calibrate.sh stub    <slice> --file <product file>... --oracle-file <o>... [--oracle-version <v>]
-#                        [--seam <s>] -- <command...>
+#                        [--seam <s>] [--infra-exit <code>] -- <command...>
 #       The undefined-imports audit (principle 4's quick check): replace every product file the oracle
 #       imports with a stub whose exports are all undefined, run the command as a calibration marked
 #       audit: {"kind": "undefined-imports"}, then put the files back. It must end target_failure
@@ -116,7 +116,7 @@ parse() {
         vetdd_is_slice_id "$2" || die "--oracle-version takes letters, digits, and . _ -"
         pass+=("$1" "$2"); shift 2 ;;
       --) shift; argv=("$@"); have_cmd=1; return ;;
-      *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version)" ;;
+      *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit)" ;;
     esac
   done
 }

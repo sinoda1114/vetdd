@@ -586,7 +586,7 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   [ ! -e "$(git rev-parse --git-dir)/vetdd-calib/p1" ]
 }
 
-@test "unfix and stub take --infra-exit too, and a bad value is refused before anything is parked" {
+@test "unfix takes --infra-exit too, and a bad value is refused before anything is parked" {
   printf '#!/bin/sh\nexit 2\n' > blind.sh
   git add blind.sh
   run cal unfix u1 --file value.txt --oracle-file blind.sh --infra-exit 2 -- sh blind.sh
