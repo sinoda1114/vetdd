@@ -2,7 +2,7 @@
 # Record one oracle run as evidence for a slice.
 # Usage: evidence.sh <slice-id> <kind> [--outcome <o>] [--infra-exit <code>]... [--seam <s>]
 #                    [--oracle-version <v>] [--oracle-file <path>]... [--test-report jest-json:<path>]
-#                    -- <command...>
+#                    [--audit undefined-imports] -- <command...>
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
@@ -10,6 +10,11 @@
 #   verify script's exit 2), so it is recorded as infrastructure_error and never counts as red
 # --test-report: the runner's JSON report at <path> (under .vetdd/reports/) is deleted before
 #   the run and read after it; its counts go on the run as `tests`. It never changes the outcome.
+# --audit undefined-imports: an internal option of `calibrate.sh stub` (calibration runs only): the run
+#   is recorded with audit: {"kind": "undefined-imports"}, meaning every product file the oracle
+#   imports was replaced by a stub whose exports are all undefined for this run. check-evidence
+#   rule 10 reads the mark, and a marked run is never counted as a red (the product was stubbed, not
+#   defective). It is validated before the command runs; no other value exists.
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -31,7 +36,7 @@ case "$kind" in
 esac
 
 outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "
-oracle_files=(); report_opt=""
+oracle_files=(); report_opt=""; audit_opt=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --outcome) [ $# -ge 2 ] || die "--outcome needs a value"; outcome_opt="$2"; shift 2 ;;
@@ -47,11 +52,15 @@ while [ $# -gt 0 ]; do
     --test-report) [ $# -ge 2 ] || die "--test-report needs jest-json:<path>"
       case "$2" in jest-json:?*) report_opt="${2#jest-json:}" ;; *) die "--test-report takes jest-json:<path>" ;; esac
       shift 2 ;;
+    --audit) [ $# -ge 2 ] || die "--audit needs undefined-imports"
+      case "$2" in undefined-imports) audit_opt="$2" ;; *) die "--audit takes undefined-imports" ;; esac
+      shift 2 ;;
     --) shift; break ;;
     *) die "unexpected argument '$1' (put the command after --)" ;;
   esac
 done
 [ $# -ge 1 ] || die "no command given after --"
+[ -z "$audit_opt" ] || [ "$kind" = calibration ] || die "--audit goes with a calibration run only"
 case "$outcome_opt" in
   ""|pass|target_failure|infrastructure_error|inconclusive) ;;
   *) die "invalid outcome '$outcome_opt' (pass|target_failure|infrastructure_error|inconclusive)" ;;
@@ -176,6 +185,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
   --arg started_at "$started_at" --arg ended_at "$ended_at" --arg log "$log_rel" \
   --arg head_sha "$head_sha" --arg tree_hash "$tree_hash" \
   --arg cwd "$cwd_rel" --arg node_version "$node_version" \
+  --arg audit "$audit_opt" \
   --argjson seam_set "$seam_set" --arg seam "$seam_opt" \
   --argjson version_set "$version_set" --arg version "$version_opt" \
   --argjson files "$files_json" --argjson tests "$tests_json" '
@@ -196,7 +206,8 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
         env_keys: (env | keys | map(select(startswith("VETDD_"))) | sort)
       },
       oracle: $oracle
-    } + (if $tests == null then {} else {tests: $tests} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
+    } + (if $tests == null then {} else {tests: $tests} end)
+      + (if $audit == "" then {} else {audit: {kind: $audit}} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; die "could not update $meta"
 }
 

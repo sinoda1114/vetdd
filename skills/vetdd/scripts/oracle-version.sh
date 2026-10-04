@@ -16,36 +16,8 @@ die() { printf 'oracle-version.sh: %s\n' "$1" >&2; exit 2; }
 
 unset CDPATH
 . "${BASH_SOURCE[0]%/*}/lib/common.sh"
+. "${BASH_SOURCE[0]%/*}/lib/text.sh"
 vetdd_require_jq oracle-version.sh
-
-# has_control <text>: true when the text holds a control character (C0, DEL, newline, tab, or a
-# UTF-8 C1 control); the recorded text reaches the terminal through check-evidence.
-has_control() {
-  case "$1" in *[[:cntrl:]]*) return 0 ;; esac
-  printf '%s' "$1" | LC_ALL=C grep -q -e "$(printf '[\001-\037\177]')" -e "$(printf '\302[\200-\237]')"
-}
-
-# text_file <option> <path>: the one line of text in a regular file (not a link, at most 4096 bytes),
-# so text that came from outside never has to pass through the shell's quoting.
-text_file() {
-  local opt="$1" path="$2" content
-  [ -f "$path" ] && [ ! -L "$path" ] || die "$opt: $(printf '%s' "$path" | vetdd_printable) is not a regular file"
-  [ "$(wc -c < "$path" | tr -d ' ')" -le 4096 ] || die "$opt: the file is larger than 4096 bytes"
-  # A NUL byte would be dropped by the command substitution below, leaving a different text.
-  [ "$(LC_ALL=C tr -d '\000' < "$path" | wc -c | tr -d ' ')" -eq "$(wc -c < "$path" | tr -d ' ')" ] \
-    || die "$opt: the file holds a NUL byte"
-  # Read through a redirection: a name of - is this file, not standard input.
-  content="$(cat < "$path")" || die "$opt: cannot read the file"
-  case "$content" in *$'\n'*) die "$opt: the file must hold one line" ;; esac
-  text_opt "$opt" "$content"
-  TEXT_FILE_VALUE="$content"
-}
-
-# text_opt <option> <value>: a non-empty value without control characters.
-text_opt() {
-  [ -n "$2" ] || die "$1 must not be empty"
-  if has_control "$2"; then die "$1 must not contain control characters (newline, tab, escape, ...)"; fi
-}
 
 [ $# -ge 1 ] || die "usage: oracle-version.sh <slice-id> --version <v> --change initial|implementation|meaning --reason <text> [--agreement-via AskUserQuestion|chat --question <q> --answer <a>]"
 slice="$1"; shift
@@ -62,20 +34,20 @@ while [ $# -gt 0 ]; do
       case "$2" in initial|implementation|meaning) ;; *) die "--change takes initial, implementation, or meaning" ;; esac
       change="$2"; have_change=1; shift 2 ;;
     --reason) [ $# -ge 2 ] || die "--reason needs a value"; [ "$have_reason" -eq 0 ] || die "--reason given twice (or with --reason-file)"
-      text_opt --reason "$2"; reason="$2"; have_reason=1; shift 2 ;;
+      vetdd_text_opt --reason "$2"; reason="$2"; have_reason=1; shift 2 ;;
     --reason-file) [ $# -ge 2 ] || die "--reason-file needs a path"; [ "$have_reason" -eq 0 ] || die "--reason given twice (or with --reason-file)"
-      text_file --reason-file "$2"; reason="$TEXT_FILE_VALUE"; have_reason=1; shift 2 ;;
+      vetdd_text_file --reason-file "$2"; reason="$TEXT_FILE_VALUE"; have_reason=1; shift 2 ;;
     --agreement-via) [ $# -ge 2 ] || die "--agreement-via needs a value"
       case "$2" in AskUserQuestion|chat) ;; *) die "--agreement-via takes AskUserQuestion or chat" ;; esac
       via="$2"; have_via=1; shift 2 ;;
     --question) [ $# -ge 2 ] || die "--question needs a value"; [ "$have_question" -eq 0 ] || die "--question given twice (or with --question-file)"
-      text_opt --question "$2"; question="$2"; have_question=1; shift 2 ;;
+      vetdd_text_opt --question "$2"; question="$2"; have_question=1; shift 2 ;;
     --question-file) [ $# -ge 2 ] || die "--question-file needs a path"; [ "$have_question" -eq 0 ] || die "--question given twice (or with --question-file)"
-      text_file --question-file "$2"; question="$TEXT_FILE_VALUE"; have_question=1; shift 2 ;;
+      vetdd_text_file --question-file "$2"; question="$TEXT_FILE_VALUE"; have_question=1; shift 2 ;;
     --answer) [ $# -ge 2 ] || die "--answer needs a value"; [ "$have_answer" -eq 0 ] || die "--answer given twice (or with --answer-file)"
-      text_opt --answer "$2"; answer="$2"; have_answer=1; shift 2 ;;
+      vetdd_text_opt --answer "$2"; answer="$2"; have_answer=1; shift 2 ;;
     --answer-file) [ $# -ge 2 ] || die "--answer-file needs a path"; [ "$have_answer" -eq 0 ] || die "--answer given twice (or with --answer-file)"
-      text_file --answer-file "$2"; answer="$TEXT_FILE_VALUE"; have_answer=1; shift 2 ;;
+      vetdd_text_file --answer-file "$2"; answer="$TEXT_FILE_VALUE"; have_answer=1; shift 2 ;;
     *) die "unexpected argument '$(printf '%s' "$1" | vetdd_printable)'" ;;
   esac
 done

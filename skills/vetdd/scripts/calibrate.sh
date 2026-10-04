@@ -10,17 +10,31 @@
 #   calibrate.sh planted <slice> --oracle-file <o>... [evidence options] -- <command...>
 #       Check the mutation is in <f>... only and the oracle is untouched, run the oracle, put the
 #       saved files and their index entries back.
+#   calibrate.sh stub    <slice> --file <product file>... --oracle-file <o>... [--oracle-version <v>]
+#                        [--seam <s>] -- <command...>
+#       The undefined-imports audit (principle 4's quick check): replace every product file the oracle
+#       imports with a stub whose exports are all undefined, run the command as a calibration marked
+#       audit: {"kind": "undefined-imports"}, then put the files back. It must end target_failure
+#       (exit 0): a test that still passes (exit 1) observes nothing. Stubs: .ts .tsx .jsx .mjs .mts ->
+#       `export {};` (.ts .tsx .jsx: the same guarded CommonJS module as .js when the nearest
+#       package.json says "commonjs"); .cjs .cts -> `module.exports = {};`; .js -> by the nearest package.json "type"
+#       (an empty CommonJS module, or `export {};` for "module"); .py -> a module __getattr__ returning
+#       None; any other extension is a usage error before anything changes. Run it once the test is green; it is
+#       also the rule 10b record (check-evidence), unless audit-note.sh says it does not apply.
 #   calibrate.sh restore <slice>
-#       Put back whatever an interrupted unfix or plant left saved.
+#       Put back whatever an interrupted unfix, plant, or stub left saved.
 #
-# Both unfix and plant save a byte copy and the index entry of every <f> before anything changes,
+# Unfix, plant, and stub save a byte copy and the index entry of every <f> before anything changes,
 # and restoring always writes those back, so neither line-ending conversion nor a staged edit can
-# alter what returns. --file and --oracle-file take regular files inside the repository (no
-# directories, no symlinks, no newlines), compared as files (-ef), so the oracle is never parked
-# under another spelling. --seam, --oracle-version, and --oracle-file pass through to
+# alter what returns (stub puts a new file in place, so a hard link never keeps the stub). --file and
+# --oracle-file take regular files inside the repository (no directories, no symlinks, no newlines),
+# compared as files (-ef), so the oracle is never parked under another spelling. --seam, --oracle-version, and --oracle-file pass through to
 # evidence.sh <slice> calibration. State lives in <git dir>/vetdd-calib/<slice>/, survives a killed
 # run, and its path is printed first. Fingerprints detect accidental damage; they are not a
-# security boundary (anyone who can write .git can already run hooks).
+# security boundary (anyone who can write .git can already run hooks). The stub audit is a tripwire,
+# not a boundary: it stubs only the files named with --file (a product file left out is still real, so
+# name every one the oracle imports); a runner that fails on the stub while loading it (native ESM
+# reports a missing named export as a link error) goes red for the wrong reason, so read the log.
 # Exit: 0 the calibration ended target_failure; 1 it did not; 2 usage or refused (nothing
 # changed); 3 the files could not be put back (state kept).
 set -u
@@ -31,11 +45,12 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" && [ -n "$here" ] || { echo "calibrat
 . "$here/lib/tree-hash.sh"
 vetdd_require_jq calibrate.sh
 
-die() { printf 'calibrate.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
-warn() { printf 'calibrate.sh: %s\n' "$1" >&2; }
+# A name in a message (a file the user named) can hold control characters: show it filtered.
+die() { printf 'calibrate.sh: %s\n' "$(printf '%s' "$1" | vetdd_printable)" >&2; exit "${2:-2}"; }
+warn() { printf 'calibrate.sh: %s\n' "$(printf '%s' "$1" | vetdd_printable)" >&2; }
 
 cmd="${1:-}"; slice="${2:-}"
-[ -n "$cmd" ] && [ -n "$slice" ] || die "usage: calibrate.sh unfix|plant|planted|restore <slice> ..."
+[ -n "$cmd" ] && [ -n "$slice" ] || die "usage: calibrate.sh unfix|plant|planted|stub|restore <slice> ..."
 vetdd_is_slice_id "$slice" || die "invalid slice id: $slice"
 shift 2
 top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git working tree"
@@ -179,12 +194,24 @@ save_originals() {
   : > "$state/saved" || die "cannot write $state/saved"  # from here on the working tree may change, so restore must write the copies back
 }
 
+# drop_pyc <path>: a .py file's bytecode caches (__pycache__/<stem>.*.pyc), which Python validates by whole
+# seconds and size, so a stub and the original of equal size could otherwise be mistaken for each other.
+drop_pyc() {
+  case "$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')" in *.py) ;; *) return 0 ;; esac
+  local dir stem
+  dir="$(dirname -- "$top/$1")"; stem="$(basename -- "$1")"; stem="${stem%.*}"
+  # A __pycache__ that is a link points somewhere this script has not checked: leave it alone.
+  [ -d "$dir/__pycache__" ] && [ ! -L "$dir/__pycache__" ] || return 0
+  rm -f "$dir/__pycache__/$stem".*.pyc 2>/dev/null
+  return 0
+}
+
 # Put every saved file and index entry back, then remove the state atomically. Returns non-zero,
 # keeping the state, if anything cannot be verified.
 restore() {
   [ -d "$state" ] || return 0
   local f d tmp h meta
-  case "$(cat "$state/mode" 2>/dev/null)" in unfix|plant|"") ;; *) warn "$state has an unknown mode; inspect it by hand"; return 1 ;; esac
+  case "$(cat "$state/mode" 2>/dev/null)" in unfix|plant|stub|"") ;; *) warn "$state has an unknown mode; inspect it by hand"; return 1 ;; esac
   if [ ! -f "$state/files" ]; then
     [ ! -e "$state/mode" ] || { warn "$state is incomplete (no file list); inspect it by hand"; return 1; }
   elif [ -f "$state/saved" ]; then
@@ -202,10 +229,20 @@ restore() {
         mkdir -p "$replaced/$(dirname -- "$f")" && cp -p "$top/$f" "$replaced/$f" \
           || { warn "could not keep the current $f before replacing it"; return 1; }
       fi
-      tmp="$(mktemp "$top/$f.XXXXXX")" && cp -p "$state/copies/$f" "$tmp" && mv -f "$tmp" "$top/$f" \
+      # touch the temp file, not the target: the rename is then the last step and follows no link.
+      tmp="$(mktemp "$top/$f.XXXXXX")" && cp -p "$state/copies/$f" "$tmp" && touch "$tmp" && mv -f "$tmp" "$top/$f" \
         && [ ! -L "$top/$f" ] && cmp -s "$state/copies/$f" "$top/$f" \
-        || { warn "could not put back $f; the copy is in $state/copies"; return 1; }
+        || { rm -f "$tmp"; warn "could not put back $f; the copy is in $state/copies"; return 1; }
+      drop_pyc "$f"
     done < "$state/files"
+  fi
+  if [ -f "$state/tmps" ]; then
+    # Temp files a stub write was interrupted on: only paths inside the repository, never a directory.
+    while IFS= read -r f; do
+      case "$f" in "$top"/*) ;; *) continue ;; esac
+      case "/$f/" in */../*|*/./*) continue ;; esac
+      [ ! -d "$f" ] && rm -f -- "$f"
+    done < "$state/tmps"
   fi
   if [ -f "$state/saved" ] && [ -f "$state/files" ]; then
     local rec path mode sha restored=$'\n'
@@ -238,16 +275,77 @@ new_state() {
   echo $$ > "$state/pid" && printf '%s\n' "${files[@]}" > "$state/files" || die "cannot write $state"
 }
 
+# stub_text <path>: the stub for the file's extension on standard output; non-zero when it has none.
+# A .cjs or .cts is always CommonJS and a .mjs always an ES module. A .js is an ES module when the nearest
+# package.json says "type": "module"; otherwise the stub is valid either way (an empty module in CommonJS,
+# a module with no exports in ESM), so a stub never fails on its own syntax.
+nearest_package_type() {
+  local d="$top/$(dirname -- "$1")"
+  while :; do
+    if [ -f "$d/package.json" ]; then jq -r '.type // ""' "$d/package.json" 2>/dev/null; return 0; fi
+    [ "$d" != "$top" ] && [ "$d" != / ] || break
+    d="$(dirname -- "$d")"
+  done
+  return 0
+}
+stub_text() {
+  case "$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')" in
+    *.cjs|*.cts) printf 'module.exports = {};\n' ;;
+    *.js)
+      if [ "$(nearest_package_type "$1")" = module ]; then printf 'export {};\n'
+      else printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'; fi ;;
+    *.ts|*.tsx|*.jsx)
+      if [ "$(nearest_package_type "$1")" = commonjs ]; then printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'
+      else printf 'export {};\n'; fi ;;
+    *.mjs|*.mts) printf 'export {};\n' ;;
+    *.py) printf "def __getattr__(name):\n    if name.startswith('__') and name.endswith('__'):\n        raise AttributeError(name)\n    return None\n" ;;
+    *) return 1 ;;
+  esac
+}
+# mode_of <path>: permission bits in octal (GNU stat first: BSD stat has no -c, and GNU stat -f prints file system data).
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+# write_stub <path>: a new file in the place of the saved one (the temp file made beside it takes the
+# old mode), so a hard link never keeps the stub and a symlink put there is replaced, not followed.
+write_stub() {
+  local f="$1" tmp
+  # Write the stub before taking over the old mode: a read-only original would make the temp file unwritable.
+  # The temp file is listed in the state before anything can interrupt the write; restore removes it.
+  tmp="$(mktemp "$top/$f.XXXXXX")" && printf '%s\n' "$tmp" >> "$state/tmps" \
+    && stub_text "$f" > "$tmp" && chmod "$(mode_of "$top/$f")" "$tmp" \
+    && mv -f "$tmp" "$top/$f" && drop_pyc "$f" || { rm -f "$tmp"; return 1; }
+}
+
+audit=""  # undefined-imports while a stub run is going
 run_oracle() {
-  local meta="$top/.vetdd/evidence/$slice/meta.json" last rc outcome
+  local meta="$top/.vetdd/evidence/$slice/meta.json" last rc outcome audit_opt=()
+  # Python reads and writes bytecode only in an empty directory of its own while the stub is in place:
+  # no cache of the original can be mistaken for the stub, and none of the stub outlives it (the state
+  # directory goes with the run). PYTHONPYCACHEPREFIX redirects both, wherever the caller had put it.
+  if [ -n "$audit" ]; then
+    audit_opt=(--audit "$audit")
+    mkdir -p "$state/pycache" || { warn "cannot create $state/pycache"; return 1; }
+    export PYTHONPYCACHEPREFIX="$state/pycache" PYTHONDONTWRITEBYTECODE=1
+  fi
   last="$(jq '[.runs[].seq] | max // 0' "$meta" 2>/dev/null || echo 0)"
   [ "${VETDD_TEST_HOOKS:-}" != 1 ] || export VETDD_CALIBRATE_PID=$$
-  "$here/evidence.sh" "$slice" calibration ${pass[@]+"${pass[@]}"} -- "${argv[@]}"; rc=$?
+  "$here/evidence.sh" "$slice" calibration ${pass[@]+"${pass[@]}"} ${audit_opt[@]+"${audit_opt[@]}"} -- "${argv[@]}"; rc=$?
   # Only a run this call added counts, and only if evidence.sh itself succeeded.
   outcome="$(jq -r --argjson last "${last:-0}" \
     '[.runs[] | select(.seq > $last and .kind == "calibration")] | last | .outcome // empty' "$meta" 2>/dev/null)"
   if [ "$rc" -ne 0 ] || [ -z "$outcome" ]; then
     warn "no new calibration run was recorded (evidence.sh exit $rc)"
+    return 1
+  fi
+  if [ -n "$audit" ]; then
+    if [ "$outcome" = target_failure ]; then
+      echo "calibrate.sh: the oracle went red with every product file stubbed; read the log: the red must be the test's own assertion or a TypeError on an undefined export, not an import or syntax error"
+      return 0
+    fi
+    if [ "$outcome" = pass ]; then
+      warn "the oracle still passed with every named product file stubbed (all exports undefined): the test is vacuous, it observes nothing; make it call or check the product code, then run stub again"
+    else
+      warn "the stubbed run ended $outcome, not target_failure, so the audit proves nothing; read the log and run it again"
+    fi
     return 1
   fi
   [ "$outcome" = target_failure ] && return 0
@@ -322,6 +420,21 @@ case "$cmd" in
     trap 'exit 130' INT TERM
     run_oracle; finish $?
     ;;
+  stub)
+    parse "$@"; require_cmd; require_oracle; require_files
+    # Every extension is checked before anything is parked: a file with no stub changes nothing.
+    for f in "${files[@]}"; do
+      stub_text "$f" >/dev/null || die "$f has no stub for its extension (.ts .tsx .js .jsx .mjs .cjs .mts .cts, .py); nothing was changed"
+    done
+    new_state
+    save_originals
+    echo stub > "$state/mode"
+    for f in "${files[@]}"; do
+      write_stub "$f" || die "could not write the stub over $f; the original is put back when this script exits"
+    done
+    audit=undefined-imports
+    run_oracle; finish $?
+    ;;
   restore)
     [ -d "$state" ] || die "nothing saved for $slice"
     pid="$(cat "$state/pid" 2>/dev/null)"
@@ -332,5 +445,5 @@ case "$cmd" in
     restore || exit 3
     echo "calibrate.sh: restored $slice"
     ;;
-  *) die "unknown command: $cmd (unfix, plant, planted, restore)" ;;
+  *) die "unknown command: $cmd (unfix, plant, planted, stub, restore)" ;;
 esac
