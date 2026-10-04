@@ -64,7 +64,7 @@ Read the refactorer's diff yourself. Reject any change that alters an assertion,
 
 1. **Record every slice again on the final tree.** For each slice id, including the refactor slice, run its own test command and every coverage oracle as `integrated`:
    ```
-   "$VETDD/scripts/evidence.sh" <slice> integrated -- <test command for this slice>
+   "$VETDD/scripts/evidence.sh" <slice> integrated [--test-report jest-json:<the slice's report path>, when its earlier runs recorded one] -- <test command for this slice>
    ```
    Leave out `--oracle-version` and `--oracle-file`: the run keeps the slice's oracle, and naming another set or an earlier version fails check-evidence rule 8. All must end `pass`. Earlier `after` runs stay as history; only this last record has to match the delivered tree.
 2. `"$VETDD/scripts/check-evidence.sh" <every slice id>` on the delivered tree, with no edits in between. Quote the output.

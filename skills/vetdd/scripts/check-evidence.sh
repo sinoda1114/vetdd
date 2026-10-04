@@ -30,7 +30,9 @@
 #               then recalibrate). Also a tripwire: it checks that the record exists and is in order,
 #               not that it is true.
 # Tests:    (9b) a test that ran (passed or failed) in an earlier accepted run and is skipped or todo in the
-#               latest accepted run of the same command (cmd compared as JSON), read from the normalized
+#               latest accepted run of the same command and oracle version (cmd compared as JSON, so
+#               bumping --oracle-version, with its entry in the version log, is the way out of a skip
+#               that is meant), read from the normalized
 #               copy of the runner's report that evidence.sh --test-report saves (runs/<seq>-<kind>.tests.json,
 #               opened by a name made from seq and kind, only through a safe path, and only if its sha256
 #               matches the record). A run without a usable report (tests absent, missing, invalid) is skipped
@@ -215,7 +217,7 @@ REPORT_RUNS='
   .runs[] | select(.accepted != false and (.tests | type) == "object" and .tests.status == "ok")
   | if (.seq | type) == "number" and .seq >= 1 and .seq < 1000000 and .seq == (.seq | floor)
        and (.kind == "before" or .kind == "calibration" or .kind == "after" or .kind == "integrated")
-    then "\(.seq | floor | tostring)\t\(.kind)\t\(.tests.sha256 | if type == "string" and test("^[0-9a-f]{64}$") then . else "-" end)\t\(.cmd | tojson)"
+    then "\(.seq | floor | tostring)\t\(.kind)\t\(.tests.sha256 | if type == "string" and test("^[0-9a-f]{64}$") then . else "-" end)\t\(.cmd | tojson)\t\(.oracle.version | tojson)"
     else "?" end'
 
 # Rule 9b, step 2, over the readable copies ({seq, cmd, tests} each): per command, a test (file and name)
@@ -227,7 +229,7 @@ def ran: .status == "passed" or .status == "failed";
 def idle: .status == "skipped" or .status == "pending" or .status == "disabled" or .status == "todo";
 def show: tostring | explode | map(select(. > 31 and (. < 127 or . > 159))) as $c
   | if ($c | length) > 100 then ($c[0:100] | implode) + "..." else ($c | implode) end;
-[ group_by(.cmd | tojson)[] | sort_by(.seq) | . as $g | ($g | last) as $l | $g[:-1] as $earlier
+[ group_by([.cmd, .ov] | tojson)[] | sort_by(.seq) | . as $g | ($g | last) as $l | $g[:-1] as $earlier
   | select(($earlier | length) > 0)
   # One index of what ran before: per test (file and name), the latest earlier run in which it ran and
   # whether it failed there. Built once, so a large suite is not searched test by test.
@@ -241,7 +243,7 @@ def show: tostring | explode | map(select(. > 31 and (. < 127 or . > 159))) as $
   | select($x != null)
   | {l: $l.seq, e: $x.e, d: $d, was: (if $x.failed then "failed" else "passed" end)}
 ] as $f
-| ($f[:$max][] | "9b: test \"\(.d.name | show)\" in \(.d.file | show) ran (\(.was)) in run \(.e) but is \(.d.status) in run \(.l), the latest run of the same command; a test that stops running makes the green mean less than it says. Run it again, or say in the reply why it is \(.d.status)"),
+| ($f[:$max][] | "9b: test \"\(.d.name | show)\" in \(.d.file | show) ran (\(.was)) in run \(.e) but is \(.d.status) in run \(.l), the latest run of the same command and oracle version; a test that stops running makes the green mean less than it says. Run it again; if it is meant to be \(.d.status), bump --oracle-version, record why with oracle-version.sh, and record the slice again"),
   (if ($f | length) > $max then "9b: and \($f | length - $max) more tests ran in an earlier run and are skipped or todo in the latest run of their command" else empty end)'
 
 # Rule 9c: warnings only (no recorded text in them: counts, a run number, and fixed words). A count that
@@ -255,9 +257,11 @@ def num: if type == "number" then . else error("not a number") end;
 | if ($l.tests | type) == "object" and $l.tests.status == "ok" then
     (($l.tests.skipped | num) as $sk | ($l.tests.todo | num) as $td
      | select($sk + $td > 0)
-     | "9c: \($sk) skipped and \($td) todo tests in the latest \($l.kind) run \($s), counted from the runner'"'"'s report; they did not run, so the green says nothing about them. Put them in the reply'"'"'s Attention")
-  elif any(.runs[]; .tests != null) then
-    "9c: no test report was recorded for the latest \($l.kind) run \($s) (\(if ($l.tests | type) != "object" then "none" elif $l.tests.status == "missing" then "it is missing" elif $l.tests.status == "invalid" then "it is invalid" else "it is unusable" end)), though another run of this slice recorded one; skipped and todo tests cannot be counted. Record the run with --test-report and put this in the reply'"'"'s Attention"
+     | "9c: \($sk) skipped and \($td) todo tests in the latest \($l.kind) run \($s), counted from the runner'"'"'s report (tests left out by a name filter count as skipped); they did not run, so the green says nothing about them. Put them in the reply'"'"'s Attention")
+  elif ($l.tests | type) == "object" then
+    "9c: the latest \($l.kind) run \($s) asked for a test report but it is \(if $l.tests.status == "missing" then "missing" elif $l.tests.status == "invalid" then "invalid" else "unusable" end); skipped and todo tests cannot be counted. Put this in the reply'"'"'s Attention"
+  elif any(.runs[]; (.seq != $l.seq) and (.tests | type) == "object") then
+    "9c: no test report was recorded for the latest \($l.kind) run \($s), though another run of this slice asked for one; skipped and todo tests cannot be counted. Record the run with --test-report and put this in the reply'"'"'s Attention"
   else empty end'
 
 # Lines of a JS or TS oracle file that hold a focused test, one per output line: the line number,
@@ -425,7 +429,7 @@ check_test_reports() {
   if ! list="$(jq -r "$REPORT_RUNS" "$meta" 2>/dev/null)"; then
     echo "9b: could not evaluate which runs recorded a test report (a run record is malformed)"
   elif [ -n "$list" ]; then
-    while IFS="$tab" read -r seq kind sum cmd; do
+    while IFS="$tab" read -r seq kind sum cmd ov; do
       if [ "$seq" = "?" ]; then echo "9b: could not read the test report copy of a run whose seq or kind is malformed"; continue; fi
       # The name is made from the seq and kind evidence.sh wrote, never from a path in the record.
       rel=".vetdd/evidence/$slice/runs/$(printf '%03d' "$seq")-$kind.tests.json"
@@ -435,10 +439,10 @@ check_test_reports() {
       if [ "$sum" = "-" ] || [ "$(vetdd_sha256 "$root/$rel")" != "$sum" ]; then
         echo "9b: could not read the test report copy of run $seq (it does not match the sha256 recorded for it)"; continue
       fi
-      if ! copy="$(jq -c --argjson seq "$seq" --argjson cmd "$cmd" '
+      if ! copy="$(jq -c --argjson seq "$seq" --argjson cmd "$cmd" --argjson ov "$ov" '
           if type == "object" and (.tests | type) == "array"
              and all(.tests[]; type == "object" and (.file | type) == "string" and (.name | type) == "string" and (.status | type) == "string")
-          then {seq: $seq, cmd: $cmd, tests: [.tests[] | {file, name, status}]} else error("shape") end' "$root/$rel" 2>/dev/null)"; then
+          then {seq: $seq, cmd: $cmd, ov: $ov, tests: [.tests[] | {file, name, status}]} else error("shape") end' "$root/$rel" 2>/dev/null)"; then
         echo "9b: could not read the test report copy of run $seq (it is not a normalized test report)"; continue
       fi
       stream="$stream$copy"$'\n'

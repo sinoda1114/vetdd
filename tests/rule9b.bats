@@ -390,3 +390,57 @@ big_report() {
   [[ "$output" == *"test 19999"* ]]
   [ "$elapsed" -lt 5 ] || { echo "took ${elapsed}s"; false; }
 }
+
+# --- review round 2 ---------------------------------------------------------------------------
+
+# recv <version> <kind> <report or -> <exit code>: like rec, under a given oracle version.
+recv() {
+  local ver="$1" kind="$2" rep="$3" code="$4"
+  if [ "$rep" = - ]; then rep=""; fi
+  REPORT="$rep" EXIT="$code" ev s1 "$kind" --oracle-version "$ver" --oracle-file test.sh \
+    --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
+}
+
+@test "rule 9b compares only runs of the same oracle version, so a bump is the way out of a deliberate skip (round 2 #1)" {
+  recv v1 before "$PASS" 1
+  recv v1 after "$PASS" 0
+  recv v2 calibration "$(status_of skipv2 "$T1" skipped)" 1
+  recv v2 after "$(status_of skipv2b "$T1" skipped)" 0
+  run check s1
+  [[ "$output" != *"9b: "* ]] || { echo "$output"; false; }
+  # The same skip under the same version still fails.
+  rm -rf .vetdd
+  recv v1 before "$PASS" 1
+  recv v1 after "$(status_of skipv1 "$T1" skipped)" 0
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9b: "* ]]
+}
+
+@test "the 9b message names the way out: bump the oracle version, not a note in the reply (round 2 #1)" {
+  two_runs "$PASS" "$(status_of skipmsg "$T1" skipped)"
+  run check s1
+  [[ "$output" == *"bump --oracle-version"* ]]
+  [[ "$output" != *"say in the reply"* ]]
+}
+
+@test "9c does not say another run recorded a report when only the latest run asked for one (round 2 #2)" {
+  rec before - 1
+  rec after - 0
+  run check s1
+  [[ "$output" == *"s1: WARN (9c: "* ]]
+  [[ "$output" != *"another run of this slice recorded one"* ]]
+  [[ "$output" == *"asked for a test report"* ]]
+}
+
+@test "9c says tests left out by a name filter count as skipped (round 2 #4)" {
+  rec before "$PASS" 1
+  rec after "$(status_of skipwarn "$T1" skipped)" 0 || true
+  run check s1
+  [[ "$output" == *"name filter"* ]]
+}
+
+@test "modes/test.md gives the Close example the same --test-report (round 2 #3)" {
+  # The command example in the Close step (not the paragraph that explains the option).
+  sed -n '/^## Close/,/^2\. /p' "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q -- '--test-report'
+}
