@@ -7,6 +7,9 @@
 #           (4) infrastructure_error / inconclusive never count as red or green
 # Final:    (5) the latest after/integrated tree_hash matches the current working tree
 #           (6) oracle.files sha256 match the current files
+# Focus:    (9a) no focused test (.only, fdescribe) in a JS or TS oracle file: it would run only that
+#               test and skip the rest. A tripwire for an accident, not a boundary: a rewording, a
+#               helper, a file not named with --oracle-file, or another language passes it.
 # Oracle:   (8) the version chain of accepted runs: an oracle is its version plus the sha256 of its
 #               files. Within the final green's version the files do not change from its first red
 #               on, nor after any green of that version (edits before the first red are the test
@@ -133,6 +136,32 @@ def usable: recorded and (.exit_code | type) == "number";
 
 current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
 
+# Lines (numbers only) of a JS or TS oracle file that hold a focused test: <name>.only( for it, test,
+# describe, suite, or context, or fdescribe( , as a call and not in a comment. The name must stand
+# alone (not myit.only, not this.it.only).
+focused_lines() {
+  awk '
+    function focus(line,   n) {
+      if (match(line, /(^|[^A-Za-z0-9_$.])(it|test|describe|suite|context)\.only[ \t]*\(/)) { n = RSTART; return n }
+      if (match(line, /(^|[^A-Za-z0-9_$.])fdescribe[ \t]*\(/)) { n = RSTART; return n }
+      return 0
+    }
+    {
+      line = $0
+      t = line; sub(/^[ \t]+/, "", t)
+      if (t ~ /^(\/\/|\/\*|\*)/) next
+      n = focus(line)
+      if (n == 0) next
+      # A // before the match makes it a trailing comment.
+      pre = substr(line, 1, n)
+      if (index(pre, "//") > 0) next
+      # An odd number of quotes before the match means it sits inside a string.
+      q1 = gsub(/"/, "&", pre); q2 = gsub(/\x27/, "&", pre); q3 = gsub(/`/, "&", pre)
+      if (q1 % 2 == 1 || q2 % 2 == 1 || q3 % 2 == 1) next
+      print NR
+    }' "$1"
+}
+
 check_slice() {
   local slice="$1" meta="$evidence_dir/$1/meta.json" final_tree path want have
   vetdd_is_slice_id "$slice" || { echo "schema: invalid slice id"; return; }
@@ -173,6 +202,19 @@ check_slice() {
       if [ ! -f "$root/$path" ]; then echo "6: oracle file $path is missing"; continue; fi
       have="$(vetdd_sha256 "$root/$path")"
       [ "$have" = "$want" ] || echo "6: oracle file $path changed since it was recorded; record the slice again with a bumped --oracle-version and a red for it (rule 8; a file shared with another slice: modes/test.md)"
+    done
+
+  # Rule 9a: a focused test in a JS or TS oracle file. Only files rule 6 could open are read.
+  jq -r '.oracle.files[].path' "$meta" |
+    while IFS= read -r path; do
+      case "$path" in
+        *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|*.mts|*.cts) ;;
+        *) continue ;;
+      esac
+      vetdd_inside_repo "$root" "$path" && [ -f "$root/$path" ] || continue
+      focused_lines "$root/$path" | while IFS= read -r n; do
+        echo "9a: oracle file $path line $n holds a focused test (.only or fdescribe); it runs only that test and skips the rest, so the green means less than it says. Remove it and record the slice again with a bumped --oracle-version (rule 8)"
+      done
     done
 }
 
