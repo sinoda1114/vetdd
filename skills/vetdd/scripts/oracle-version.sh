@@ -73,33 +73,49 @@ rel=".vetdd/evidence/$slice/meta.json"
 vetdd_inside_repo "$root" "$rel" || die "$rel is a symbolic link or outside the repository"
 dir="$root/.vetdd/evidence/$slice"
 meta="$root/$rel"
+# vetdd_inside_repo passes a path whose directory does not exist yet, so a link higher up would take
+# the new directory and file outside the repository: refuse a link at each level before anything is made.
+for c in "$root/.vetdd" "$root/.vetdd/evidence" "$dir"; do
+  [ ! -L "$c" ] || die "$c is a symbolic link"
+done
 
+# The evidence to extend: the file, or the skeleton evidence.sh creates (so the two scripts agree).
+# Nothing is written until the whole new document is built.
 if [ -f "$meta" ]; then
-  jq -e --arg s "$slice" '(.slice_id == $s) and (.runs | type == "array") and (.oracle.files | type == "array")
-      and ((.oracle_versions // []) | type == "array")' "$meta" >/dev/null 2>&1 \
+  in_json="$(cat "$meta")" || die "cannot read $meta"
+  printf '%s' "$in_json" | jq -e --arg s "$slice" '(.slice_id == $s) and (.runs | type == "array") and (.oracle.files | type == "array")
+      and ((.oracle_versions // []) | type == "array" and all(.[]; type == "object"))' >/dev/null 2>&1 \
     || die "$rel is not valid evidence for slice '$slice' (nothing written)"
 else
-  # The skeleton evidence.sh creates, so the two scripts agree.
-  mkdir -p "$dir" || die "cannot create $dir"
-  jq -n --arg s "$slice" '{slice_id: $s, oracle: {seam: null, version: null, files: []}, runs: []}' > "$meta" \
-    || die "cannot create $meta"
+  in_json="$(jq -n --arg s "$slice" '{slice_id: $s, oracle: {seam: null, version: null, files: []}, runs: []}')" \
+    || die "cannot build the evidence for slice '$slice'"
 fi
 
-if jq -e --arg v "$version" 'any((.oracle_versions // [])[]; .version == $v)' "$meta" >/dev/null 2>&1; then
-  die "version '$version' already has an entry for slice '$slice' (a changed oracle takes a new version)"
-fi
+dup="$(printf '%s' "$in_json" | jq -r --arg v "$version" 'any((.oracle_versions // [])[]; .version == $v)')" \
+  || die "could not read the version log of $rel"
+[ "$dup" != true ] || die "version '$version' already has an entry for slice '$slice' (a changed oracle takes a new version)"
 
-after_seq="$(jq '[.runs[].seq | select(type == "number")] | max // 0' "$meta")" || die "could not read $meta"
+after_seq="$(printf '%s' "$in_json" | jq '[.runs[].seq | select(type == "number")] | max // 0')" || die "could not read the runs of $rel"
 recorded_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-tmp_meta="$meta.tmp.$$"
-jq --arg v "$version" --arg change "$change" --arg reason "$reason" --argjson with_agreement "$((agreement_items == 3))" \
+created=0; [ -d "$dir" ] || created=1
+mkdir -p "$dir" || die "cannot create $dir"
+# Created after the directory, and checked by where it really is: a link made in between would not
+# be followed out of the repository.
+phys="$(cd -P "$dir" 2>/dev/null && pwd -P)" || phys=""
+if [ "$phys" != "$root/.vetdd/evidence/$slice" ]; then
+  [ "$created" -eq 1 ] && rmdir "$dir" 2>/dev/null
+  die "$dir resolves outside the repository (nothing written)"
+fi
+# A name nobody can predict, made with O_EXCL: a planted link at a guessed name is never followed.
+tmp_meta="$(mktemp "$dir/meta.json.XXXXXX")" || { [ "$created" -eq 1 ] && rmdir "$dir" 2>/dev/null; die "cannot create a temporary file in $dir"; }
+printf '%s' "$in_json" | jq --arg v "$version" --arg change "$change" --arg reason "$reason" --argjson with_agreement "$((agreement_items == 3))" \
   --arg via "$via" --arg q "$question" --arg a "$answer" \
   --argjson after_seq "$after_seq" --arg at "$recorded_at" '
   .oracle_versions = ((.oracle_versions // []) + [{
     version: $v, change: $change, reason: $reason,
     agreement: (if $with_agreement == 1 then {via: $via, question: $q, answer: $a} else null end),
     after_seq: $after_seq, recorded_at: $at
-  }])' < "$meta" > "$tmp_meta" && mv "$tmp_meta" "$meta" || {
-  rm -f "$tmp_meta"; die "could not update $meta"
+  }])' > "$tmp_meta" && chmod 0644 "$tmp_meta" && mv "$tmp_meta" "$meta" || {
+  rm -f "$tmp_meta"; [ "$created" -eq 1 ] && rmdir "$dir" 2>/dev/null; die "could not update $meta"
 }
 printf 'oracle-version.sh: recorded version %s (%s) for %s after run %s\n' "$version" "$change" "$slice" "$after_seq"

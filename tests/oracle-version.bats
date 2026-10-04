@@ -179,3 +179,51 @@ ov() { "$SCRIPTS/oracle-version.sh" "$@"; }
   run validate_schema "$REPO/.vetdd/evidence/s1/meta.json"
   [ "$status" -ne 0 ]
 }
+
+# --- review round 1 ---------------------------------------------------------------------------
+
+@test "a link planted at a guessable temporary name is never written through (C2)" {
+  ov s1 --version v1 --change initial --reason r
+  printf 'precious\n' > "$BATS_TEST_TMPDIR/target"
+  for n in 1 2 3 $$; do ln -s "$BATS_TEST_TMPDIR/target" "$REPO/.vetdd/evidence/s1/meta.json.tmp.$n"; done
+  run ov s1 --version v2 --change implementation --reason r2
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/target")" = "precious" ]
+  [ "$(mq s1 '.oracle_versions | length')" = "2" ]
+  [ -z "$(ls "$REPO/.vetdd/evidence/s1" | grep -E '^meta\.json\.[A-Za-z0-9]{6}$')" ]
+  # The name is made by mktemp (O_EXCL), not from the process id.
+  grep -q 'mktemp "\$dir/meta.json' "$SCRIPTS/oracle-version.sh"
+  run ! grep -q 'tmp\.\$\$' "$SCRIPTS/oracle-version.sh"
+}
+
+@test "a link at .vetdd, .vetdd/evidence, or the slice directory is refused and nothing is made outside (C3)" {
+  mkdir -p "$BATS_TEST_TMPDIR/out"
+  ln -s "$BATS_TEST_TMPDIR/out" .vetdd
+  run ov s1 --version v1 --change initial --reason r
+  [ "$status" -eq 2 ]
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/out")" ]
+  rm .vetdd; mkdir .vetdd; ln -s "$BATS_TEST_TMPDIR/out" .vetdd/evidence
+  run ov s1 --version v1 --change initial --reason r
+  [ "$status" -eq 2 ]
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/out")" ]
+  rm .vetdd/evidence; mkdir .vetdd/evidence; ln -s "$BATS_TEST_TMPDIR/out" .vetdd/evidence/s1
+  run ov s1 --version v1 --change initial --reason r
+  [ "$status" -eq 2 ]
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/out")" ]
+}
+
+@test "a version log holding a non-object entry is refused, never read as having no duplicate (C6)" {
+  ov s1 --version v1 --change initial --reason r
+  jq '.oracle_versions = ["x"] + .oracle_versions' .vetdd/evidence/s1/meta.json > m && mv m .vetdd/evidence/s1/meta.json
+  run ov s1 --version v1 --change implementation --reason again
+  [ "$status" -eq 2 ]
+  [ "$(mq s1 '.oracle_versions | length')" = "2" ]
+}
+
+@test "a failure after the directory was made leaves no empty slice directory behind (C7)" {
+  mkdir -p "$BATS_TEST_TMPDIR/nomktemp"
+  printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/nomktemp/mktemp"; chmod +x "$BATS_TEST_TMPDIR/nomktemp/mktemp"
+  PATH="$BATS_TEST_TMPDIR/nomktemp:$PATH" run ov s1 --version v1 --change initial --reason r
+  [ "$status" -eq 2 ]
+  [ ! -e .vetdd/evidence/s1 ]
+}

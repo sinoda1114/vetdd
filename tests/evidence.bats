@@ -410,3 +410,14 @@ v1" ]
   [[ "$output" == *"symbolic link or outside the repository"* ]]
   [ ! -e ran.txt ]
 }
+
+@test "evidence.sh makes its temporary file with mktemp, so a planted link at a guessed name is never followed (C2)" {
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf 'precious\n' > "$BATS_TEST_TMPDIR/target"
+  for n in 1 2 3 4 5; do ln -s "$BATS_TEST_TMPDIR/target" "$REPO/.vetdd/evidence/s1/meta.json.tmp.$n"; done
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  [ "$(cat "$BATS_TEST_TMPDIR/target")" = "precious" ]
+  grep -q 'mktemp "\$dir/meta.json' "$SCRIPTS/evidence.sh"
+  run ! grep -q 'tmp\.\$\$' "$SCRIPTS/evidence.sh"
+}

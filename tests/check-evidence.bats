@@ -904,3 +904,82 @@ v1_then_v2_red() {
   [[ "$output" != *$'\033'* ]]
   [[ "$output" != *$'\xc2\x9b'* ]]
 }
+
+# --- rule 8d: the final version only, recoverable by a bump (review round 1) -------------------------
+
+# s1 with v1 (initial) green, then v2 recorded WITHOUT a log entry, then its red and green.
+slip_slice() {
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version v1 --change initial --reason first
+  printf '# v2\n' >> test.sh
+  printf '0\n' > value.txt
+  ev s1 calibration --oracle-version v2 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+}
+
+@test "rule 8d fails a final version with no entry, and a bump with its entry first recovers (C1)" {
+  slip_slice
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: oracle version v2 has no recorded reason"* ]]
+  # Recording it now cannot fix it: the red is already before the entry ...
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason late
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not after its log entry"* ]]
+  # ... a bump does: entry first, then the red and the green.
+  "$SCRIPTS/oracle-version.sh" s1 --version v3 --change implementation --reason "recorded in order"
+  printf '# v3\n' >> test.sh
+  printf '0\n' > value.txt
+  ev s1 calibration --oracle-version v3 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "rule 8d does not ask a version left behind for an entry (C1)" {
+  slip_slice
+  "$SCRIPTS/oracle-version.sh" s1 --version v3 --change implementation --reason "recorded in order"
+  printf '# v3\n' >> test.sh
+  printf '0\n' > value.txt
+  ev s1 calibration --oracle-version v3 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  run check s1
+  [[ "$output" != *"oracle version v2"* ]]
+}
+
+@test "rule 8d reads change and via by value, so an array holding the right word does not pass (C4)" {
+  slip_slice
+  "$SCRIPTS/oracle-version.sh" s1 --version v3 --change meaning --reason r --agreement-via chat --question q --answer a
+  printf '# v3\n' >> test.sh
+  printf '0\n' > value.txt
+  ev s1 calibration --oracle-version v3 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  tamper s1 '.oracle_versions[-1].change = ["meaning"]'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: oracle version v3 is recorded with change"* ]]
+  tamper s1 '.oracle_versions[-1].change = "meaning" | .oracle_versions[-1].agreement.via = ["chat"]'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"without its re-agreement"* ]]
+}
+
+@test "rule 8d takes the first version with a name as the initial agreement, even after runs without one (C5)" {
+  printf '0\n' > value.txt
+  ev s1 before --oracle-file test.sh -- sh test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version 1 --change initial --reason first
+  ev s1 calibration --oracle-version 1 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

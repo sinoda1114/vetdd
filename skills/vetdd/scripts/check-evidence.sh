@@ -18,10 +18,12 @@
 #               going red. It is a tripwire, not a boundary: a weakening that still goes red, a red
 #               from another command, and helpers or fixtures not named with --oracle-file pass it.
 #           (8d) the version log (oracle-version.sh), asked for only once meta.json has an
-#               oracle_versions key (older evidence has none): every version after the first one in
-#               the chain has an entry with a reason, a change in meaning has its re-agreement, and
-#               the version's first red comes after the entry (agree first, then recalibrate). Also
-#               a tripwire: it checks that the record exists and is in order, not that it is true.
+#               oracle_versions key (older evidence has none), and only of the version the final
+#               green rests on when it is not the first version of the chain (a version left behind is
+#               history; a bump recovers a slip): it has an entry with a reason, a change in meaning
+#               has its re-agreement, and the version's first red comes after the entry (agree first,
+#               then recalibrate). Also a tripwire: it checks that the record exists and is in order,
+#               not that it is true.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule.
 # Exit code: number of failing slices (capped at 125); 2 on usage errors.
 set -u
@@ -135,24 +137,27 @@ def usable: recorded and (.exit_code | type) == "number";
     ([$acc[] | select($g != null and .seq > $g.seq and oid != ($g | oid))] | first
      | select(. != null)
      | "8: run \(.seq) uses oracle version \((oid).v | vname) after the final green run \($g.seq); record the green again with it"),
-    # Rule 8d. A slice with no oracle_versions key is older than the log: nothing is asked of it.
+    # Rule 8d, on the version the final green rests on (an older version left behind is history, as in
+    # rule 8, and a bump recovers an earlier slip). A slice with no oracle_versions key is older than the
+    # log: nothing is asked of it. The first version of the chain is the initial agreement.
     (if ($meta | has("oracle_versions")) | not then empty
      elif ($meta.oracle_versions | type) != "array" then "8: oracle_versions is not an array, so the version log cannot be checked"
      else
        ($meta.oracle_versions | map(select(type == "object"))) as $log
-       | ($acc | map(oid.v) | reduce .[] as $v ([]; if any(.[]; . == $v) then . else . + [$v] end)) as $chain
-       | ($chain[1:] | map(select(. != null)) | .[]) as $v
+       | ($acc | map(oid.v) | map(select(. != null)) | reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end)) as $chain
+       | ((($g // ($acc | last)) | if . == null then null else oid.v end)) as $v
+       | select($v != null and ($chain | length) > 0 and $v != $chain[0])
        | ($log | map(select(.version == $v)) | first) as $e
        | ($acc | map(select(red and oid.v == $v)) | first) as $r
        | (if $e == null or ($e.reason | type) != "string" or ($e.reason | length) == 0
-          then "8: oracle version \($v | vname) has no recorded reason; record it with oracle-version.sh \($slice) --version \($v | vname) --change implementation --reason \"<why>\" (--change meaning plus --agreement-via, --question, --answer when the agreed behavior changed)"
+          then "8: oracle version \($v | vname) has no recorded reason; record it with oracle-version.sh \($slice) --version \($v | vname) --change implementation --reason '"'"'<why>'"'"' (--change meaning plus --agreement-via, --question, --answer when the agreed behavior changed). If the run was already recorded, bump --oracle-version and record the new version first"
           else empty end),
          (if $e == null then empty
-          elif (["implementation", "meaning"] | index($e.change)) == null
+          elif ($e.change != "implementation" and $e.change != "meaning")
           then "8: oracle version \($v | vname) is recorded with change \($e.change | tostring), which is not implementation or meaning for a version after the first"
           elif $e.change == "meaning"
                and ($e.agreement | if type != "object" then true
-                    else (["AskUserQuestion", "chat"] | index($e.agreement.via)) == null
+                    else ($e.agreement.via != "AskUserQuestion" and $e.agreement.via != "chat")
                          or (($e.agreement.question | type) != "string" or ($e.agreement.question | length) == 0)
                          or (($e.agreement.answer | type) != "string" or ($e.agreement.answer | length) == 0) end)
           then "8: oracle version \($v | vname) is recorded as a change in meaning without its re-agreement (via, question, answer); return to the agreement and record it with oracle-version.sh \($slice) --change meaning --agreement-via ... (principle 1a)"
@@ -161,7 +166,7 @@ def usable: recorded and (.exit_code | type) == "number";
           elif ($e.after_seq | type) != "number"
           then "8: the entry for oracle version \($v | vname) has no numeric after_seq, so the order of agreement and red cannot be checked"
           elif $r.seq <= $e.after_seq
-          then "8: the first red run (\($r.seq)) of oracle version \($v | vname) is not after its log entry (after_seq \($e.after_seq)); record the entry with oracle-version.sh first, then the red for the new version"
+          then "8: the first red run (\($r.seq)) of oracle version \($v | vname) is not after its log entry (after_seq \($e.after_seq)); bump --oracle-version, record the entry with oracle-version.sh first, then the red and green for the new version"
           else empty end)
      end)
   )'
