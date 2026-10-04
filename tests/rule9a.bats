@@ -95,6 +95,7 @@ record_oracle() {
   ln -s ../outside.ts out.ts
   jq '.oracle.files += [{"path": "out.ts", "sha256": null}]' .vetdd/evidence/s1/meta.json > m && mv m .vetdd/evidence/s1/meta.json
   run check s1
+  [ "$status" -eq 1 ]
   [[ "$output" == *"6: oracle file out.ts is a symbolic link or outside the repository"* ]]
   [[ "$output" != *"9a: oracle file out.ts"* ]]
 }
@@ -195,4 +196,70 @@ record_oracle() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"9a: could not scan oracle file a.test.ts"* ]]
   [[ "$output" != *"s1: OK"* ]]
+}
+
+# --- regular expression literals, line continuations, spacing, extension case (round 2) -----------
+
+@test "rule 9a is not thrown off by a regular expression holding /* or a backtick (B1)" {
+  for re in 'p.replace(/\\/*$/, "")' 'p.split(/[/*]/)' 'p.replace(/a\\/*b/, "")' 'p.replace(/[`]/, "")' 'p.match(/https?:\\/\\//)'; do
+    rm -rf .vetdd
+    record_oracle a.test.ts "$(printf 'expect(%s).toBe("a");\nit.only("x", () => {});' "$re")"
+    run check s1
+    [ "$status" -eq 1 ] || { echo "$re: $output"; false; }
+    [[ "$output" == *"line 2 "* ]] || { echo "$re: $output"; false; }
+  done
+}
+
+@test "rule 9a still treats a division as a division, not a regular expression (B1)" {
+  record_oracle a.test.ts $'const r = a / b; const t = c /* note */ / d;\nit.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 2 "* ]]
+}
+
+@test "rule 9a fails closed when a comment or template stays open to the end of the file (B1)" {
+  record_oracle a.test.ts $'it("a", () => {});\n/* never closed\nit.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.ts could not be scanned to the end"* ]]
+  rm -rf .vetdd
+  record_oracle a.test.ts $'const t = `never closed\nit("a");'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not be scanned to the end"* ]]
+}
+
+@test "rule 9a follows a string continued with a backslash at the end of the line (B2)" {
+  record_oracle a.test.ts $'const s = "abc \\\nit.only(x)";\nit("ok", () => {});'
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  rm -rf .vetdd
+  record_oracle a.test.ts $'const s = "abc \\\ndef"; it.only("real", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+}
+
+@test "rule 9a sees .only split from its call by spacing, a comment, or a line break (B3)" {
+  for body in $'it .only("x", () => {});' $'it/* note */.only("x", () => {});' $'it.only\n("x", () => {});' \
+              $'test.describe\n  .only("x", () => {});' $'it.only.each([1])\n("x", () => {});'; do
+    rm -rf .vetdd
+    record_oracle a.test.ts "$body"
+    run check s1
+    [ "$status" -eq 1 ] || { echo "$body: $output"; false; }
+  done
+}
+
+@test "rule 9a does not take a property named only on another object for a focus (B3)" {
+  record_oracle a.test.ts $'const o = { only: 1 };\nconst v = o.only;\nexpect(list.only).toBe(1);\nit("ok", () => {});'
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "rule 9a reads JS and TS extensions in any letter case (B4)" {
+  for ext in TS Tsx JS mjs; do
+    rm -rf .vetdd
+    record_oracle "a.test.$ext" 'it.only("x", () => {});'
+    run check s1
+    [ "$status" -eq 1 ] || { echo "$ext: $output"; false; }
+  done
 }
