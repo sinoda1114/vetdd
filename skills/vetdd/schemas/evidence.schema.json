@@ -38,7 +38,7 @@
             "format": { "const": "stryker-json" },
             "path": { "type": "string", "minLength": 1 },
             "status": { "const": "ok" },
-            "sha256": { "description": "Of the byte-for-byte copy at `copy`.", "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "sha256": { "description": "Of the normalized copy at `copy`: config.mutate, and each file's source and mutants (id, mutatorName, replacement, status, location).", "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "copy": { "type": "string", "pattern": "^runs/[0-9]{3,}-mutation\\.json$" },
             "counts": {
               "description": "Mutants by final status: Killed, Survived, NoCoverage, Timeout, CompileError, RuntimeError, Ignored.",

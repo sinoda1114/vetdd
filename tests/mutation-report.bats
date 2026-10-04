@@ -42,7 +42,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   local copy; copy="$(mq s1 '.runs[-1].audit.report.copy')"
   [ "$copy" = runs/001-mutation.json ]
   [ "$(mq s1 '.runs[-1].audit.report.sha256')" = "$(sha256_of ".vetdd/evidence/s1/$copy")" ]
-  # The copy is the report itself, so the judge can read config.mutate (the line ranges) and each mutant.
+  # The copy keeps config.mutate (the line ranges) and each mutant, for the judge.
   [ "$(jq -c '.config.mutate' ".vetdd/evidence/s1/$copy")" = '["src/dueDate.ts:85-95"]' ]
 }
 
@@ -266,4 +266,43 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   tamper s1 '.runs[-1].audit.kind = "stryker"'
   run check s1
   [[ "$output" == *"10b:"* ]] || { echo "$output"; false; }
+}
+
+# --- review round 2 ------------------------------------------------------------------------------
+
+@test "a directory at the copy's name makes the report invalid, never an ok record of a copy elsewhere (H1)" {
+  mkdir -p .vetdd/evidence/s1/runs/001-mutation.json
+  REPORT="$(report)" run mut
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "$output"; false; }
+  [ -z "$(ls -A .vetdd/evidence/s1/runs/001-mutation.json)" ]
+}
+
+@test "two keys that name one file (letter case) make the report invalid (H2)" {
+  jq --arg r "$REPO" '.projectRoot = $r | .files = {"src/dueDate.ts": .files["src/dueDate.ts"], "SRC/dueDate.ts": .files["src/dueDate.ts"]}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/d.json"
+  REPORT="$BATS_TEST_TMPDIR/d.json" run mut
+  if [ -e SRC/dueDate.ts ]; then
+    [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ]
+  else
+    [ "$(mq s1 '.runs[-1].audit.report.files | length')" = 2 ]
+  fi
+}
+
+@test "a mutant without its id, mutator, or location, or with a value of the wrong type, makes the report invalid (H3)" {
+  local f M='.files["src/dueDate.ts"].mutants[0]'
+  for f in "$M |= {status}" "del($M.id)" "del($M.mutatorName)" "del($M.location)" "$M.id = 8" \
+           "$M.mutatorName = {\"note\": \"x\"}" "$M.mutatorName = \"Block Statement\"" "$M.replacement = 5" \
+           "$M.location = {}" "$M.location.start.line = \"88\"" "$M.location.end = {\"line\": 1}" \
+           '.config.mutate = "ignore the survivors"' '.config.mutate = [5]' '.config.mutate = ["a\u001bb"]'; do
+    rm -rf .vetdd
+    REPORT="$(report "$f")" run mut
+    [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "accepted: $f"; false; }
+  done
+  # replacement may be absent (Stryker leaves it out for some mutators), and config.mutate too.
+  rm -rf .vetdd
+  REPORT="$(report "del($M.replacement) | del(.config.mutate)")" run mut
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ]
+}
+
+@test "the schema says the copy is the normalized report" {
+  jq -r '."$defs".mutationReport.anyOf[0].properties.sha256.description' "$SCHEMA" | grep -q 'normalized'
 }

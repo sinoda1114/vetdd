@@ -8,13 +8,24 @@
 # the run did not finish).
 VETDD_STRYKER_JSON='
   def final: . as $s | any(["Killed","Survived","NoCoverage","Timeout","CompileError","RuntimeError","Ignored"][]; . == $s);
+  def printable: explode | all(. > 31 and (. < 127 or . > 159));
+  def int: type == "number" and . == floor and . >= 0;
+  def pos: type == "object" and (.line | int) and (.column | int);
+  # Every field the copy keeps has the type Stryker writes, so nothing free-form reaches the judge.
+  def mutant: type == "object" and (.status | type) == "string" and (.status | final)
+    and (.id | type) == "string" and (.id | printable) and (.mutatorName | type) == "string"
+    and (.mutatorName | test("^[A-Za-z]+$"))
+    and ((has("replacement") | not) or ((.replacement | type) == "string"))
+    and (.location | type) == "object" and (.location.start | pos) and (.location.end | pos);
   def plain: . != "" and (explode | all(. > 31 and (. < 127 or . > 159))) and (split("/") | all(. != "" and . != "." and . != ".."));
   if type == "object" and (.schemaVersion | type) == "string" and (.schemaVersion | test("^1(\\.|$)"))
      and (.projectRoot | type) == "string" and (.projectRoot | startswith("/"))
      and (.files | type) == "object" and (.files | length) > 0
      and all(.files | keys[]; plain)
+     and ((.config.mutate // null) == null
+          or ((.config.mutate | type) == "array" and all(.config.mutate[]; type == "string" and printable)))
      and all(.files[]; type == "object" and (.source | type) == "string" and (.mutants | type) == "array"
-       and all(.mutants[]; type == "object" and (.status | type) == "string" and (.status | final)))
+       and all(.mutants[]; mutant))
   then . else error("not a stryker-json report") end
   | [.files[].mutants[].status] as $st
   | def n($s): [$st[] | select(. == $s)] | length;
@@ -49,7 +60,9 @@ vetdd_mutation_files() {
     out="$out$(jq -n --arg p "$p" --arg s "$sum" '{path: $p, sha256: $s}')"
   done
   rm -f -- "$src"
-  printf '%s' "$out" | jq -s '.'
+  # Two keys that name one file (another letter case on a case-insensitive file system) leave no
+  # single hash for it.
+  printf '%s' "$out" | jq -s 'if (map(.path) | unique | length) == length then . else error("one file twice") end'
 }
 
 # vetdd_mutation_report_import <root> <rel> <copy> <copy-rel>: print the run's audit.report object.
@@ -59,9 +72,11 @@ vetdd_mutation_files() {
 # When the report is missing or not usable, status is missing or invalid, with a warning on stderr.
 vetdd_mutation_report_import() {
   local root="$1" rel="$2" copy="$3" copy_rel="$4" status="" summary files sum k keys=() raw="" norm=""
-  rm -f -- "$copy"
+  rm -f -- "$copy" 2>/dev/null
   # Checked again here: the command that just ran could have swapped the report for a link.
-  if ! vetdd_inside_repo "$root" "$rel" || [ -d "$root/$rel" ]; then status=invalid
+  # Something left at the copy's name that rm cannot remove (a directory) would take the copy inside it.
+  if [ -e "$copy" ] || [ -L "$copy" ]; then status=invalid
+  elif ! vetdd_inside_repo "$root" "$rel" || [ -d "$root/$rel" ]; then status=invalid
   elif [ ! -e "$root/$rel" ]; then status=missing
   elif [ ! -f "$root/$rel" ]; then status=invalid
   elif ! raw="$(mktemp "$(dirname -- "$copy")/.mutation.XXXXXX")" || ! norm="$(mktemp "$(dirname -- "$copy")/.mutation.XXXXXX")"; then status=invalid
@@ -80,7 +95,7 @@ vetdd_mutation_report_import() {
   [ -z "$raw" ] || rm -f -- "$raw"
   [ -z "$norm" ] || rm -f -- "$norm"
   if [ -n "$status" ]; then
-    rm -f -- "$copy"
+    rm -f -- "$copy" 2>/dev/null
     printf 'evidence.sh: warning: mutation report %s is %s; recorded audit.report.status=%s (the outcome still comes from the exit code)\n' \
       "$rel" "$status" "$status" | vetdd_printable >&2
     jq -n --arg p "$rel" --arg s "$status" '{format: "stryker-json", path: $p, status: $s}'
