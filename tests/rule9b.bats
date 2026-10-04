@@ -488,3 +488,37 @@ recv() {
   [[ "$output" == *"9b: "* ]]
   [[ "$output" != *$'\xe2\x80\xae'* ]]
 }
+
+# --- review round 4 ---------------------------------------------------------------------------
+
+@test "9c does not say an earlier run asked for a report when the request came later (L1)" {
+  EXIT=1 ev s1 before --oracle-version v1 --oracle-file test.sh -- sh runner.sh >/dev/null 2>&1 || true
+  EXIT=0 ev s1 after --oracle-version v1 --oracle-file test.sh -- sh runner.sh >/dev/null 2>&1 || true
+  REPORT="$PASS" EXIT=1 ev s1 calibration --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
+  run check s1
+  [[ "$output" == *"9c: "* ]]
+  [[ "$output" != *"an earlier run"* ]]
+  [[ "$output" == *"another run of the same command asked for one"* ]]
+}
+
+@test "marks and invisible format characters are dropped from a shown name (round 4 #5)" {
+  bad="$(printf 'ab\xe2\x80\x8ecd\xe2\x80\x8bef\xef\xbb\xbfgh\xd8\x9cij')"
+  jq --arg n "$T1" --arg bad "$bad" '(.testResults[].assertionResults[] | select(.fullName == $n)) |= (.fullName = $bad | .title = $bad)' "$PASS" > "$BATS_TEST_TMPDIR/inv.json"
+  jq --arg bad "$bad" '(.testResults[].assertionResults[] | select(.fullName == $bad) | .status) = "skipped"' "$BATS_TEST_TMPDIR/inv.json" > "$BATS_TEST_TMPDIR/inv-skip.json"
+  two_runs "$BATS_TEST_TMPDIR/inv.json" "$BATS_TEST_TMPDIR/inv-skip.json"
+  run check s1
+  [[ "$output" == *"abcdefghij"* ]]
+}
+
+@test "a recorded sha256 that ends in a newline is not taken for a hash (round 4 #6)" {
+  two_runs "$PASS" "$(status_of shanl "$T1" skipped)"
+  good="$(jq -r '.runs[0].tests.sha256' .vetdd/evidence/s1/meta.json)"
+  tamper s1 --arg h "$good"$'\n' '.runs[0].tests.sha256 = $h' 2>/dev/null || jq --arg h "$good"$'\n' '.runs[0].tests.sha256 = $h' .vetdd/evidence/s1/meta.json > m && mv m .vetdd/evidence/s1/meta.json
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9b: could not read the test report copy of run 1"* ]]
+}
+
+@test "modes/test.md says 9b compares within one oracle version and when 9c warns about a missing report (round 4 #2)" {
+  sed -n 21p "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q 'oracle version'
+}

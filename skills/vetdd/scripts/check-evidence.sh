@@ -219,7 +219,7 @@ REPORT_RUNS='
   .runs[] | select(.accepted != false and (.tests | type) == "object" and .tests.status == "ok")
   | if (.seq | type) == "number" and .seq >= 1 and .seq < 1000000 and .seq == (.seq | floor)
        and (.kind == "before" or .kind == "calibration" or .kind == "after" or .kind == "integrated")
-    then "\(.seq | floor | tostring)\t\(.kind)\t\(.tests.sha256 | if type == "string" and test("^[0-9a-f]{64}$") then . else "-" end)\t\(.cmd | tojson)\t\(.oracle.version | tojson)"
+    then "\(.seq | floor | tostring)\t\(.kind)\t\(.tests.sha256 | if type == "string" and length == 64 and test("^[0-9a-f]{64}$") then . else "-" end)\t\(.cmd | tojson)\t\(.oracle.version | tojson)"
     else "?" end'
 
 # Rule 9b, step 2, over the readable copies ({seq, cmd, tests} each): per command, a test (file and name)
@@ -231,7 +231,8 @@ def ran: .status == "passed" or .status == "failed";
 def idle: .status == "skipped" or .status == "pending" or .status == "disabled" or .status == "todo";
 # Shown without control characters, bidirectional controls, or line separators, cut to 100 characters.
 def show: tostring | explode | map(select(. > 31 and (. < 127 or . > 159) and . != 8232 and . != 8233
-    and (. < 8234 or . > 8238) and (. < 8294 or . > 8297))) as $c
+    and (. < 8234 or . > 8238) and (. < 8294 or . > 8297)
+    and (. < 8203 or . > 8207) and . != 1564 and . != 65279 and . != 8288)) as $c
   | if ($c | length) > 100 then ($c[0:100] | implode) + "..." else ($c | implode) end;
 # The input holds the readable copies ({seq, cmd, ov, tests}) and one marker ({m: true, seq, cmd, ov}) for
 # every accepted run, whether or not it has a report. Only the version the final green rests on is
@@ -277,7 +278,7 @@ def num: if type == "number" then . else error("not a number") end;
   elif ($l.tests | type) == "object" then
     "9c: the latest \($l.kind) run \($s) asked for a test report but it is \(if $l.tests.status == "missing" then "missing" elif $l.tests.status == "invalid" then "invalid" else "unusable" end); skipped and todo tests cannot be counted. Put this in the reply'"'"'s Attention"
   else
-    "9c: no test report was recorded for the latest \($l.kind) run \($s), though an earlier run of the same command asked for one; skipped and todo tests cannot be counted. Record the run with --test-report and put this in the reply'"'"'s Attention"
+    "9c: no test report was recorded for the latest \($l.kind) run \($s), though another run of the same command asked for one; skipped and todo tests cannot be counted. Record the run with --test-report and put this in the reply'"'"'s Attention"
   end'
 
 # Lines of a JS or TS oracle file that hold a focused test, one per output line: the line number,
