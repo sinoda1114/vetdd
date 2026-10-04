@@ -230,7 +230,8 @@ ov() { "$SCRIPTS/oracle-version.sh" "$@"; }
 
 # --- review round 2 ---------------------------------------------------------------------------
 
-perm() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+# GNU stat first: BSD stat has no -c (no output), but GNU stat -f prints file system data.
+perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
 @test "text read from a file is recorded verbatim, quotes and shell syntax included (E1)" {
   printf "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran)\n" > "$BATS_TEST_TMPDIR/reason.txt"
@@ -281,4 +282,12 @@ perm() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
   [ "$(perm .vetdd/evidence/s1/meta.json)" = "600" ]
   ( umask 022; ov s1 --version v2 --change implementation --reason r2 )
   [ "$(perm .vetdd/evidence/s1/meta.json)" = "644" ]
+}
+
+@test "a text file whose path starts with a dash is read as a file, never as an option of cat (G2)" {
+  printf 'from the file\n' > ./-n
+  # stdin is closed: a cat that took -n for an option would otherwise wait for input.
+  run ov s1 --version v1 --change initial --reason-file -n < /dev/null
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.oracle_versions[0].reason')" = "from the file" ]
 }

@@ -31,7 +31,7 @@ text_file() {
   local opt="$1" path="$2" content
   [ -f "$path" ] && [ ! -L "$path" ] || die "$opt: $(printf '%s' "$path" | vetdd_printable) is not a regular file"
   [ "$(wc -c < "$path" | tr -d ' ')" -le 4096 ] || die "$opt: the file is larger than 4096 bytes"
-  content="$(cat "$path")" || die "$opt: cannot read the file"
+  content="$(cat -- "$path")" || die "$opt: cannot read the file"
   case "$content" in *$'\n'*) die "$opt: the file must hold one line" ;; esac
   text_opt "$opt" "$content"
   TEXT_FILE_VALUE="$content"

@@ -154,17 +154,19 @@ def usable: recorded and (.exit_code | type) == "number";
        ($log | map(select(.version == $v)) | first) as $e
        | ($acc | map(select(red and oid.v == $v)) | first) as $r
        | (if $e == null or ($e.reason | type) != "string" or ($e.reason | length) == 0
-          then "8: oracle version \($v | vname) has no recorded reason; record it with oracle-version.sh \($slice) --version \($v | vname) --change implementation --reason-file <path> (--change meaning plus --agreement-via, --question-file, --answer-file when the agreed behavior changed). If the run was already recorded, bump --oracle-version and record the new version first"
+          then (if $r == null
+                then "8: oracle version \($v | vname) has no recorded reason; record it with oracle-version.sh \($slice) --version \($v | vname) --change implementation --reason-file <path> (--change meaning plus --agreement-via, --question-file, --answer-file when the agreed behavior changed) before its red"
+                else "8: oracle version \($v | vname) has no recorded reason and its red is already recorded, so an entry now would come after it; bump --oracle-version, record the new version with oracle-version.sh first (--change implementation, or --change meaning with --agreement-via, --question-file, --answer-file when the agreed behavior changed), then its red and green" end)
           else empty end),
          (if $e == null then empty
           elif ($e.change != "implementation" and $e.change != "meaning")
-          then "8: oracle version \($v | vname) is recorded with change \($e.change | tostring), which is not implementation or meaning for a version after the first; bump --oracle-version, record the new version with oracle-version.sh first (--change implementation or meaning), then its red and green"
+          then "8: oracle version \($v | vname) is recorded with a change that is not implementation or meaning, as a version after the first needs; bump --oracle-version, record the new version with oracle-version.sh first (--change implementation or meaning), then its red and green"
           elif $e.change == "meaning"
                and ($e.agreement | if type != "object" then true
                     else ($e.agreement.via != "AskUserQuestion" and $e.agreement.via != "chat")
                          or (($e.agreement.question | type) != "string" or ($e.agreement.question | length) == 0)
                          or (($e.agreement.answer | type) != "string" or ($e.agreement.answer | length) == 0) end)
-          then "8: oracle version \($v | vname) is recorded as a change in meaning without its re-agreement (via, question, answer); return to the agreement and record it with oracle-version.sh \($slice) --change meaning --agreement-via ... (principle 1a)"
+          then "8: oracle version \($v | vname) is recorded as a change in meaning without its re-agreement (via, question, answer), and the entry cannot be completed; return to the agreement (principle 1a), bump --oracle-version, record the new version with oracle-version.sh \($slice) --version <new> --change meaning --agreement-via ... --question-file ... --answer-file ... first, then its red and green"
           else empty end),
          (if $e == null or $r == null then empty
           elif ($e.after_seq | type) != "number"
