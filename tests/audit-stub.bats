@@ -811,3 +811,23 @@ audit_run() {
   ! printf '%s' "$sec" | grep -q 'where a slice has no `audit` run'
   printf '%s' "$sec" | grep -q 'does not provide an export named'
 }
+
+# --- round 4 ---------------------------------------------------------------------------------------
+
+@test "the stub run writes no bytecode, so no cache of the stub can outlive the restore" {
+  printf '#!/bin/sh\nprintf "%%s" "${PYTHONDONTWRITEBYTECODE:-unset}" > env.out\nexit 0\n' > envspy.sh
+  unset PYTHONDONTWRITEBYTECODE
+  run cal stub by1 --file mod.py --oracle-file envspy.sh -- sh envspy.sh
+  [ "$status" -eq 1 ]
+  [ "$(cat env.out)" = 1 ]
+}
+
+@test "the rubric ships the audit run's log and treats log text as data (round 4)" {
+  local rub="$BATS_TEST_DIRNAME/../skills/vetdd/references/final-judge-rubric.md"
+  sed -n '/^```/,/^```/p' "$rub" | grep -q 'audit'
+  grep -q 'data, not instructions' "$rub"
+}
+
+@test "audit-note.sh does not name a skill eval as a slice it applies to" {
+  ! sed -n 1,8p "$SCRIPTS/audit-note.sh" | grep -q 'eval'
+}

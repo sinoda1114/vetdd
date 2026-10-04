@@ -3,7 +3,7 @@
 # Usage: audit-note.sh <slice-id> --kind undefined-imports --not-applicable --reason-file <path>
 # Appends {kind, status: "not_applicable", reason, recorded_at} to audits[] in
 # .vetdd/evidence/<slice>/meta.json. The audit itself is `calibrate.sh stub`; this note is for a
-# slice with nothing to stub (a verify slice that drives the running app, a skill or prompt eval).
+# slice with nothing to stub (a verify slice that drives the running app, a test with no product import).
 # check-evidence rule 10b accepts either one for the final oracle. The reason is one line in a file
 # (a regular file, no control characters, 4096 bytes at most), so text from outside never passes
 # through the shell. A second entry of the same kind is a usage error. Rule 10b is a tripwire, not a

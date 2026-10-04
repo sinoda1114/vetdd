@@ -304,7 +304,9 @@ write_stub() {
 audit=""  # undefined-imports while a stub run is going
 run_oracle() {
   local meta="$top/.vetdd/evidence/$slice/meta.json" last rc outcome audit_opt=()
-  [ -z "$audit" ] || audit_opt=(--audit "$audit")
+  # The stubbed run must leave no bytecode of the stub anywhere (PYTHONPYCACHEPREFIX moves it out of
+  # reach of drop_pyc), so Python is told not to write any while it runs.
+  [ -z "$audit" ] || { audit_opt=(--audit "$audit"); export PYTHONDONTWRITEBYTECODE=1; }
   last="$(jq '[.runs[].seq] | max // 0' "$meta" 2>/dev/null || echo 0)"
   [ "${VETDD_TEST_HOOKS:-}" != 1 ] || export VETDD_CALIBRATE_PID=$$
   "$here/evidence.sh" "$slice" calibration ${pass[@]+"${pass[@]}"} ${audit_opt[@]+"${audit_opt[@]}"} -- "${argv[@]}"; rc=$?
