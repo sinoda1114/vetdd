@@ -145,19 +145,34 @@ current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
 # across lines (a string continued with a backslash included), then the code is searched for
 # <it|test|describe|suite|context|specify>[.name]*.only[.name]*( or `, spacing, comments, and a line
 # break allowed between the tokens, or fdescribe(. The root name must stand alone (not myit.only, not
-# this.it.only). Not covered, so a tripwire and not a boundary: fit( (a common name for other
-# functions), code inside ${...} in a template, a regular-expression literal after a keyword such as
-# return (it reads as division), and a focus API renamed or wrapped.
+# this.it.only, however spaced). Not covered, so a tripwire and not a boundary: fit( (a common name
+# for other functions), code inside ${...} in a template, a regular-expression literal after a keyword
+# such as return (it reads as division), JSX text (read as code: an it.only( written there is
+# reported, and a bare backtick or quote there can hide what follows), and a focus API renamed or
+# wrapped.
 focused_lines() {
   LC_ALL=C awk -v sq="'" '
     function blanks(k,   b) { b = ""; while (k-- > 0) b = b " "; return b }
+    # Does s hold a match of regular expression r that ends after position off and is not a property
+    # access (a "." before the root name, however spaced)?
+    function hit(s, r, off,   pos, rest, st, rp, pre, e) {
+      pos = 0; rest = s
+      while (match(rest, r)) {
+        st = pos + RSTART; e = st + RLENGTH - 1
+        rp = (substr(rest, RSTART, 1) ~ /[A-Za-z]/) ? st : st + 1
+        pre = substr(s, 1, rp - 1); sub(/[ \t]+$/, "", pre)
+        if (e > off && substr(pre, length(pre), 1) != ".") return 1
+        pos = st; rest = substr(s, pos + 1)
+      }
+      return 0
+    }
     BEGIN {
       block = 0; tpl = 0; carry = ""; tail = ""
       re = "(^|[^A-Za-z0-9_$.])(it|test|describe|suite|context|specify)([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*\\.[ \t]*only([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*[(`]"
       fre = "(^|[^A-Za-z0-9_$.])fdescribe[ \t]*\\("
     }
     {
-      line = $0; n = length(line)
+      line = $0; sub(/\r$/, "", line); n = length(line)
       if (n > 20000) { print "!" NR; next }
       out = ""; i = 1; str = carry; carry = ""; prev = ""
       if (tpl) str = "`"
@@ -172,13 +187,13 @@ focused_lines() {
             if (i == n && str != "`") carry = str
             out = out "  "; i += 2; continue
           }
-          if (c == str) { out = out c; if (c == "`") tpl = 0; str = ""; i++; continue }
+          if (c == str) { out = out c; if (c == "`") tpl = 0; str = ""; prev = "x"; i++; continue }
           out = out " "; i++; continue
         }
         if (c == "/" && d == "/") break
         if (c == "/" && d == "*") { block = 1; out = out "  "; i += 2; continue }
         if (c == "\"" || c == sq || c == "`") { str = c; if (c == "`") tpl = 1; out = out c; prev = c; i++; continue }
-        if (c == "/" && (prev == "" || index("(,=:[!&|?{};+-*%<>~^", prev) > 0)) {
+        if (c == "/" && (prev == "" || index("(,=:[!&|?{};+-*%~^", prev) > 0)) {
           # A regular-expression literal: skip to its closing slash (not inside [...], not escaped).
           j = i + 1; incls = 0; e = 0
           while (j <= n) {
@@ -191,16 +206,20 @@ focused_lines() {
           }
           if (e > 0) { out = out "/" blanks(e - i - 1) "/"; prev = "x"; i = e + 1; continue }
         }
+        if (c != " " && c != "\t") {
+          pc = substr(out, length(out), 1)
+          prev = ((c == "+" || c == "-") && pc == c) ? "x" : c
+        }
         out = out c
-        if (c != " " && c != "\t") prev = c
         i++
       }
-      # The end of the previous line is joined on, so a call split over lines is seen; a match that
-      # lies wholly in that tail was reported on its own line.
-      joined = tail " " out; off = length(tail) + 1
-      if ((match(joined, re) && RSTART + RLENGTH - 1 > off) || (match(joined, fre) && RSTART + RLENGTH - 1 > off)) print NR
-      else if (match(out, re) || match(out, fre)) print NR
-      tail = (length(out) > 80) ? substr(out, length(out) - 79) : out
+      # The end of what came before is joined on (runs of blanks collapsed, so blank lines and comments
+      # cost nothing), so a call split over lines is seen. A match that ends inside that tail was
+      # reported on its own line.
+      cur = out; gsub(/[ \t]+/, " ", cur)
+      joined = tail " " cur; off = length(tail) + 1
+      if (hit(joined, re, off) || hit(joined, fre, off)) print NR
+      tail = joined; if (length(tail) > 400) tail = substr(tail, length(tail) - 399)
     }
     END { if (block || tpl) print "?" }' "$1"
 }

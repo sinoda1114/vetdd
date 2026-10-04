@@ -201,7 +201,7 @@ record_oracle() {
 # --- regular expression literals, line continuations, spacing, extension case (round 2) -----------
 
 @test "rule 9a is not thrown off by a regular expression holding /* or a backtick (B1)" {
-  for re in 'p.replace(/\\/*$/, "")' 'p.split(/[/*]/)' 'p.replace(/a\\/*b/, "")' 'p.replace(/[`]/, "")' 'p.match(/https?:\\/\\//)'; do
+  for re in 'p.replace(/\/*$/, "")' 'p.split(/[/*]/)' 'p.replace(/a\/*b/, "")' 'p.replace(/[`]/, "")' 'p.match(/https?:\/\//)'; do
     rm -rf .vetdd
     record_oracle a.test.ts "$(printf 'expect(%s).toBe("a");\nit.only("x", () => {});' "$re")"
     run check s1
@@ -262,4 +262,54 @@ record_oracle() {
     run check s1
     [ "$status" -eq 1 ] || { echo "$ext: $output"; false; }
   done
+}
+
+# --- round 3: CRLF, long call chains, property access, JSX, closing a continued string -------------
+
+@test "rule 9a gives the same answer for CRLF and LF files (D1)" {
+  for body in $'it.only("x", () => {});' $'it.only\n("x", () => {});' $'test.describe\n  .only("x", () => {});' \
+              $'const s = "abc \\\ndef"; it.only("real", () => {});'; do
+    rm -rf .vetdd
+    record_oracle a.test.ts "$(printf '%s' "$body" | sed 's/$/\r/')"
+    run check s1
+    [ "$status" -eq 1 ] || { echo "crlf: $body: $output"; false; }
+  done
+}
+
+@test "rule 9a sees a call split over several lines, blank lines, and a long comment (D2)" {
+  for body in $'it\n.only\n("x", () => {});' $'it.only\n\n\n("x", () => {});' \
+              "$(printf 'it.only\n/* %0600d */\n("x", () => {});' 0)" \
+              $'it.only("a"); test\n.only("b", () => {});'; do
+    rm -rf .vetdd
+    record_oracle a.test.ts "$body"
+    run check s1
+    [ "$status" -eq 1 ] || { echo "$body: $output"; false; }
+  done
+  rm -rf .vetdd
+  record_oracle a.test.ts $'it.only("a"); test\n.only("b", () => {});'
+  run check s1
+  [[ "$output" == *"line 2 "* ]]
+}
+
+@test "rule 9a leaves a property access alone however it is spaced (D3)" {
+  record_oracle a.test.ts $'this . it.only("x", () => {});\nthis.\n  it.only("y", () => {});\nobj /* c */ . describe.only("z");'
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "rule 9a is not thrown off by JSX closing tags in a TSX file (D4)" {
+  record_oracle a.test.tsx $'const el = <div></div>; it.only("x", () => { render(<p>a</p>) });'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 1 "* ]]
+}
+
+@test "rule 9a reads a slash after a closed continued string or a postfix increment as division (D5)" {
+  record_oracle a.test.ts $'const t = `a\nb` / 2; it.only("x"); const r = 1 / 3;'
+  run check s1
+  [ "$status" -eq 1 ]
+  rm -rf .vetdd
+  record_oracle a.test.ts $'i++ / 2; it.only("a/b", () => {}); j-- / 2;'
+  run check s1
+  [ "$status" -eq 1 ]
 }
