@@ -233,3 +233,88 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   run check k1
   [[ "$output" == *"10c: mutation run 3:"* ]]
 }
+
+# --- review round 1 ------------------------------------------------------------------------------
+
+@test "the rubric fails only FAIL lines of rule 10; a 10c WARN goes to Attention (J1)" {
+  local rub="$SCRIPTS/../references/final-judge-rubric.md" two
+  two="$(sed -n '/^## 3\. /,/^## 4\. /p' "$rub" | grep '^- 2:')"
+  [[ "$two" == *'FAIL (10'* ]]
+  [[ "$two" == *'WARN (10c'*'Attention'* ]]
+}
+
+@test "a report whose mutants are all compile errors, runtime errors, or ignored fails: none was tested (J2)" {
+  local s
+  for s in CompileError RuntimeError Ignored; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(report "$M |= map(.status = \"$s\")")"
+    run check s1
+    [ "$status" -eq 1 ] || { echo "$s: $output"; false; }
+    [[ "$output" == *"10c: mutation run 3 tested no mutant"* ]] || { echo "$s: $output"; false; }
+  done
+}
+
+@test "after a version bump a new mutation note can be written, and it counts; two notes in a row are refused (J3)" {
+  record_good_slice s1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
+  run an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
+  [ "$status" -eq 2 ]
+  sleep 1
+  printf '\n# a stronger test\n' >> test.sh
+  ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  run check s1
+  [[ "$output" == *"10c: no mutation audit"* ]]
+  sleep 1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
+  run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+}
+
+@test "test mode: one --mutate with comma-separated ranges, npx --no-install, and the Close step re-runs the audit and ships the copy (J4, J7)" {
+  local doc="$SCRIPTS/../modes/test.md"
+  grep -q -- "--mutate '<file>:<first>-<last>,<file>:<first>-<last>'" "$doc"
+  ! grep -q 'one `--mutate` per changed range' "$doc"
+  grep -q 'npx --no-install stryker run' "$doc"
+  ! grep -q 'npx stryker run' "$doc"
+  sed -n '/^## Close/,/^## Traps/p' "$doc" | grep -q -- '--audit mutation'
+  sed -n '/^## Close/,/^## Traps/p' "$doc" | grep -q 'mutation.json'
+  ! grep -q 'npx stryker run' "$SCRIPTS/check-evidence.sh"
+}
+
+@test "a mutated file whose name holds a backslash is compared as it is named (J5)" {
+  printf 'x\n' > 'src/a\b.ts'
+  git add -A && git commit -q -m bs
+  record_good_slice s1
+  jq --arg r "$REPO" --arg k 'src/a\b.ts' '.projectRoot = $r | .files = {($k): (.files["src/dueDate.ts"] | .source = "x\n" | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/bs.json"
+  mutation s1 "$BATS_TEST_TMPDIR/bs.json"
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ]
+  run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+}
+
+@test "an empty path in the record fails closed (J5)" {
+  record_good_slice s1
+  mutation s1 "$(killed)"
+  tamper s1 '.runs[-1].audit.report.files[0].path = ""'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"10c:"* ]]
+}
+
+@test "the copy of the judged run must be there and match the recorded sha256 (J6)" {
+  record_good_slice s1
+  mutation s1 "$(killed)"
+  local c=.vetdd/evidence/s1/runs/003-mutation.json
+  printf ' ' >> "$c"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"10c: the copy of mutation run 3's report is missing or does not match"* ]]
+  rm "$c"
+  run check s1
+  [[ "$output" == *"10c: the copy of mutation run 3's report is missing or does not match"* ]]
+  ln -s /etc/hosts "$c"
+  run check s1
+  [[ "$output" == *"10c: the copy of mutation run 3's report is missing or does not match"* ]]
+}

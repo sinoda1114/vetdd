@@ -8,7 +8,7 @@
 # tool). check-evidence rules 10b and 10c accept the note when it was recorded after the final oracle
 # first ran. The reason is one line in a file (a regular file, no control characters, 4096 bytes at
 # most), so text from outside never passes through the shell. A second entry of the same kind is a
-# usage error. Rules 10b and 10c are tripwires, not boundaries: they check that the note exists, not
+# usage error until a run starts after the last one (a new oracle version needs a new note). Rules 10b and 10c are tripwires, not boundaries: they check that the note exists, not
 # that the reason is true.
 # Exit 0 on success, 2 on usage errors (nothing is written).
 set -u
@@ -67,9 +67,13 @@ else
     || die "cannot build the evidence for slice '$slice'"
 fi
 
-dup="$(printf '%s' "$in_json" | jq -r --arg k "$kind" 'any((.audits // [])[]; .kind == $k)')" \
+# A second note of a kind is refused until a run starts after the last one: a note counts only when it
+# was recorded after the final oracle first ran, so a new oracle version needs a new note.
+dup="$(printf '%s' "$in_json" | jq -r --arg k "$kind" '
+  ([.runs[].started_at | strings] | max) as $last
+  | any((.audits // [])[]; .kind == $k and ($last == null or ((.recorded_at | strings) // "") >= $last))')" \
   || die "could not read the audits of $rel"
-[ "$dup" != true ] || die "slice '$slice' already has an audit entry of kind $kind (one per kind)"
+[ "$dup" != true ] || die "slice '$slice' already has an audit entry of kind $kind and no run has started since (one per kind and oracle)"
 
 recorded_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 created=0; [ -d "$dir" ] || created=1

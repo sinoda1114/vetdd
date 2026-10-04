@@ -281,7 +281,7 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
 | [.runs[] | select(.accepted != false and usable)] as $acc
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
 | (([$meta.runs[] | mut] | any) or ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation")] | length > 0)) as $opted
-| if ($opted | not) or $g == null then {problems: [], warns: [], files: []}
+| if ($opted | not) or $g == null then {problems: [], warns: [], files: [], copy: null}
   else
     ($g | oid) as $fo
     | [$acc[] | select(green and .outcome == "pass" and oid == $fo) | .seq] as $gseqs
@@ -292,23 +292,27 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
           and (.reason | type) == "string" and (.reason | length) > 0
           and $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first)] | length) as $noted
     | if $m == null then
-        {problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after a green run of it; run evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/\($slice)-mutation.json -- npx stryker run --mutate <file>:<first line>-<last line> on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
+        {copy: null, problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after a green run of it; run evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/\($slice)-mutation.json -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
          warns: [], files: []}
       else
         ($m.seq | num) as $s | $m.audit.report as $rep
         | if ($rep | type) != "object" then error("no report")
           elif $rep.status != "ok" then
-            {problems: ["10c: the report of mutation run \($s) is \(if $rep.status == "missing" then "missing" else "invalid" end); run the mutation audit again"], warns: [], files: []}
+            {copy: null, problems: ["10c: the report of mutation run \($s) is \(if $rep.status == "missing" then "missing" else "invalid" end); run the mutation audit again"], warns: [], files: []}
           else
             ($rep.counts) as $c
             | ($c.survived | nn) as $sv | ($c.no_coverage | nn) as $nc | ($c.total | nn) as $t | ($c.ignored | nn) as $ig
+            | ($c.killed | nn) as $k | ($c.timeout | nn) as $to | ($c.compile_error | nn) as $ce | ($c.runtime_error | nn) as $re
+            | ($rep.sha256 | if type == "string" then . else error("sha256") end) as $csum
             | ($rep.files | if type == "array" and length > 0 and all(.[]; type == "object" and (.path | type) == "string" and (.sha256 | type) == "string")
                             then . else error("files") end) as $files
             | {problems: (
-                 (if $t == 0 then ["10c: mutation run \($s) mutated nothing (0 mutants); --mutate must cover the lines the slice changed"] else [] end)
+                 (if $t == 0 then ["10c: mutation run \($s) mutated nothing (0 mutants); --mutate must cover the lines the slice changed"]
+                  elif $k + $to + $sv + $nc == 0 then ["10c: mutation run \($s) tested no mutant (\($ce) compile errors, \($re) runtime errors, and \($ig) ignored of \($t)); fix the setup (a type checker or a broken build rejects every mutant) and run the audit again"]
+                  else [] end)
                  + (if $sv + $nc > 0 then ["10c: mutation run \($s): \($sv) survived and \($nc) without coverage of \($t) mutants; strengthen the test until each is killed, or, for a mutant that cannot change behavior, disable it in the product code with // Stryker disable next-line <mutator>: <reason> and run the audit again"] else [] end)),
                warns: (if $ig > 0 then ["10c: \($ig) of the \($t) mutants of mutation run \($s) are ignored (Stryker disable comments); each one and its reason goes in the reply'"'"'s Attention"] else [] end),
-               files: [$files[] | {path, sha256, seq: $s}]}
+               files: [$files[] | {path, sha256, seq: $s}], copy: {seq: $s, sha256: $csum}}
           end
       end
   end'
@@ -507,8 +511,7 @@ check_slice() {
 # Rule 10c: problems on stdout, the ignored-mutant warning appended to $warn_file. The mutated files
 # are hashed here: each must still hold the source the report mutated.
 check_mutation() {
-  local slice="$1" meta="$2" out path sum seq tab
-  tab="$(printf '\t')"
+  local slice="$1" meta="$2" out path sum seq rel
   if ! out="$(jq -c --arg slice "$slice" "$MUTATION_RULES" "$meta" 2>/dev/null)" \
      || ! printf '%s' "$out" | jq -e '(.problems | type) == "array" and (.warns | type) == "array" and (.files | type) == "array"' >/dev/null 2>&1; then
     echo "10c: could not evaluate the mutation audit (a run's audit record or the audits log is malformed)"
@@ -516,12 +519,20 @@ check_mutation() {
   fi
   printf '%s' "$out" | jq -r '.problems[]'
   printf '%s' "$out" | jq -r '.warns[]' >> "$warn_file"
-  while IFS="$tab" read -r path sum seq; do
-    [ -n "$path" ] || continue
-    if ! vetdd_inside_repo "$root" "$path" || [ ! -f "$root/$path" ] || [ "$(vetdd_sha256 "$root/$path")" != "$sum" ]; then
-      echo "10c: $path changed since mutation run $seq (or is missing, a link, or outside the repository); run the mutation audit again on the delivered file"
+  # The copy the judge reads: named from the run number evidence.sh wrote, never from a path in the record.
+  if seq="$(printf '%s' "$out" | jq -r '.copy.seq // empty')" && [ -n "$seq" ]; then
+    rel=".vetdd/evidence/$slice/runs/$(printf '%03d' "$seq")-mutation.json"
+    if ! vetdd_inside_repo "$root" "$rel" || [ ! -f "$root/$rel" ] \
+       || [ "$(vetdd_sha256 "$root/$rel")" != "$(printf '%s' "$out" | jq -r '.copy.sha256')" ]; then
+      echo "10c: the copy of mutation run $seq's report is missing or does not match the sha256 recorded for it (or is a link); run the mutation audit again"
     fi
-  done < <(printf '%s' "$out" | jq -r '.files[] | [.path, .sha256, .seq] | @tsv')
+  fi
+  # NUL-separated: a path is read exactly as recorded, backslashes and all.
+  while IFS= read -r -d '' path && IFS= read -r -d '' sum && IFS= read -r -d '' seq; do
+    if [ -z "$path" ] || ! vetdd_inside_repo "$root" "$path" || [ ! -f "$root/$path" ] || [ "$(vetdd_sha256 "$root/$path")" != "$sum" ]; then
+      echo "10c: ${path:-<an empty path>} changed since mutation run $seq (or is missing, a link, or outside the repository); run the mutation audit again on the delivered file"
+    fi
+  done < <(printf '%s' "$out" | jq -j '.files[] | .path, "\u0000", .sha256, "\u0000", (.seq | tostring), "\u0000"')
 }
 
 # Rules 6 and 9a, on the files the oracle names.
