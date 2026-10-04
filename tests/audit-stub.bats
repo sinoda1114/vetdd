@@ -323,7 +323,9 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
   [ "$(mq s1 '.audits[0].status')" = not_applicable ]
   [ "$(mq s1 '.audits[0].reason')" = "a verify slice: the oracle drives the running app, there is no import to stub" ]
   [[ "$(mq s1 '.audits[0].recorded_at')" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
-  [ "$(mq s1 '.audits[0] | keys | join(",")')" = "kind,reason,recorded_at,status" ]
+  # after_seq (PR7b, owner-approved): the last run number when the note was written, 0 with no run.
+  [ "$(mq s1 '.audits[0] | keys | join(",")')" = "after_seq,kind,reason,recorded_at,status" ]
+  [ "$(mq s1 '.audits[0].after_seq')" = 0 ]
   [ "$(mq s1 '.runs')" = "[]" ]
 }
 
@@ -693,8 +695,8 @@ audit_run() {
 
 # --- docs ----------------------------------------------------------------------------------------
 
-@test "the rubric is version 5 and names rule 10, and the test mode says to run calibrate.sh stub" {
-  head -1 "$SCRIPTS/../references/final-judge-rubric.md" | grep -qx '# Final judge rubric (version 5)'
+@test "the rubric is version 5 or later and names rule 10, and the test mode says to run calibrate.sh stub" {
+  head -1 "$SCRIPTS/../references/final-judge-rubric.md" | grep -qxE '# Final judge rubric \(version ([5-9]|[1-9][0-9]+)\)'
   grep -q '10a' "$SCRIPTS/../references/final-judge-rubric.md"
   grep -q '10b' "$SCRIPTS/../references/final-judge-rubric.md"
   # The content test stays (round 1, N2): the rubric names the undefined-imports case itself.
@@ -898,7 +900,12 @@ audit_run() {
   an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
   run check s1
   [ "$output" = "s1: OK" ]
-  tamper s1 '.audits[0].recorded_at = "2000-01-01T00:00:00Z"'
+  # Written before the final oracle first ran: by run number (after_seq 0 is before run 1), and by
+  # time for a note without after_seq.
+  tamper s1 '.audits[0].after_seq = 0'
+  run check s1
+  [[ "$output" == *"s1: FAIL (10b:"* ]]
+  tamper s1 '.audits[0] |= del(.after_seq) | .audits[0].recorded_at = "2000-01-01T00:00:00Z"'
   run check s1
   [ "$status" -eq 1 ]
   [[ "$output" == *"s1: FAIL (10b:"* ]]
@@ -922,7 +929,7 @@ audit_run() {
   record_good_slice s1
   printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
   an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
-  tamper s1 '.runs |= map(del(.started_at))'
+  tamper s1 '.runs |= map(del(.started_at)) | .audits[0] |= del(.after_seq)'
   run check s1
   [[ "$output" == *"10b:"* ]]
 }

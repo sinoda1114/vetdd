@@ -39,7 +39,9 @@ VETDD_STRYKER_JSON='
 # rest of the config, free text a tool or a person added) is left out.
 VETDD_STRYKER_COPY='
   {schemaVersion, config: {mutate: (.config.mutate // null)},
-   files: (.files | map_values({source, mutants: [.mutants[] | {id, mutatorName, replacement, status, location}]}))}'
+   files: (.files | map_values({source, mutants: [.mutants[] | {id, mutatorName, replacement, status,
+     location: {start: {line: .location.start.line, column: .location.start.column},
+                end: {line: .location.end.line, column: .location.end.column}}}]}))}'
 
 # vetdd_mutation_files <root> <report> <projectRoot> <keys...>: print [{path, sha256}] with each path
 # relative to <root> in its on-disk spelling and the sha256 of the source the report mutated; fail

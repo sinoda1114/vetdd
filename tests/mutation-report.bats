@@ -153,8 +153,10 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 @test "a mutation run is not a red, never trips 10a, and does not ask the slice for an undefined-imports audit" {
   record_good_slice s1
-  REPORT="$(report)" EXIT=1 ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1 || true
-  REPORT="$(report)" EXIT=0 ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1
+  # Every mutant killed, so rule 10c (PR7b) has nothing to say either.
+  local K; K="$(report '.files["src/dueDate.ts"].mutants |= map(.status = "Killed")')"
+  REPORT="$K" EXIT=1 ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1 || true
+  REPORT="$K" EXIT=0 ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$output" = "s1: OK" ]
@@ -168,7 +170,8 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 @test "a mutation note in audits does not ask the slice for an undefined-imports audit" {
   record_good_slice s1
-  tamper s1 '.audits = [{"kind": "mutation", "status": "not_applicable", "reason": "python", "recorded_at": "2026-10-04T00:00:00Z"}]'
+  printf 'python\n' > "$BATS_TEST_TMPDIR/n.txt"
+  "$SCRIPTS/audit-note.sh" s1 --kind mutation --not-applicable --reason-file "$BATS_TEST_TMPDIR/n.txt"
   run check s1
   [ "$output" = "s1: OK" ] || { echo "$output"; false; }
 }
@@ -260,7 +263,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 @test "an audit mark of an unknown kind on a run opts the slice in to rule 10 (fails closed)" {
   record_good_slice s1
-  REPORT="$(report)" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1
+  REPORT="$(report '.files["src/dueDate.ts"].mutants |= map(.status = "Killed")')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1
   run check s1
   [ "$output" = "s1: OK" ]
   tamper s1 '.runs[-1].audit.kind = "stryker"'

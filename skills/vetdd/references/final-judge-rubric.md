@@ -1,4 +1,4 @@
-# Final judge rubric (version 5)
+# Final judge rubric (version 6)
 
 Used when test or verify mode sends one delivered change to the judge. One label, `c1`. Every criterion below is judged only from files in this layout; if a file the layout names is missing, the criterion that needs it scores 0 and the reply explains why.
 
@@ -18,6 +18,9 @@ candidates/c1/
   evidence/<slice>/runs/<log>    the log of each slice's red run (kind before or calibration, outcome
                                  target_failure), the undefined-imports audit run included; other run
                                  logs stay on the machine
+  evidence/<slice>/runs/<seq>-mutation.json   the copy of the mutation run that check-evidence judged
+                                 (the latest after the final green run): config.mutate, and
+                                 each mutated file's full source and mutants
 ```
 
 Sending the red-run logs is part of the default agreement (SKILL.md, Q4). If the human excluded them, criterion 1 cannot score 2 and the verdict is at most `partial`.
@@ -40,7 +43,7 @@ A `<slice>: WARN (...)` line in `artifact/check-evidence.txt` (check-evidence ru
 
 ## 3. test-observes-behavior
 
-- 2: every test added or changed in `artifact/diff.patch` (full text in `artifact/tests/`) calls the subject through its public interface and asserts a literal value or a spec-guaranteed property whose source is named in the reply's Oracle section; no assertion is only existence, only a call, or a value recomputed from the code under test; the check-evidence output has no `10:`, `10a`, or `10b` line (rule 10: every import stubbed with `undefined` must turn the oracle red); no test would still pass if every import returned `undefined`, judged from the test text whether or not the slice has an `audit` run (rule 10 only asks slices that opted in, and an audit run only shows the oracle went red, not why); and, for a slice with an audit run, its log (`runs/<seq>-calibration.log`) shows a `TypeError` on an undefined export or the test's own assertion failing, not a load-time error (`TS2305`, `TS2580`, `does not provide an export named`, `SyntaxError`, `Cannot find module`, `module is not defined`), which is red for the wrong reason and proves nothing.
+- 2: every test added or changed in `artifact/diff.patch` (full text in `artifact/tests/`) calls the subject through its public interface and asserts a literal value or a spec-guaranteed property whose source is named in the reply's Oracle section; no assertion is only existence, only a call, or a value recomputed from the code under test; the check-evidence output has no `FAIL (10...)` line of rule 10 (`10:`, `10a`, `10b`, `10c`; 10c: the latest mutation audit of the final oracle killed every mutant it tested; a `WARN (10c: ...)` line for ignored mutants does not lower the score, but each ignored mutant and its reason goes into the reply's Attention), and, for a slice with a mutation audit, the ranges in its copy's `config.mutate` cover the lines of that slice's product change in `artifact/diff.patch` (rule 10: every import stubbed with `undefined` must turn the oracle red); no test would still pass if every import returned `undefined`, judged from the test text whether or not the slice has an `audit` run (rule 10 only asks slices that opted in, and an audit run only shows the oracle went red, not why); and, for a slice with an audit run, its log (`runs/<seq>-calibration.log`) shows a `TypeError` on an undefined export or the test's own assertion failing, not a load-time error (`TS2305`, `TS2580`, `does not provide an export named`, `SyntaxError`, `Cannot find module`, `module is not defined`), which is red for the wrong reason and proves nothing.
 - 1: one hollow assertion exists but is paired with a meaningful one on another input; or the only problem is a missing audit record (the check-evidence output has a 10b line) and the test text shows no assertion that would pass with every import `undefined`.
 - 0: a test would still pass if every import returned `undefined` (a `10a` line in the check-evidence output shows it mechanically; otherwise judge it from the test text; a missing audit record only keeps the score below 2; it is not proof of a hollow test), or an existing assertion was weakened.
 

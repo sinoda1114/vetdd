@@ -23,12 +23,14 @@ vetdd_tree_hash() {
 }
 
 # vetdd_sha256 <file>: prints the digest; fails, printing nothing, when no digest was produced.
+# The file is read on standard input: GNU sha256sum prefixes the digest with \ when the file name
+# holds a backslash or a newline, so the name never reaches it.
 vetdd_sha256() {
   local out
   if command -v sha256sum >/dev/null 2>&1; then
-    out="$(sha256sum "$1" 2>/dev/null)"
+    out="$(sha256sum < "$1" 2>/dev/null)"
   else
-    out="$(shasum -a 256 "$1" 2>/dev/null)"
+    out="$(shasum -a 256 < "$1" 2>/dev/null)"
   fi
   out="${out%% *}"
   [ -n "$out" ] || return 1

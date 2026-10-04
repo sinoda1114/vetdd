@@ -18,7 +18,7 @@
       "items": { "$ref": "#/$defs/oracleVersion" }
     },
     "audits": {
-      "description": "Why an audit does not apply to this slice, written by scripts/audit-note.sh; absent when none was recorded. Once the key exists with an undefined-imports entry or empty (or a run carries an undefined-imports audit mark), check-evidence rule 10b asks for an undefined-imports audit of the final oracle: an accepted audit run, or an entry here.",
+      "description": "Why an audit does not apply to this slice, written by scripts/audit-note.sh; absent when none was recorded. Once the key exists with an undefined-imports entry or empty (or a run carries an undefined-imports audit mark), check-evidence rule 10b asks for an undefined-imports audit of the final oracle: an accepted audit run, or an entry here. A mutation entry is the rule 10c alternative to a mutation run, for a language with no mutation tool; a mutation run or entry is what makes rule 10c ask.",
       "type": "array",
       "items": { "$ref": "#/$defs/auditNote" }
     }
@@ -86,7 +86,8 @@
         "kind": { "enum": ["undefined-imports", "mutation"] },
         "status": { "description": "not_applicable: the audit cannot apply to this slice (nothing to stub, or no mutation tool for its language; the reason says why).", "enum": ["not_applicable"] },
         "reason": { "type": "string", "minLength": 1 },
-        "recorded_at": { "$ref": "#/$defs/timestamp" }
+        "recorded_at": { "$ref": "#/$defs/timestamp" },
+        "after_seq": { "description": "The largest runs[].seq when the note was written (0 with no run). The note counts for an oracle whose first run has a seq no larger than this; a note without it (written before it existed) is judged by recorded_at.", "type": "integer", "minimum": 0 }
       }
     },
     "oracleVersion": {
