@@ -13,7 +13,7 @@
     },
     "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } },
     "oracle_versions": {
-      "description": "Why each oracle version changed, written by scripts/oracle-version.sh; absent in evidence recorded before the log existed. Check-evidence rule 8d asks for an entry for every version after the first once the key exists.",
+      "description": "Why each oracle version changed, written by scripts/oracle-version.sh; absent in evidence recorded before the log existed. Once the key exists, check-evidence rule 8d asks for an entry for the version the final green rests on, unless it is the initial agreement (an older version left behind is history).",
       "type": "array",
       "items": { "$ref": "#/$defs/oracleVersion" }
     }

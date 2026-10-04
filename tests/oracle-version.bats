@@ -313,3 +313,11 @@ perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
   grep -q 'oracle-version.sh' "$SCRIPTS/../modes/verify.md"
   grep -q 'reason-file' "$SCRIPTS/../modes/verify.md"
 }
+
+@test "a meta.json that is not a regular file is refused, never reported as recorded (J2)" {
+  mkdir -p .vetdd/evidence/s1/meta.json
+  run ov s1 --version v1 --change initial --reason r
+  [ "$status" -eq 2 ]
+  [[ "$output" != *"recorded version"* ]]
+  [ -z "$(ls -A .vetdd/evidence/s1/meta.json)" ]
+}

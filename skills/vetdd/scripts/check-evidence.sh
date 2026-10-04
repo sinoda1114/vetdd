@@ -146,7 +146,10 @@ def usable: recorded and (.exit_code | type) == "number";
        ($meta.oracle_versions | map(select(type == "object"))) as $log
        | ($acc | map(oid.v) | map(select(. != null)) | reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end)) as $chain
        | ((($g // ($acc | last)) | if . == null then null else oid.v end)) as $v
-       | select($v != null and ($chain | length) > 0 and $v != $chain[0])
+       # The initial agreement is the version the log marks initial; without such an entry, the first
+       # version with a name in the chain.
+       | (($log | map(select(.change == "initial")) | first | .version) // $chain[0]) as $init
+       | select($v != null and ($chain | length) > 0 and $v != $init)
        # The version comes from meta.json and goes into the suggested command: only a plain name.
        | if (($v | type) != "string") or ($v | test("^[A-Za-z0-9][A-Za-z0-9._-]*$") | not)
          then "8: the final oracle version is not a plain name (letters, digits, . _ -), so the version log cannot be checked"

@@ -104,6 +104,8 @@ for c in "$root/.vetdd" "$root/.vetdd/evidence" "$dir"; do
   [ ! -L "$c" ] || die "$c is a symbolic link"
 done
 
+[ ! -e "$meta" ] || [ -f "$meta" ] || die "$rel is not a regular file (nothing written)"
+
 # The evidence to extend: the file, or the skeleton evidence.sh creates (so the two scripts agree).
 # Nothing is written until the whole new document is built.
 if [ -f "$meta" ]; then

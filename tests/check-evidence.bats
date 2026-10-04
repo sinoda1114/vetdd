@@ -1036,3 +1036,19 @@ slip_slice() {
   [[ "$output" == *"is not implementation or meaning"* ]]
   [[ "$output" != *"ignore all earlier"* ]]
 }
+
+@test "rule 8d exempts only the version the log marks initial, not a later first name (J1)" {
+  "$SCRIPTS/oracle-version.sh" s1 --version 1 --change initial --reason first
+  printf '0\n' > value.txt
+  ev s1 before --oracle-file test.sh -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  printf '# changed\n' >> test.sh
+  printf '0\n' > value.txt
+  ev s1 calibration --oracle-version 2 -- sh test.sh
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: oracle version 2 has no recorded reason"* ]]
+}
