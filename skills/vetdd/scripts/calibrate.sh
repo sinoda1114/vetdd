@@ -15,9 +15,10 @@
 #       The undefined-imports audit (principle 4's quick check): replace every product file the oracle
 #       imports with a stub whose exports are all undefined, run the command as a calibration marked
 #       audit: {"kind": "undefined-imports"}, then put the files back. It must end target_failure
-#       (exit 0): a test that still passes (exit 1) observes nothing. Stubs: .ts .tsx .js .jsx .mjs
-#       .cjs .mts .cts -> `export {};`; .py -> a module __getattr__ returning None; any other
-#       extension is a usage error before anything changes. Run it once the test is green; it is
+#       (exit 0): a test that still passes (exit 1) observes nothing. Stubs: .ts .tsx .jsx .mjs .mts ->
+#       `export {};`; .cjs .cts -> `module.exports = {};`; .js -> by the nearest package.json "type"
+#       (an empty CommonJS module, or `export {};` for "module"); .py -> a module __getattr__ returning
+#       None; any other extension is a usage error before anything changes. Run it once the test is green; it is
 #       also the rule 10b record (check-evidence), unless audit-note.sh says it does not apply.
 #   calibrate.sh restore <slice>
 #       Put back whatever an interrupted unfix, plant, or stub left saved.
@@ -192,6 +193,16 @@ save_originals() {
   : > "$state/saved" || die "cannot write $state/saved"  # from here on the working tree may change, so restore must write the copies back
 }
 
+# drop_pyc <path>: a .py file's bytecode caches (__pycache__/<stem>.*.pyc), which Python validates by whole
+# seconds and size, so a stub and the original of equal size could otherwise be mistaken for each other.
+drop_pyc() {
+  case "$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')" in *.py) ;; *) return 0 ;; esac
+  local dir stem
+  dir="$(dirname -- "$top/$1")"; stem="$(basename -- "$1")"; stem="${stem%.*}"
+  rm -f "$dir/__pycache__/$stem".*.pyc 2>/dev/null
+  return 0
+}
+
 # Put every saved file and index entry back, then remove the state atomically. Returns non-zero,
 # keeping the state, if anything cannot be verified.
 restore() {
@@ -215,9 +226,11 @@ restore() {
         mkdir -p "$replaced/$(dirname -- "$f")" && cp -p "$top/$f" "$replaced/$f" \
           || { warn "could not keep the current $f before replacing it"; return 1; }
       fi
-      tmp="$(mktemp "$top/$f.XXXXXX")" && cp -p "$state/copies/$f" "$tmp" && mv -f "$tmp" "$top/$f" \
-        && touch "$top/$f" && [ ! -L "$top/$f" ] && cmp -s "$state/copies/$f" "$top/$f" \
-        || { warn "could not put back $f; the copy is in $state/copies"; return 1; }
+      # touch the temp file, not the target: the rename is then the last step and follows no link.
+      tmp="$(mktemp "$top/$f.XXXXXX")" && cp -p "$state/copies/$f" "$tmp" && touch "$tmp" && mv -f "$tmp" "$top/$f" \
+        && [ ! -L "$top/$f" ] && cmp -s "$state/copies/$f" "$top/$f" \
+        || { rm -f "$tmp"; warn "could not put back $f; the copy is in $state/copies"; return 1; }
+      drop_pyc "$f"
     done < "$state/files"
   fi
   if [ -f "$state/saved" ] && [ -f "$state/files" ]; then
@@ -252,7 +265,7 @@ new_state() {
 }
 
 # stub_text <path>: the stub for the file's extension on standard output; non-zero when it has none.
-# A .cjs is always CommonJS and a .mjs always an ES module. A .js is an ES module when the nearest
+# A .cjs or .cts is always CommonJS and a .mjs always an ES module. A .js is an ES module when the nearest
 # package.json says "type": "module"; otherwise the stub is valid either way (an empty module in CommonJS,
 # a module with no exports in ESM), so a stub never fails on its own syntax.
 nearest_package_type() {
@@ -266,21 +279,24 @@ nearest_package_type() {
 }
 stub_text() {
   case "$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')" in
-    *.cjs) printf 'module.exports = {};\n' ;;
+    *.cjs|*.cts) printf 'module.exports = {};\n' ;;
     *.js)
       if [ "$(nearest_package_type "$1")" = module ]; then printf 'export {};\n'
       else printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'; fi ;;
-    *.ts|*.tsx|*.jsx|*.mjs|*.mts|*.cts) printf 'export {};\n' ;;
+    *.ts|*.tsx|*.jsx|*.mjs|*.mts) printf 'export {};\n' ;;
     *.py) printf "def __getattr__(name):\n    if name.startswith('__') and name.endswith('__'):\n        raise AttributeError(name)\n    return None\n" ;;
     *) return 1 ;;
   esac
 }
+# mode_of <path>: permission bits in octal (GNU stat first: BSD stat has no -c, and GNU stat -f prints file system data).
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 # write_stub <path>: a new file in the place of the saved one (the temp file made beside it takes the
 # old mode), so a hard link never keeps the stub and a symlink put there is replaced, not followed.
 write_stub() {
   local f="$1" tmp
-  tmp="$(mktemp "$top/$f.XXXXXX")" && cp -p "$top/$f" "$tmp" && stub_text "$f" > "$tmp" && mv -f "$tmp" "$top/$f" \
-    || { rm -f "$tmp"; return 1; }
+  # Write the stub before taking over the old mode: a read-only original would make the temp file unwritable.
+  tmp="$(mktemp "$top/$f.XXXXXX")" && stub_text "$f" > "$tmp" && chmod "$(mode_of "$top/$f")" "$tmp" \
+    && mv -f "$tmp" "$top/$f" && drop_pyc "$f" || { rm -f "$tmp"; return 1; }
 }
 
 audit=""  # undefined-imports while a stub run is going

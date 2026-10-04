@@ -66,7 +66,7 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 
 @test "the stub matches the module system of each extension, in any letter case, and the python stub for .py" {
   local ext want
-  for ext in ts tsx jsx mjs mts cts TS Mjs; do
+  for ext in ts tsx jsx mjs mts TS Mjs; do
     printf 'export const g = 1;\n' > "a.$ext"
     git add -A && git commit -q -m "a.$ext"
     rm -f seen.out
@@ -81,6 +81,11 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
   git add -A && git commit -q -m cjs
   run cal stub cj1 --file a.cjs --oracle-file spy.sh -- sh spy.sh a.cjs
   [ "$(cat seen.out)" = 'module.exports = {};' ] || { echo "cjs: $(cat seen.out)"; false; }
+  # A .cts is CommonJS to Node's own TypeScript loader, so `export {};` would be a syntax error there.
+  printf 'export const g = 1;\n' > a.cts
+  git add -A && git commit -q -m cts
+  run cal stub cj4 --file a.cts --oracle-file spy.sh -- sh spy.sh a.cts
+  [ "$(cat seen.out)" = 'module.exports = {};' ] || { echo "cts: $(cat seen.out)"; false; }
   run cal stub cj2 --file a.js --oracle-file spy.sh -- sh spy.sh a.js
   [ "$(cat seen.out)" = 'if (typeof module !== "undefined") { module.exports = {}; }' ] || { echo "js: $(cat seen.out)"; false; }
   # A package that says "type": "module" makes a .js an ES module.
@@ -742,4 +747,35 @@ audit_run() {
   local rub="$BATS_TEST_DIRNAME/../skills/vetdd/references/final-judge-rubric.md"
   sed -n '/^## 3\. /,/^## 4\. /p' "$rub" | grep -q 'would still pass if every import returned `undefined`'
   sed -n '/^## 1\. /,/^## 2\. /p' "$rub" | grep -q '`audit`'
+}
+
+# --- round 2 ---------------------------------------------------------------------------------------
+
+@test "a read-only product file is stubbed and comes back read-only with its content" {
+  chmod 444 lib.ts
+  run cal stub ro1 --file lib.ts --oracle-file spy.sh -- sh spy.sh lib.ts
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ "$(cat seen.out)" = 'export {};' ]
+  [ "$(cat lib.ts)" = "$LIB" ]
+  [ "$(perm lib.ts)" = 444 ]
+  [ ! -e "$(state_dir ro1)" ]
+  chmod 644 lib.ts
+}
+
+@test "restoring a python file drops the bytecode cache the stub run left" {
+  mkdir -p __pycache__
+  printf 'stale' > __pycache__/mod.cpython-399.pyc
+  printf 'keep' > __pycache__/other.cpython-399.pyc
+  run cal stub py1 --file mod.py --oracle-file spy.sh -- sh spy.sh mod.py
+  [ "$status" -eq 1 ]
+  [ ! -e __pycache__/mod.cpython-399.pyc ]
+  [ -e __pycache__/other.cpython-399.pyc ]
+  [ "$(cat mod.py)" = "$(printf 'def f(n):\n    return n * 2')" ]
+}
+
+@test "test mode sends a vacuous audit through unfix and a new after, not a before on the fixed tree" {
+  local doc="$SCRIPTS/../modes/test.md"
+  # The step-5 sentence about a vacuous test must name the order that gives a red on the new version.
+  grep -q 'oracle-version.sh.*calibrate.sh unfix' "$doc"
+  ! grep -q 'record its `before` again, and audit again' "$doc"
 }
