@@ -29,8 +29,28 @@
 #               has its re-agreement, and the version's first red comes after the entry (agree first,
 #               then recalibrate). Also a tripwire: it checks that the record exists and is in order,
 #               not that it is true.
-# Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule.
-# Exit code: number of failing slices (capped at 125); 2 on usage errors.
+# Tests:    (9b) a test that ran (passed or failed) in an earlier accepted run and is skipped or todo in the
+#               latest accepted run of the same command and oracle version, for the version the final
+#               green rests on (an older version left behind is history; bumping --oracle-version, with
+#               its entry in the version log, is the way out of a skip that is meant). Cmd is compared as
+#               JSON. The report is the normalized copy that evidence.sh --test-report saves
+#               (runs/<seq>-<kind>.tests.json, opened by a name made from seq and kind, only through a
+#               safe path, and only if its sha256 matches the record). A command whose latest run has no
+#               usable report (absent, missing, invalid) is not compared (9c warns); a copy that cannot be
+#               read for a run recorded ok fails. This is IDS's count of unfinished tests (the Admitted
+#               holes), taken from the runner's report. A tripwire, not a boundary: a test that
+#               disappears altogether, a changed command (a name filter), a renamed test, tests sharing a
+#               file and a name (read as one), a skip written into an oracle file itself (its hash change
+#               needs a version bump, so it starts a new comparison), a slice that never asks for a report,
+#               and a copy and its sha256 both rewritten by hand all pass it.
+#           (9c) a warning, never a failure, per command that asked for a report at some point (among the
+#               runs of the final version): its own latest green run has skipped or todo tests (counts
+#               shown), or has no usable report. A command that never asked for one (a type check) and a
+#               slice whose runs never record a report (old evidence) are not warned: a blind spot.
+# Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
+#         "<slice>: WARN (9c: <reason>)" line per warning (advice for the reply's Attention section;
+#         it holds no recorded text).
+# Exit code: number of failing slices (capped at 125; a WARN line never counts); 2 on usage errors.
 set -u
 
 die() { printf 'check-evidence.sh: %s\n' "$1" >&2; exit 2; }
@@ -186,7 +206,80 @@ def usable: recorded and (.exit_code | type) == "number";
      end)
   )'
 
+# Warnings (rule 9c) travel in a file, apart from the problems that decide pass or fail.
+warn_file="$(mktemp "${TMPDIR:-/tmp}/check-evidence.XXXXXX")" || die "cannot create a temporary file"
+trap 'rm -f "$warn_file"' EXIT
+
 current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
+
+# Rule 9b, step 1: the accepted runs that recorded a usable report, one line each: seq, kind, sha256 of
+# the copy ("-" when the record has none), and the command as one line of JSON. A run whose seq or kind
+# is not what evidence.sh writes prints "?": the copy's name is made from them, so nothing else is opened.
+REPORT_RUNS='
+  .runs[] | select(.accepted != false and (.tests | type) == "object" and .tests.status == "ok")
+  | if (.seq | type) == "number" and .seq >= 1 and .seq < 1000000 and .seq == (.seq | floor)
+       and (.kind == "before" or .kind == "calibration" or .kind == "after" or .kind == "integrated")
+    then "\(.seq | floor | tostring)\t\(.kind)\t\(.tests.sha256 | if type == "string" and length == 64 and test("^[0-9a-f]{64}$") then . else "-" end)\t\(.cmd | tojson)\t\(.oracle.version | tojson)"
+    else "?" end'
+
+# Rule 9b, step 2, over the readable copies ({seq, cmd, tests} each): per command, a test (file and name)
+# that has a passed or failed result in an earlier run and only skipped or todo results in the latest run.
+# Recorded text is shown without control characters (so a name cannot start a line) and cut to 100
+# characters; pass or fail does not depend on what is shown. At most $max tests are listed.
+TEST_DROP_RULES='
+def ran: .status == "passed" or .status == "failed";
+def idle: .status == "skipped" or .status == "pending" or .status == "disabled" or .status == "todo";
+# Shown without control characters, bidirectional controls, or line separators, cut to 100 characters.
+def show: tostring | explode | map(select(. > 31 and (. < 127 or . > 159) and . != 8232 and . != 8233
+    and (. < 8234 or . > 8238) and (. < 8294 or . > 8297)
+    and (. < 8203 or . > 8207) and . != 1564 and . != 65279 and . != 8288)) as $c
+  | if ($c | length) > 100 then ($c[0:100] | implode) + "..." else ($c | implode) end;
+# The input holds the readable copies ({seq, cmd, ov, tests}) and one marker ({m: true, seq, cmd, ov}) for
+# every accepted run, whether or not it has a report. Only the version the final green rests on is
+# compared (an older version left behind is history), and only a command whose latest run has a copy.
+(. | map(select(.m != true))) as $copies
+| (. | map(select(.m == true))) as $marks
+| [ ($copies | group_by([.cmd, .ov] | tojson)[]) | sort_by(.seq) | . as $g | ($g | last) as $l | $g[:-1] as $earlier
+  | select($l.ov == $fv)
+  | select(([$marks[] | select(.cmd == $l.cmd and .ov == $l.ov) | .seq] | max) == $l.seq)
+  | select(($earlier | length) > 0)
+  # One index of what ran before: per test (file and name), the latest earlier run in which it ran and
+  # whether it failed there. Built once, so a large suite is not searched test by test.
+  | (reduce ($earlier[] | .seq as $s | .tests[] | select(ran) | {k: ([.file, .name] | tojson), s: $s, st: .status}) as $t ({};
+       .[$t.k] = (if (.[$t.k].e // -1) == $t.s
+                  then {e: $t.s, failed: (.[$t.k].failed or $t.st == "failed")}
+                  else {e: $t.s, failed: ($t.st == "failed")} end))) as $idx
+  | ($l.tests | group_by([.file, .name])[] | select(all(.[]; idle))
+     | {file: .[0].file, name: .[0].name, status: (if all(.[]; .status == "todo") then "todo" else "skipped" end)}) as $d
+  | ($idx[[$d.file, $d.name] | tojson]) as $x
+  | select($x != null)
+  | {l: $l.seq, e: $x.e, d: $d, was: (if $x.failed then "failed" else "passed" end)}
+] as $f
+| ($f[:$max][] | "9b: test \"\(.d.name | show)\" in \(.d.file | show) ran (\(.was)) in run \(.e) but is \(.d.status) in run \(.l), the latest run of the same command and oracle version; a test that stops running makes the green mean less than it says. Run it again; if it is meant to be \(.d.status), bump --oracle-version, record why with oracle-version.sh, and record the slice again"),
+  (if ($f | length) > $max then "9b: and \($f | length - $max) more tests ran in an earlier run and are skipped or todo in the latest run of their command" else empty end)'
+
+# Rule 9c: warnings only (no recorded text in them: counts, a run number, and fixed words). A count that
+# is not a number is an error: nothing prints, and the caller fails the slice.
+TEST_WARN_RULES='
+def num: if type == "number" then . else error("not a number") end;
+# Per command, among the runs of the version the final green rests on: the commands that asked for a
+# report at some point, each with its own latest green (after or integrated). A command that never
+# asked for one (a type check) is not asked about.
+[.runs[] | select(.accepted != false and .oracle.version == $fv)] as $acc
+| ($acc | group_by(.cmd | tojson)[])
+| select(any(.[]; (.tests | type) == "object"))
+| ([.[] | select(.kind == "after" or .kind == "integrated")] | max_by(.seq)) as $l
+| select($l != null)
+| ($l.seq | num | floor | tostring) as $s
+| if ($l.tests | type) == "object" and $l.tests.status == "ok" then
+    (($l.tests.skipped | num) as $sk | ($l.tests.todo | num) as $td
+     | select($sk + $td > 0)
+     | "9c: \($sk) skipped and \($td) todo tests in the latest \($l.kind) run \($s), counted from the runner'"'"'s report (tests left out by a name filter count as skipped); they did not run, so the green says nothing about them. Put them in the reply'"'"'s Attention")
+  elif ($l.tests | type) == "object" then
+    "9c: the latest \($l.kind) run \($s) asked for a test report but it is \(if $l.tests.status == "missing" then "missing" elif $l.tests.status == "invalid" then "invalid" else "unusable" end); skipped and todo tests cannot be counted. Put this in the reply'"'"'s Attention"
+  else
+    "9c: no test report was recorded for the latest \($l.kind) run \($s), though another run of the same command asked for one; skipped and todo tests cannot be counted. Record the run with --test-report and put this in the reply'"'"'s Attention"
+  end'
 
 # Lines of a JS or TS oracle file that hold a focused test, one per output line: the line number,
 # "!<line>" for a line too long to scan, or "?" when a comment or template literal is still open at
@@ -276,7 +369,7 @@ focused_lines() {
 }
 
 check_slice() {
-  local slice="$1" meta="$evidence_dir/$1/meta.json" final_tree path want have
+  local slice="$1" meta="$evidence_dir/$1/meta.json" final_tree
   vetdd_is_slice_id "$slice" || { echo "schema: invalid slice id"; return; }
   if [ ! -f "$meta" ]; then echo "schema: no meta.json for this slice"; return; fi
   if ! jq -e --arg s "$slice" \
@@ -297,6 +390,13 @@ check_slice() {
     fi
   fi
 
+  check_oracle_files "$meta"
+  check_test_reports "$slice" "$meta"
+}
+
+# Rules 6 and 9a, on the files the oracle names.
+check_oracle_files() {
+  local meta="$1" path want have found
   # Each entry is a repo-relative path and a hash; anything else is never skipped, and nothing
   # outside the repository is opened.
   if ! jq -e '(.oracle.files | type) == "array" and all(.oracle.files[];
@@ -339,9 +439,58 @@ check_slice() {
     done
 }
 
+# Rules 9b (problems, on stdout) and 9c (warnings, appended to $warn_file).
+# The oracle version the final green rests on (the last accepted green run, or else the last accepted
+# run), as JSON; and one marker per accepted run, so a command whose latest run has no report is known.
+FINAL_VERSION='
+  [.runs[] | select(.accepted != false)] as $a
+  | (([$a[] | select((.kind == "after" or .kind == "integrated") and .outcome == "pass")] | last) // ($a | last)) | .oracle.version | tojson'
+RUN_MARKS='.runs[] | select(.accepted != false and (.seq | type) == "number") | {m: true, seq, cmd, ov: .oracle.version}'
+
+check_test_reports() {
+  local slice="$1" meta="$2" list seq kind sum cmd ov rel copy stream="" marks fv tab line
+  tab="$(printf '\t')"
+  if ! fv="$(jq -r "$FINAL_VERSION" "$meta" 2>/dev/null)" || ! marks="$(jq -c "$RUN_MARKS" "$meta" 2>/dev/null)"; then
+    echo "9b: could not evaluate the runs of the oracle version the final green rests on (a run record is malformed)"
+    return
+  fi
+  if ! list="$(jq -r "$REPORT_RUNS" "$meta" 2>/dev/null)"; then
+    echo "9b: could not evaluate which runs recorded a test report (a run record is malformed)"
+  elif [ -n "$list" ]; then
+    while IFS="$tab" read -r seq kind sum cmd ov; do
+      if [ "$seq" = "?" ]; then echo "9b: could not read the test report copy of a run whose seq or kind is malformed"; continue; fi
+      # The name is made from the seq and kind evidence.sh wrote, never from a path in the record.
+      rel=".vetdd/evidence/$slice/runs/$(printf '%03d' "$seq")-$kind.tests.json"
+      if ! vetdd_inside_repo "$root" "$rel" || [ ! -f "$root/$rel" ]; then
+        echo "9b: could not read the test report copy of run $seq (it is missing, or it or its directory is a symbolic link)"; continue
+      fi
+      if [ "$sum" = "-" ] || [ "$(vetdd_sha256 "$root/$rel")" != "$sum" ]; then
+        echo "9b: could not read the test report copy of run $seq (it does not match the sha256 recorded for it)"; continue
+      fi
+      if ! copy="$(jq -c --argjson seq "$seq" --argjson cmd "$cmd" --argjson ov "$ov" '
+          if type == "object" and (.tests | type) == "array"
+             and all(.tests[]; type == "object" and (.file | type) == "string" and (.name | type) == "string" and (.status | type) == "string")
+          then {seq: $seq, cmd: $cmd, ov: $ov, tests: [.tests[] | {file, name, status}]} else error("shape") end' "$root/$rel" 2>/dev/null)"; then
+        echo "9b: could not read the test report copy of run $seq (it is not a normalized test report)"; continue
+      fi
+      stream="$stream$copy"$'\n'
+    done <<< "$list"
+    # A filter that fails prints nothing; that must fail the slice, never read as OK.
+    if [ -n "$stream" ]; then
+      printf '%s\n%s\n' "$stream" "$marks" | jq -r -s --argjson max 5 --argjson fv "$fv" "$TEST_DROP_RULES" 2>/dev/null || echo "9b: could not compare the test reports of the runs"
+    fi
+  fi
+  if line="$(jq -r --argjson fv "$fv" "$TEST_WARN_RULES" "$meta" 2>/dev/null)"; then
+    [ -z "$line" ] || printf '%s\n' "$line" >> "$warn_file"
+  else
+    echo "9c: could not evaluate the skipped and todo counts (a run's tests record is malformed)"
+  fi
+}
+
 failed=0
 for slice in "${slices[@]}"; do
   # Pass or fail is decided on the raw problems; the display filter only shapes what is shown.
+  : > "$warn_file"
   problems="$(check_slice "$slice")"
   # A name that is not a slice id (a stray directory, possibly holding control characters or
   # newlines) is never printed as given.
@@ -354,6 +503,10 @@ for slice in "${slices[@]}"; do
     shown_problems="$(printf '%s\n' "$problems" | vetdd_printable)"
     [ -n "$shown_problems" ] || shown_problems="a problem that could not be displayed"
     printf '%s\n' "$shown_problems" | while IFS= read -r line; do echo "$shown: FAIL ($line)"; done
+  fi
+  # Warnings never change the exit code. The display filter runs on them too.
+  if [ -s "$warn_file" ]; then
+    vetdd_printable < "$warn_file" | while IFS= read -r line; do [ -z "$line" ] || echo "$shown: WARN ($line)"; done
   fi
 done
 [ "$failed" -le 125 ] || failed=125

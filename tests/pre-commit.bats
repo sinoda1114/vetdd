@@ -166,3 +166,35 @@ verified_oracle_edit() {
   VETDD_SCRIPTS_DIR="$BATS_TEST_TMPDIR/missing" run "$SCRIPTS/hooks/pre-commit"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+# A slice whose latest green skipped a test: check-evidence prints a WARN line (rule 9c) and says OK.
+warned_oracle_edit() {
+  local rep="$BATS_TEST_TMPDIR/skip.json"
+  printf '{"numTotalTests":1,"testResults":[{"name":"a.test.ts","assertionResults":[{"fullName":"x","status":"skipped"}]}]}' > "$rep"
+  printf '# oracle v2\n' >> test.sh
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh --test-report jest-json:.vetdd/reports/r.json -- \
+    sh -c "mkdir -p .vetdd/reports && cp '$rep' .vetdd/reports/r.json; exit 1" >/dev/null 2>&1
+  ev s1 after --test-report jest-json:.vetdd/reports/r.json -- \
+    sh -c "mkdir -p .vetdd/reports && cp '$rep' .vetdd/reports/r.json; exit 0" >/dev/null 2>&1
+}
+
+@test "a slice with only a 9c WARN line does not block the commit, and the line is shown" {
+  warned_oracle_edit
+  git add test.sh
+  run hook
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"s1: OK"* ]]
+  [[ "$output" == *"s1: WARN (9c: "* ]]
+  [[ "$output" != *"blocked"* ]]
+}
+
+@test "installed hook lets a commit with only a 9c WARN line through" {
+  "$SCRIPTS/setup-project.sh"
+  git add .gitignore && git commit -q -m "vetdd setup"
+  warned_oracle_edit
+  git add test.sh value.txt
+  run git commit -m "warned"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"s1: WARN (9c: "* ]]
+}
