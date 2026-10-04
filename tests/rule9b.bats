@@ -444,3 +444,47 @@ recv() {
   # The command example in the Close step (not the paragraph that explains the option).
   sed -n '/^## Close/,/^2\. /p' "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q -- '--test-report'
 }
+
+# --- review round 3 ---------------------------------------------------------------------------
+
+@test "rule 9b leaves an older oracle version alone: a skip under v1 is history once v2 is recorded (K1)" {
+  recv v1 before "$PASS" 1
+  recv v1 after "$(status_of k1skip "$T1" skipped)" 0
+  recv v2 calibration "$PASS" 1
+  recv v2 after "$PASS" 0
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"9b: "* ]]
+}
+
+@test "rule 9b does not compare a command whose latest run has no usable report (K3)" {
+  recv v1 before "$PASS" 1
+  recv v1 after "$(status_of k3skip "$T1" skipped)" 0
+  recv v1 integrated - 0
+  run check s1
+  [[ "$output" != *"9b: "* ]] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (9c: "*"asked for a test report"* ]]
+}
+
+@test "9c reads each command's own latest green: a type check recorded last does not hide the test counts (K2)" {
+  rec before "$PASS" 1
+  rec after "$(status_of k2skip "$T1" skipped)" 0
+  # The coverage oracle: another command, no report, recorded after the slice's own tests.
+  ev s1 after --oracle-version v1 --oracle-file test.sh -- sh -c 'exit 0' >/dev/null 2>&1
+  run check s1
+  [[ "$output" == *"s1: WARN (9c: 1 skipped and 0 todo tests in the latest after run 2"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"no test report was recorded"* ]]
+}
+
+@test "a bidirectional control character in a test name never reaches the output (K4)" {
+  jq --arg n "$T1" --arg bad "$(printf 'evil\xe2\x80\xaetxt.exe')" \
+    '(.testResults[].assertionResults[] | select(.fullName == $n) | .fullName) = $bad | (.testResults[].assertionResults[] | select(.fullName == $bad) | .title) = $bad' \
+    "$PASS" > "$BATS_TEST_TMPDIR/bidi.json"
+  jq --arg bad "$(printf 'evil\xe2\x80\xaetxt.exe')" '(.testResults[].assertionResults[] | select(.fullName == $bad) | .status) = "skipped"' \
+    "$BATS_TEST_TMPDIR/bidi.json" > "$BATS_TEST_TMPDIR/bidi-skip.json"
+  two_runs "$BATS_TEST_TMPDIR/bidi.json" "$BATS_TEST_TMPDIR/bidi-skip.json"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9b: "* ]]
+  [[ "$output" != *$'\xe2\x80\xae'* ]]
+}
