@@ -11,7 +11,8 @@ Two uses share the same scripts:
 
 ```
 evals/
-  index.tsv                          append-only: ts  eval_id  run_id  labels  winner  confidence  judge_family  promoted
+  index.tsv                          append-only: ts  eval_id  run_id  labels  winner  confidence  judge_family  promoted  rubric_sha256
+                                     (a line written before the last column existed has eight columns)
   <eval-id>/
     task.md                          the candidate prompt: an organic request, goal only, no meta
     rubric.md                        judge only: 3–6 criteria, each observable, each with what 0/1/2 mean
@@ -55,7 +56,7 @@ An eval has no evidence slice, so check-evidence never sees it; record each audi
 
 - **Empty candidate.** Add a third artifact to the rubric calibration (step 2): an empty output, or the task text echoed back. It must score 0 on every criterion. A criterion that gives it more observes the candidate's presence, not its work; rewrite it as an observable (a new rubric version, re-agreed).
 - **Label swap.** Grade the known-good and known-bad pair a second time with their labels swapped (`c1` and `c2` exchanged). Each artifact must keep its verdict, and the winner must stay the same artifact. If the result follows the label instead, the judge is not stable on this rubric: make the criteria more observable before any candidate run.
-- **Rubric pin.** Write the sha256 of `rubric.md` for every run in `synthesis.md` and in its `index.tsv` line. A run graded under another sha256 is graded under another rubric, whatever its version number says (principle 6: never revise the rubric after a result).
+- **Rubric pin.** Write the sha256 of the run's copy, `runs/<run-id>/rubric.md`, in `synthesis.md` and in the `rubric_sha256` column of its `index.tsv` line. A run graded under another sha256 is graded under another rubric, whatever its version number says (principle 6: never revise the rubric after a result).
 
 ## Regression
 

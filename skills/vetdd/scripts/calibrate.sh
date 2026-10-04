@@ -28,7 +28,7 @@
 # and restoring always writes those back, so neither line-ending conversion nor a staged edit can
 # alter what returns (stub puts a new file in place, so a hard link never keeps the stub). --file and
 # --oracle-file take regular files inside the repository (no directories, no symlinks, no newlines),
-# compared as files (-ef), so the oracle is never parked under another spelling. --seam, --oracle-version, and --oracle-file pass through to
+# compared as files (-ef), so the oracle is never parked under another spelling. --seam, --oracle-version, --infra-exit, and --oracle-file pass through to
 # evidence.sh <slice> calibration. State lives in <git dir>/vetdd-calib/<slice>/, survives a killed
 # run, and its path is printed first. Fingerprints detect accidental damage; they are not a
 # security boundary (anyone who can write .git can already run hooks). The stub audit is a tripwire,
@@ -105,6 +105,11 @@ parse() {
         [ "$seen" -eq 1 ] || oracle+=("$o")
         case "$2" in -*) pass+=("$1" "./$2") ;; *) pass+=("$1" "$2") ;; esac; shift 2 ;;
       --seam) [ $# -ge 2 ] || die "$1 needs a value"; pass+=("$1" "$2"); shift 2 ;;
+      --infra-exit) [ $# -ge 2 ] || die "$1 needs an exit code"
+        # A verify script's "could not observe" exit (2): recorded as infrastructure_error, never as red.
+        # Checked here, before anything is parked, with evidence.sh's own range.
+        case "$2" in [1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;; *) die "--infra-exit takes an exit code from 1 to 255" ;; esac
+        pass+=("$1" "$2"); shift 2 ;;
       --oracle-version) [ $# -ge 2 ] || die "$1 needs a value"
         # Checked here, before the fix is parked: evidence.sh refuses it with exit 2, which would
         # otherwise read as "the calibration did not go red" (exit 1).
