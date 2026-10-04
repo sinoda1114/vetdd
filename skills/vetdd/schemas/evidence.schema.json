@@ -18,7 +18,7 @@
       "items": { "$ref": "#/$defs/oracleVersion" }
     },
     "audits": {
-      "description": "Why an audit does not apply to this slice, written by scripts/audit-note.sh; absent when none was recorded. Once the key exists (or a run carries an audit mark), check-evidence rule 10b asks for an undefined-imports audit of the final oracle: an accepted audit run, or an entry here.",
+      "description": "Why an audit does not apply to this slice, written by scripts/audit-note.sh; absent when none was recorded. Once the key exists with an undefined-imports entry or empty (or a run carries an undefined-imports audit mark), check-evidence rule 10b asks for an undefined-imports audit of the final oracle: an accepted audit run, or an entry here.",
       "type": "array",
       "items": { "$ref": "#/$defs/auditNote" }
     }
@@ -27,13 +27,64 @@
     "sliceId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
     "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
     "gitObjectId": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "mutationReport": {
+      "description": "A StrykerJS JSON report read after the run. Never changes the outcome.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "path", "status", "sha256", "copy", "counts", "files"],
+          "properties": {
+            "format": { "const": "stryker-json" },
+            "path": { "type": "string", "minLength": 1 },
+            "status": { "const": "ok" },
+            "sha256": { "description": "Of the normalized copy at `copy`: config.mutate, and each file's source and mutants (id, mutatorName, replacement, status, location).", "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "copy": { "type": "string", "pattern": "^runs/[0-9]{3,}-mutation\\.json$" },
+            "counts": {
+              "description": "Mutants by final status: Killed, Survived, NoCoverage, Timeout, CompileError, RuntimeError, Ignored.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["killed", "survived", "no_coverage", "timeout", "compile_error", "runtime_error", "ignored", "total"],
+              "properties": {
+                "killed": { "type": "integer", "minimum": 0 }, "survived": { "type": "integer", "minimum": 0 }, "no_coverage": { "type": "integer", "minimum": 0 }, "timeout": { "type": "integer", "minimum": 0 },
+                "compile_error": { "type": "integer", "minimum": 0 }, "runtime_error": { "type": "integer", "minimum": 0 }, "ignored": { "type": "integer", "minimum": 0 }, "total": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "files": {
+              "description": "Every file the report mutated, as a repository path, with the sha256 of the source the report holds for it.",
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "sha256"],
+                "properties": {
+                  "path": { "type": "string", "minLength": 1 },
+                  "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "path", "status"],
+          "properties": {
+            "format": { "const": "stryker-json" },
+            "path": { "type": "string", "minLength": 1 },
+            "status": { "description": "missing: no report after the run; invalid: not a usable stryker-json report.", "enum": ["missing", "invalid"] }
+          }
+        }
+      ]
+    },
     "auditNote": {
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "status", "reason", "recorded_at"],
       "properties": {
-        "kind": { "enum": ["undefined-imports"] },
-        "status": { "description": "not_applicable: the audit has nothing to stub in this slice (the reason says why).", "enum": ["not_applicable"] },
+        "kind": { "enum": ["undefined-imports", "mutation"] },
+        "status": { "description": "not_applicable: the audit cannot apply to this slice (nothing to stub, or no mutation tool for its language; the reason says why).", "enum": ["not_applicable"] },
         "reason": { "type": "string", "minLength": 1 },
         "recorded_at": { "$ref": "#/$defs/timestamp" }
       }
@@ -130,13 +181,24 @@
         },
         "oracle": { "description": "The oracle this run was measured with.", "$ref": "#/$defs/oracle" },
         "audit": {
-          "description": "Set by calibrate.sh stub (evidence.sh --audit): this calibration run replaced every product file the oracle imports with a stub whose exports are all undefined. It must end target_failure; a pass means the test observes nothing (check-evidence rule 10a). A marked run is never counted as a red.",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind"],
-          "properties": {
-            "kind": { "enum": ["undefined-imports"] }
-          }
+          "description": "An audit run (a calibration that is never counted as a red). undefined-imports: set by calibrate.sh stub; every product file the oracle imports was replaced by a stub whose exports are all undefined, so it must end target_failure (check-evidence rule 10a). mutation: evidence.sh --audit mutation --mutation-report; a mutation testing run whose report is summarized here.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind"],
+              "properties": { "kind": { "const": "undefined-imports" } }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "report"],
+              "properties": {
+                "kind": { "const": "mutation" },
+                "report": { "$ref": "#/$defs/mutationReport" }
+              }
+            }
+          ]
         },
         "tests": {
           "description": "Counts from the runner's report (evidence.sh --test-report). Never changes the outcome. Absent when no report was asked for.",
