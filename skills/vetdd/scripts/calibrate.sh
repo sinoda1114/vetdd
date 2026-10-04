@@ -216,7 +216,7 @@ restore() {
           || { warn "could not keep the current $f before replacing it"; return 1; }
       fi
       tmp="$(mktemp "$top/$f.XXXXXX")" && cp -p "$state/copies/$f" "$tmp" && mv -f "$tmp" "$top/$f" \
-        && [ ! -L "$top/$f" ] && cmp -s "$state/copies/$f" "$top/$f" \
+        && touch "$top/$f" && [ ! -L "$top/$f" ] && cmp -s "$state/copies/$f" "$top/$f" \
         || { warn "could not put back $f; the copy is in $state/copies"; return 1; }
     done < "$state/files"
   fi
@@ -252,10 +252,26 @@ new_state() {
 }
 
 # stub_text <path>: the stub for the file's extension on standard output; non-zero when it has none.
+# A .cjs is always CommonJS and a .mjs always an ES module. A .js is an ES module when the nearest
+# package.json says "type": "module"; otherwise the stub is valid either way (an empty module in CommonJS,
+# a module with no exports in ESM), so a stub never fails on its own syntax.
+nearest_package_type() {
+  local d="$top/$(dirname -- "$1")"
+  while :; do
+    if [ -f "$d/package.json" ]; then jq -r '.type // ""' "$d/package.json" 2>/dev/null; return 0; fi
+    [ "$d" != "$top" ] && [ "$d" != / ] || break
+    d="$(dirname -- "$d")"
+  done
+  return 0
+}
 stub_text() {
   case "$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')" in
-    *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.mts|*.cts) printf 'export {};\n' ;;
-    *.py) printf 'def __getattr__(name):\n    return None\n' ;;
+    *.cjs) printf 'module.exports = {};\n' ;;
+    *.js)
+      if [ "$(nearest_package_type "$1")" = module ]; then printf 'export {};\n'
+      else printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'; fi ;;
+    *.ts|*.tsx|*.jsx|*.mjs|*.mts|*.cts) printf 'export {};\n' ;;
+    *.py) printf "def __getattr__(name):\n    if name.startswith('__') and name.endswith('__'):\n        raise AttributeError(name)\n    return None\n" ;;
     *) return 1 ;;
   esac
 }
@@ -375,7 +391,7 @@ case "$cmd" in
     save_originals
     echo stub > "$state/mode"
     for f in "${files[@]}"; do
-      write_stub "$f" || die "could not write the stub over $f; the original is restored"
+      write_stub "$f" || die "could not write the stub over $f; the original is put back when this script exits"
     done
     audit=undefined-imports
     run_oracle; finish $?

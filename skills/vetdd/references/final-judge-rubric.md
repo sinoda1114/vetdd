@@ -23,7 +23,7 @@ Sending the red-run logs is part of the default agreement (SKILL.md, Q4). If the
 
 ## 1. red-before-green
 
-- 2: for every slice, `evidence/<slice>/meta.json` has an accepted run of kind `before` or `calibration` with outcome `target_failure` that precedes an accepted `after` or `integrated` run with outcome `pass`, and that red run's log under `evidence/<slice>/runs/` shows the assertion on the agreed behavior failing (not a missing module, not a syntax error, not "no tests").
+- 2: for every slice, `evidence/<slice>/meta.json` has an accepted run of kind `before` or `calibration` (not an `audit` run: the undefined-imports audit run is no red for the change) with outcome `target_failure` that precedes an accepted `after` or `integrated` run with outcome `pass`, and that red run's log under `evidence/<slice>/runs/` shows the assertion on the agreed behavior failing (not a missing module, not a syntax error, not "no tests").
 - 1: the order holds but a red log is missing or fails for a reason other than the agreed behavior.
 - 0: any slice lacks a red run, or the red came after the green.
 
@@ -37,9 +37,9 @@ A `<slice>: WARN (...)` line in `artifact/check-evidence.txt` (check-evidence ru
 
 ## 3. test-observes-behavior
 
-- 2: every test added or changed in `artifact/diff.patch` (full text in `artifact/tests/`) calls the subject through its public interface and asserts a literal value or a spec-guaranteed property whose source is named in the reply's Oracle section; no assertion is only existence, only a call, or a value recomputed from the code under test; the check-evidence output has no `10a` or `10b` line (rule 10: every import stubbed with `undefined` must turn the oracle red).
+- 2: every test added or changed in `artifact/diff.patch` (full text in `artifact/tests/`) calls the subject through its public interface and asserts a literal value or a spec-guaranteed property whose source is named in the reply's Oracle section; no assertion is only existence, only a call, or a value recomputed from the code under test; the check-evidence output has no `10a` or `10b` line (rule 10: every import stubbed with `undefined` must turn the oracle red); and, where a slice has no `audit` run in its `meta.json` (rule 10 only asks slices that opted in), no test would still pass if every import returned `undefined`, judged from the test text.
 - 1: one hollow assertion exists but is paired with a meaningful one on another input.
-- 0: the check-evidence output has a `10a` or `10b` line, or an existing assertion was weakened.
+- 0: a test would still pass if every import returned `undefined` (a `10a` or `10b` line in the check-evidence output shows it mechanically; otherwise judge it from the test text), or an existing assertion was weakened.
 
 ## 4. smallest-change
 

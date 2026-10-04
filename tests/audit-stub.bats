@@ -64,9 +64,9 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
   [[ "$output" == *"read the log"* ]]
 }
 
-@test "the stub is export {}; for every JS and TS extension, in any letter case, and the python stub for .py" {
-  local ext
-  for ext in ts tsx js jsx mjs cjs mts cts TS Mjs; do
+@test "the stub matches the module system of each extension, in any letter case, and the python stub for .py" {
+  local ext want
+  for ext in ts tsx jsx mjs mts cts TS Mjs; do
     printf 'export const g = 1;\n' > "a.$ext"
     git add -A && git commit -q -m "a.$ext"
     rm -f seen.out
@@ -75,10 +75,50 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
     [ "$(cat seen.out)" = 'export {};' ] || { echo "$ext: $(cat seen.out)"; false; }
     [ "$(cat "a.$ext")" = 'export const g = 1;' ]
   done
+  # CommonJS: a .cjs is always CommonJS; a .js without "type": "module" is read either way.
+  printf 'exports.g = 1;\n' > a.cjs
+  printf 'exports.g = 1;\n' > a.js
+  git add -A && git commit -q -m cjs
+  run cal stub cj1 --file a.cjs --oracle-file spy.sh -- sh spy.sh a.cjs
+  [ "$(cat seen.out)" = 'module.exports = {};' ] || { echo "cjs: $(cat seen.out)"; false; }
+  run cal stub cj2 --file a.js --oracle-file spy.sh -- sh spy.sh a.js
+  [ "$(cat seen.out)" = 'if (typeof module !== "undefined") { module.exports = {}; }' ] || { echo "js: $(cat seen.out)"; false; }
+  # A package that says "type": "module" makes a .js an ES module.
+  printf '{"type": "module"}\n' > package.json
+  git add -A && git commit -q -m esm
+  run cal stub cj3 --file a.js --oracle-file spy.sh -- sh spy.sh a.js
+  [ "$(cat seen.out)" = 'export {};' ] || { echo "esm js: $(cat seen.out)"; false; }
   run cal stub p1 --file mod.py --oracle-file spy.sh -- sh spy.sh mod.py
   [ "$status" -eq 1 ]
-  [ "$(cat seen.out)" = "$(printf 'def __getattr__(name):\n    return None')" ]
+  [ "$(cat seen.out)" = "$(printf "def __getattr__(name):\n    if name.startswith('__') and name.endswith('__'):\n        raise AttributeError(name)\n    return None")" ]
   [ "$(cat mod.py)" = "$(printf 'def f(n):\n    return n * 2')" ]
+}
+
+@test "a stubbed CommonJS file loads: the oracle runs to its assertion instead of failing on syntax (N1)" {
+  command -v node >/dev/null || skip "node not installed"
+  printf 'exports.f = (n) => n * 2;\n' > c.cjs
+  printf 'exports.f = (n) => n * 2;\n' > d.js
+  # Exit 0 when f is undefined (the stub loaded and removed it): a syntax error would exit 1 on the stub.
+  printf '#!/bin/sh\nnode -e "if (require(\\"./$1\\").f !== undefined) process.exit(1)"\n' > loads.sh
+  git add -A && git commit -q -m cjs
+  run cal stub l1 --file c.cjs --oracle-file loads.sh -- sh loads.sh c.cjs
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"vacuous"* ]]
+  run cal stub l2 --file d.js --oracle-file loads.sh -- sh loads.sh d.js
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"vacuous"* ]]
+}
+
+@test "the restored file is newer than anything the stubbed run built (N3)" {
+  printf 'export const f = 1;\n' > m.ts
+  git add -A && git commit -q -m m
+  touch -t 200001010000 m.ts
+  printf '#!/bin/sh\necho built > built.out\nexit 1\n' > build.sh
+  run cal stub mt --file m.ts --oracle-file build.sh -- sh build.sh
+  [ "$status" -eq 0 ]
+  [ -f built.out ]
+  # Not older than the build output: a make-like tool must see the source as changed.
+  [ ! built.out -nt m.ts ] || { echo "m.ts is older than built.out"; false; }
 }
 
 @test "every named file is stubbed in one run, and each comes back" {
@@ -86,7 +126,7 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
   printf '#!/bin/sh\ncat lib.ts other.ts mod.py > seen.out\n' > spy2.sh
   run cal stub s1 --file lib.ts --file other.ts --file mod.py --oracle-file spy2.sh -- sh spy2.sh
   [ "$status" -eq 1 ]
-  [ "$(cat seen.out)" = "$(printf 'export {};\nexport {};\ndef __getattr__(name):\n    return None')" ]
+  [ "$(cat seen.out)" = "$(printf "export {};\nexport {};\ndef __getattr__(name):\n    if name.startswith('__') and name.endswith('__'):\n        raise AttributeError(name)\n    return None")" ]
   [ "$(cat lib.ts)" = "$LIB" ]
   [ "$(cat other.ts)" = 'export const h = 1;' ]
   clean_tree
@@ -651,8 +691,8 @@ audit_run() {
   head -1 "$SCRIPTS/../references/final-judge-rubric.md" | grep -qx '# Final judge rubric (version 5)'
   grep -q '10a' "$SCRIPTS/../references/final-judge-rubric.md"
   grep -q '10b' "$SCRIPTS/../references/final-judge-rubric.md"
-  run grep -c 'every import returned' "$SCRIPTS/../references/final-judge-rubric.md"
-  [ "$output" = 0 ]
+  # The content test stays (round 1, N2): the rubric names the undefined-imports case itself.
+  grep -q 'every import returned' "$SCRIPTS/../references/final-judge-rubric.md"
   grep -q 'calibrate.sh" stub' "$SCRIPTS/../modes/test.md"
   grep -q 'audit-note.sh' "$SCRIPTS/../modes/test.md"
   grep -q 'audit-note.sh' "$SCRIPTS/../modes/verify.md"
@@ -680,4 +720,26 @@ audit_run() {
   grep -q 'TypeError' .vetdd/evidence/k2/runs/001-calibration.log
   [ "$(cat src/x.ts)" = 'export function f(n: number): number { return n * 2; }' ]
   [ -z "$(git status --porcelain --untracked-files=all | grep -v '^?? .vetdd/')" ]
+}
+
+@test "an audit run's report never replaces the latest report in rule 9b (N4)" {
+  printf 'mkdir -p .vetdd/reports\n[ -z "${REPORT:-}" ] || cp "$REPORT" .vetdd/reports/r.json\nexit "${EXIT:-0}"\n' > runner.sh
+  FIX="$BATS_TEST_DIRNAME/fixtures/reports"; PASS="$FIX/vitest5-pass.json"
+  T1="closingDate closes on the 20th of the same month when invoiced before the cutoff"
+  jq --arg n "$T1" '(.testResults[].assertionResults[] | select(.fullName == $n) | .status) = "skipped"' "$PASS" > "$BATS_TEST_TMPDIR/skip.json"
+  R=.vetdd/reports/r.json
+  REPORT="$PASS" EXIT=1 ev s1 before --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
+  REPORT="$BATS_TEST_TMPDIR/skip.json" EXIT=0 ev s1 after --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
+  run check s1
+  [[ "$output" == *"9b: "* ]]
+  # An audit run with its own report, recorded afterwards, must not make the 9b error go away.
+  REPORT="$PASS" EXIT=1 ev s1 calibration --audit undefined-imports --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
+  run check s1
+  [[ "$output" == *"9b: "* ]] || { echo "$output"; false; }
+}
+
+@test "the judge rubric keeps the content test for undefined imports and leaves audit runs out of criterion 1 (N2)" {
+  local rub="$BATS_TEST_DIRNAME/../skills/vetdd/references/final-judge-rubric.md"
+  sed -n '/^## 3\. /,/^## 4\. /p' "$rub" | grep -q 'would still pass if every import returned `undefined`'
+  sed -n '/^## 1\. /,/^## 2\. /p' "$rub" | grep -q '`audit`'
 }

@@ -262,7 +262,7 @@ current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
 # the copy ("-" when the record has none), and the command as one line of JSON. A run whose seq or kind
 # is not what evidence.sh writes prints "?": the copy's name is made from them, so nothing else is opened.
 REPORT_RUNS='
-  .runs[] | select(.accepted != false and (.tests | type) == "object" and .tests.status == "ok")
+  .runs[] | select(.accepted != false and .audit == null and (.tests | type) == "object" and .tests.status == "ok")
   | if (.seq | type) == "number" and .seq >= 1 and .seq < 1000000 and .seq == (.seq | floor)
        and (.kind == "before" or .kind == "calibration" or .kind == "after" or .kind == "integrated")
     then "\(.seq | floor | tostring)\t\(.kind)\t\(.tests.sha256 | if type == "string" and length == 64 and test("^[0-9a-f]{64}$") then . else "-" end)\t\(.cmd | tojson)\t\(.oracle.version | tojson)"
