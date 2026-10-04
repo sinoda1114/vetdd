@@ -7,6 +7,11 @@
 #           (4) infrastructure_error / inconclusive never count as red or green
 # Final:    (5) the latest after/integrated tree_hash matches the current working tree
 #           (6) oracle.files sha256 match the current files
+# Focus:    (9a) no focused test (.only, fdescribe) in a JS or TS oracle file: it would run only that
+#               test and skip the rest. The file is read as code (comments, strings, templates, and
+#               regular-expression literals blanked, across lines). A tripwire for an accident, not a
+#               boundary: fit(, a renamed or wrapped focus, a helper, a file not named with
+#               --oracle-file, or another language passes it.
 # Oracle:   (8) the version chain of accepted runs: an oracle is its version plus the sha256 of its
 #               files. Within the final green's version the files do not change from its first red
 #               on, nor after any green of that version (edits before the first red are the test
@@ -133,6 +138,93 @@ def usable: recorded and (.exit_code | type) == "number";
 
 current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
 
+# Lines of a JS or TS oracle file that hold a focused test, one per output line: the line number,
+# "!<line>" for a line too long to scan, or "?" when a comment or template literal is still open at
+# the end of the file (the scan cannot be trusted). The file is read as code: comments (// and /* */)
+# and the contents of strings, template literals, and regular-expression literals are blanked first,
+# across lines (a string continued with a backslash included), then the code is searched for
+# <it|test|describe|suite|context|specify>[.name]*.only[.name]*( or `, spacing, comments, and a line
+# break allowed between the tokens, or fdescribe(. The root name must stand alone (not myit.only, not
+# this.it.only, however spaced). Not covered, so a tripwire and not a boundary: fit( (a common name
+# for other functions), code inside ${...} in a template, a regular-expression literal after a keyword
+# such as return (it reads as division), a division written right after a > (it reads as a regular
+# expression), JSX text (read as code: an it.only( written there is
+# reported, and a bare backtick or quote there can hide what follows), and a focus API renamed or
+# wrapped.
+focused_lines() {
+  LC_ALL=C awk -v sq="'" '
+    function blanks(k,   b) { b = ""; while (k-- > 0) b = b " "; return b }
+    # Does s hold a match of regular expression r that ends after position off and is not a property
+    # access (a "." before the root name, however spaced)?
+    function hit(s, r, off,   pos, rest, st, rp, pre, e) {
+      pos = 0; rest = s
+      while (match(rest, r)) {
+        st = pos + RSTART; e = st + RLENGTH - 1
+        rp = (substr(rest, RSTART, 1) ~ /[A-Za-z]/) ? st : st + 1
+        pre = substr(s, 1, rp - 1); sub(/[ \t]+$/, "", pre)
+        if (e > off && substr(pre, length(pre), 1) != ".") return 1
+        pos = st; rest = substr(s, pos + 1)
+      }
+      return 0
+    }
+    BEGIN {
+      block = 0; tpl = 0; carry = ""; tail = ""; prev = ""
+      re = "(^|[^A-Za-z0-9_$.])(it|test|describe|suite|context|specify)([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*\\.[ \t]*only([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*(<[^()]*>)?[ \t]*[(`]"
+      fre = "(^|[^A-Za-z0-9_$.])fdescribe[ \t]*\\("
+    }
+    {
+      line = $0; sub(/\r$/, "", line); n = length(line)
+      if (n > 20000) { print "!" NR; next }
+      out = ""; i = 1; str = carry; carry = ""
+      if (tpl) str = "`"
+      while (i <= n) {
+        c = substr(line, i, 1); d = substr(line, i + 1, 1)
+        if (block) {
+          if (c == "*" && d == "/") { block = 0; out = out "  "; i += 2 } else { out = out " "; i++ }
+          continue
+        }
+        if (str != "") {
+          if (c == "\\") {
+            if (i == n && str != "`") carry = str
+            out = out "  "; i += 2; continue
+          }
+          if (c == str) { out = out c; if (c == "`") tpl = 0; str = ""; prev = "x"; i++; continue }
+          out = out " "; i++; continue
+        }
+        if (c == "/" && d == "/") break
+        if (c == "/" && d == "*") { block = 1; out = out "  "; i += 2; continue }
+        if (c == "\"" || c == sq || c == "`") { str = c; if (c == "`") tpl = 1; out = out c; prev = c; i++; continue }
+        if (c == "/" && (prev == "" || index("(,=:[!&|?{};+-*%~^>", prev) > 0)) {
+          # A regular-expression literal: skip to its closing slash (not inside [...], not escaped).
+          j = i + 1; incls = 0; e = 0
+          while (j <= n) {
+            ch = substr(line, j, 1)
+            if (ch == "\\") { j += 2; continue }
+            if (incls) { if (ch == "]") incls = 0 }
+            else if (ch == "[") incls = 1
+            else if (ch == "/") { e = j; break }
+            j++
+          }
+          if (e > 0) { out = out "/" blanks(e - i - 1) "/"; prev = "x"; i = e + 1; continue }
+        }
+        if (c != " " && c != "\t") {
+          pc = substr(out, length(out), 1)
+          prev = ((c == "+" || c == "-") && pc == c) ? "x" : c
+        }
+        out = out c
+        i++
+      }
+      # The end of what came before is joined on (runs of blanks collapsed, so blank lines and comments
+      # cost nothing), so a call split over lines is seen. A match that ends inside that tail was
+      # reported on its own line.
+      cur = out; gsub(/[ \t]+/, " ", cur)
+      joined = tail " " cur; off = length(tail) + 1
+      if (hit(joined, re, off) || hit(joined, fre, off)) print NR
+      tail = joined; if (length(tail) > 400) tail = substr(tail, length(tail) - 399)
+    }
+    END { if (block || tpl) print "?" }' "$1"
+}
+
 check_slice() {
   local slice="$1" meta="$evidence_dir/$1/meta.json" final_tree path want have
   vetdd_is_slice_id "$slice" || { echo "schema: invalid slice id"; return; }
@@ -173,6 +265,27 @@ check_slice() {
       if [ ! -f "$root/$path" ]; then echo "6: oracle file $path is missing"; continue; fi
       have="$(vetdd_sha256 "$root/$path")"
       [ "$have" = "$want" ] || echo "6: oracle file $path changed since it was recorded; record the slice again with a bumped --oracle-version and a red for it (rule 8; a file shared with another slice: modes/test.md)"
+    done
+
+  # Rule 9a: a focused test in a JS or TS oracle file. Only files rule 6 could open are read.
+  jq -r '.oracle.files[].path' "$meta" |
+    while IFS= read -r path; do
+      # Any letter case: a file system that ignores case still hands the file to the toolchain.
+      case "$(printf '%s' "$path" | LC_ALL=C tr 'A-Z' 'a-z')" in
+        *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|*.mts|*.cts) ;;
+        *) continue ;;
+      esac
+      vetdd_inside_repo "$root" "$path" && [ -f "$root/$path" ] || continue
+      # A scanner that fails prints nothing; that must fail the slice, never read as OK.
+      found="$(focused_lines "$root/$path")" || { echo "9a: could not scan oracle file $path"; continue; }
+      printf '%s\n' "$found" | while IFS= read -r n; do
+        case "$n" in
+          '') ;;
+          '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters; it was not scanned for a focused test, so split the line" ;;
+          '?') echo "9a: oracle file $path could not be scanned to the end (a comment or template literal is still open there, or a regular expression was read as one); fix it or split the file" ;;
+          *) echo "9a: oracle file $path line $n holds a focused test (.only or fdescribe); it runs only that test and skips the rest, so the green means less than it says. Remove it and record the slice again with a bumped --oracle-version (rule 8)" ;;
+        esac
+      done
     done
 }
 
