@@ -141,7 +141,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   [ "$(mq s1 '.audits[0].kind')" = mutation ]
   run check s1
   [ "$output" = "s1: OK" ] || { echo "$output"; false; }
-  tamper s1 '.audits[0].recorded_at = "2000-01-01T00:00:00Z"'
+  tamper s1 '.audits[0].after_seq = 0'
   run check s1
   [[ "$output" == *"10c: no mutation audit"* ]]
 }
@@ -317,4 +317,68 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   ln -s /etc/hosts "$c"
   run check s1
   [[ "$output" == *"10c: the copy of mutation run 3's report is missing or does not match"* ]]
+}
+
+# --- review round 2 ------------------------------------------------------------------------------
+
+@test "a note carries after_seq, the last run number when it was written (K1)" {
+  an s0 --kind mutation --not-applicable --reason-file "$(note_file)"
+  [ "$(mq s0 '.audits[0].after_seq')" = 0 ]
+  record_good_slice s1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
+  [ "$(mq s1 '.audits[0].after_seq')" = 2 ]
+  run validate_schema "$REPO/.vetdd/evidence/s1/meta.json"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "a note of an older oracle stops counting even when the new version runs in the same second (K1)" {
+  record_good_slice s1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$(note_file)"
+  # Same second: the old timestamps alone would still count both notes.
+  printf '\n# a stronger test\n' >> test.sh
+  ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  tamper s1 '.audits |= map(.recorded_at = "2099-01-01T00:00:00Z")'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"10b:"* ]]
+  [[ "$output" == *"10c: no mutation audit"* ]]
+  # And new notes for v2 are taken at once, with no wait for the clock, and they count.
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$(note_file)"
+  run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+}
+
+@test "a note without after_seq (written before it existed) is still judged by its time" {
+  record_good_slice s1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
+  tamper s1 '.audits[0] |= del(.after_seq)'
+  run check s1
+  [ "$output" = "s1: OK" ]
+  tamper s1 '.audits[0].recorded_at = "2000-01-01T00:00:00Z"'
+  run check s1
+  [[ "$output" == *"10c: no mutation audit"* ]]
+}
+
+@test "the schema takes after_seq as a whole number only" {
+  record_good_slice s1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
+  local f
+  for f in '.audits[0].after_seq = -1' '.audits[0].after_seq = "2"' '.audits[0].after_seq = 1.5'; do
+    cp "$REPO/.vetdd/evidence/s1/meta.json" "$BATS_TEST_TMPDIR/ok.json"
+    jq "$f" "$BATS_TEST_TMPDIR/ok.json" > "$BATS_TEST_TMPDIR/bad.json"
+    run validate_schema "$BATS_TEST_TMPDIR/bad.json"
+    [ "$status" -ne 0 ] || { echo "accepted: $f"; false; }
+  done
+}
+
+@test "test mode names one report path in the config and the same in --mutation-report; no --jsonReporter option (K2)" {
+  local doc="$SCRIPTS/../modes/test.md"
+  ! grep -q -- '--jsonReporter' "$doc"
+  grep -q 'the same path' "$doc"
+  grep -q 'a note does not lift it' "$doc"
+  grep -q '(10c)' "$SCRIPTS/check-evidence.sh"
+  jq -r '.properties.audits.description' "$SCHEMA" | grep -q '10c'
 }

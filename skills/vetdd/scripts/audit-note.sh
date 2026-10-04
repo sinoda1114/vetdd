@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Record why an audit does not apply to a slice.
 # Usage: audit-note.sh <slice-id> --kind undefined-imports|mutation --not-applicable --reason-file <path>
-# Appends {kind, status: "not_applicable", reason, recorded_at} to audits[] in
+# Appends {kind, status: "not_applicable", reason, recorded_at, after_seq} to audits[] in
 # .vetdd/evidence/<slice>/meta.json. The audits themselves are `calibrate.sh stub` (undefined-imports)
 # and `evidence.sh --audit mutation` (mutation); this note is for a slice where one cannot apply (a
 # verify slice that drives the running app, a test with no product import, a language with no mutation
@@ -67,11 +67,15 @@ else
     || die "cannot build the evidence for slice '$slice'"
 fi
 
-# A second note of a kind is refused until a run starts after the last one: a note counts only when it
-# was recorded after the final oracle first ran, so a new oracle version needs a new note.
-dup="$(printf '%s' "$in_json" | jq -r --arg k "$kind" '
-  ([.runs[].started_at | strings] | max) as $last
-  | any((.audits // [])[]; .kind == $k and ($last == null or ((.recorded_at | strings) // "") >= $last))')" \
+# The note records after_seq, the last run number when it was written: it counts only for an oracle
+# whose first run is not after it, so a new oracle version needs a new note. A second note of a kind is
+# refused until a run comes after the last one (a note from before after_seq existed: by its time).
+after_seq="$(printf '%s' "$in_json" | jq '[.runs[].seq | numbers] | max // 0')" || die "could not read the runs of $rel"
+dup="$(printf '%s' "$in_json" | jq -r --arg k "$kind" --argjson last "$after_seq" '
+  ([.runs[].started_at | strings] | max) as $lt
+  | any((.audits // [])[]; .kind == $k and
+      (if (.after_seq | type) == "number" then .after_seq >= $last
+       else ($lt == null or ((.recorded_at | strings) // "") >= $lt) end))')" \
   || die "could not read the audits of $rel"
 [ "$dup" != true ] || die "slice '$slice' already has an audit entry of kind $kind and no run has started since (one per kind and oracle)"
 
@@ -87,8 +91,8 @@ if [ "$phys" != "$root/.vetdd/evidence/$slice" ]; then
 fi
 # A name nobody can predict, made with O_EXCL: a planted link at a guessed name is never followed.
 tmp_meta="$(mktemp "$dir/meta.json.XXXXXX")" || { [ "$created" -eq 1 ] && rmdir "$dir" 2>/dev/null; die "cannot create a temporary file in $dir"; }
-printf '%s' "$in_json" | jq --arg k "$kind" --arg reason "$reason" --arg at "$recorded_at" '
-  .audits = ((.audits // []) + [{kind: $k, status: "not_applicable", reason: $reason, recorded_at: $at}])' > "$tmp_meta" \
+printf '%s' "$in_json" | jq --arg k "$kind" --arg reason "$reason" --arg at "$recorded_at" --argjson after "$after_seq" '
+  .audits = ((.audits // []) + [{kind: $k, status: "not_applicable", reason: $reason, recorded_at: $at, after_seq: $after}])' > "$tmp_meta" \
   && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; [ "$created" -eq 1 ] && rmdir "$dir" 2>/dev/null; die "could not update $meta"
 }

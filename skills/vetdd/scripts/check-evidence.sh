@@ -64,8 +64,15 @@
 #               only the files named with --file (one left out is not stubbed), a runner that fails
 #               on the stub at import time is red for the wrong reason (the log must show the test's
 #               own failure), and a not_applicable note is a claim, not a proof.
+#           (10c) the latest accepted mutation run (evidence.sh --audit mutation) recorded after a green
+#               run of the final oracle has a usable report (status ok, its copy present with the
+#               recorded sha256), mutated and tested something, let no mutant survive or go uncovered,
+#               and its mutated files still hold the source it mutated; with no such run, a mutation
+#               note written after the final oracle first ran. Ignored mutants are a WARN (10c). Asked
+#               only of a slice with a mutation run or note. A tripwire, not a boundary: it trusts the
+#               report (what Stryker mutated and how it ran), and the ranges are the judge's to check.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
-#         "<slice>: WARN (9c: <reason>)" line per warning (advice for the reply's Attention section;
+#         "<slice>: WARN (9c|10c: <reason>)" line per warning (advice for the reply's Attention section;
 #         it holds no recorded text).
 # Exit code: number of failing slices (capped at 125; a WARN line never counts); 2 on usage errors.
 set -u
@@ -227,6 +234,12 @@ def usable: recorded and (.exit_code | type) == "number";
 # (as in rule 8): its version and the sha256 of its files. Recorded text is never printed (run numbers
 # only); a value of the wrong type is an error, which the caller turns into a failure.
 AUDIT_RULES='
+# A not_applicable note counts for the final oracle when it was written after that oracle first ran:
+# by after_seq (the last run number then) when it has one, else by its time (a note written before
+# after_seq existed). With nothing to compare, it counts for nothing.
+def counts_for($first; $first_seq):
+  if (.after_seq | type) == "number" then $first_seq != null and $first_seq <= .after_seq
+  else $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first end;
 def green: .kind == "after" or .kind == "integrated";
 def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
 def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array" and (.exit_code | type) == "number";
@@ -258,9 +271,10 @@ def audited: .audit.kind == "undefined-imports";
        # A note counts for the final oracle when it was recorded after that oracle first ran (the entry
        # has no version of its own); with no start time to compare, it counts for nothing.
        | ([$acc[] | select(oid == $fo) | .started_at | select(type == "string")] | min) as $first
+       | ([$acc[] | select(oid == $fo) | .seq | numbers] | min) as $first_seq
        | ((($meta.audits // []) | map(select(type == "object" and .kind == "undefined-imports" and .status == "not_applicable"
                                               and (.reason | type) == "string" and (.reason | length) > 0
-                                              and $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first)) | length)) as $noted
+                                              and counts_for($first; $first_seq))) | length)) as $noted
        | if $caught + $noted == 0
          then "10b: no undefined-imports audit for the final oracle after a green run of it; run calibrate.sh stub \($slice) --file <product files> --oracle-file <test files> -- <command> (it must end target_failure), or record why it does not apply with audit-note.sh \($slice) --kind undefined-imports --not-applicable --reason-file <path>"
          else empty end
@@ -271,6 +285,12 @@ def audited: .audit.kind == "undefined-imports";
 # object: problems and warnings (rule text with run numbers only), and the files of the judged run for
 # the shell to hash. Asked only of a slice with a mutation run or a mutation note.
 MUTATION_RULES='
+# A not_applicable note counts for the final oracle when it was written after that oracle first ran:
+# by after_seq (the last run number then) when it has one, else by its time (a note written before
+# after_seq existed). With nothing to compare, it counts for nothing.
+def counts_for($first; $first_seq):
+  if (.after_seq | type) == "number" then $first_seq != null and $first_seq <= .after_seq
+  else $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first end;
 def green: .kind == "after" or .kind == "integrated";
 def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
 def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array";
@@ -288,11 +308,11 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
     | ([$acc[] | select(.kind == "calibration" and mut and oid == $fo) | . as $r | select(any($gseqs[]; . < $r.seq))]
        | sort_by(.seq) | last) as $m
     | ([$acc[] | select(oid == $fo) | .started_at | select(type == "string")] | min) as $first
+    | ([$acc[] | select(oid == $fo) | .seq | numbers] | min) as $first_seq
     | ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation" and .status == "not_applicable"
-          and (.reason | type) == "string" and (.reason | length) > 0
-          and $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first)] | length) as $noted
+          and (.reason | type) == "string" and (.reason | length) > 0 and counts_for($first; $first_seq))] | length) as $noted
     | if $m == null then
-        {copy: null, problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after a green run of it; run evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/\($slice)-mutation.json -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
+        {copy: null, problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after a green run of it; run evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
          warns: [], files: []}
       else
         ($m.seq | num) as $s | $m.audit.report as $rep
