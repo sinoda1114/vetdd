@@ -8,8 +8,9 @@
 # Final:    (5) the latest after/integrated tree_hash matches the current working tree
 #           (6) oracle.files sha256 match the current files
 # Focus:    (9a) no focused test (.only, fdescribe) in a JS or TS oracle file: it would run only that
-#               test and skip the rest. A tripwire for an accident, not a boundary: a rewording, a
-#               helper, a file not named with --oracle-file, or another language passes it.
+#               test and skip the rest. Comments and strings are followed across lines. A tripwire for
+#               an accident, not a boundary: fit(, a renamed or wrapped focus, a helper, a file not
+#               named with --oracle-file, or another language passes it.
 # Oracle:   (8) the version chain of accepted runs: an oracle is its version plus the sha256 of its
 #               files. Within the final green's version the files do not change from its first red
 #               on, nor after any green of that version (edits before the first red are the test
@@ -136,29 +137,39 @@ def usable: recorded and (.exit_code | type) == "number";
 
 current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
 
-# Lines (numbers only) of a JS or TS oracle file that hold a focused test: <name>.only( for it, test,
-# describe, suite, or context, or fdescribe( , as a call and not in a comment. The name must stand
-# alone (not myit.only, not this.it.only).
+# Lines of a JS or TS oracle file that hold a focused test, one per output line: the line number,
+# or "!<line>" for a line too long to scan. The file is read as code: comments (// and /* */, across
+# lines) and the contents of strings and template literals (across lines) are blanked first, then
+# the code is searched for <it|test|describe|suite|context|specify>[.name]*.only[.name]*( or `, or
+# fdescribe(. The root name must stand alone (not myit.only, not this.it.only). Not covered, so a
+# tripwire and not a boundary: fit( (a common name for other functions), a regular-expression
+# literal holding a quote, code inside ${...} in a template, and a focus API renamed or wrapped.
 focused_lines() {
-  awk '
-    function focus(line,   n) {
-      if (match(line, /(^|[^A-Za-z0-9_$.])(it|test|describe|suite|context)\.only[ \t]*\(/)) { n = RSTART; return n }
-      if (match(line, /(^|[^A-Za-z0-9_$.])fdescribe[ \t]*\(/)) { n = RSTART; return n }
-      return 0
-    }
+  LC_ALL=C awk -v sq="'" '
+    BEGIN { block = 0; tpl = 0 }
     {
-      line = $0
-      t = line; sub(/^[ \t]+/, "", t)
-      if (t ~ /^(\/\/|\/\*|\*)/) next
-      n = focus(line)
-      if (n == 0) next
-      # A // before the match makes it a trailing comment.
-      pre = substr(line, 1, n)
-      if (index(pre, "//") > 0) next
-      # An odd number of quotes before the match means it sits inside a string.
-      q1 = gsub(/"/, "&", pre); q2 = gsub(/\x27/, "&", pre); q3 = gsub(/`/, "&", pre)
-      if (q1 % 2 == 1 || q2 % 2 == 1 || q3 % 2 == 1) next
-      print NR
+      line = $0; n = length(line)
+      if (n > 20000) { print "!" NR; next }
+      out = ""; i = 1; str = ""
+      if (tpl) str = "`"
+      while (i <= n) {
+        c = substr(line, i, 1); d = substr(line, i + 1, 1)
+        if (block) {
+          if (c == "*" && d == "/") { block = 0; out = out "  "; i += 2 } else { out = out " "; i++ }
+          continue
+        }
+        if (str != "") {
+          if (c == "\\") { out = out "  "; i += 2; continue }
+          if (c == str) { out = out c; if (c == "`") tpl = 0; str = ""; i++; continue }
+          out = out " "; i++; continue
+        }
+        if (c == "/" && d == "/") break
+        if (c == "/" && d == "*") { block = 1; out = out "  "; i += 2; continue }
+        if (c == "\"" || c == sq || c == "`") { str = c; if (c == "`") tpl = 1; out = out c; i++; continue }
+        out = out c; i++
+      }
+      if (match(out, /(^|[^A-Za-z0-9_$.])(it|test|describe|suite|context|specify)(\.[A-Za-z_$]+)*\.only(\.[A-Za-z_$]+)*[ \t]*[(`]/) ||
+          match(out, /(^|[^A-Za-z0-9_$.])fdescribe[ \t]*\(/)) print NR
     }' "$1"
 }
 
@@ -212,8 +223,14 @@ check_slice() {
         *) continue ;;
       esac
       vetdd_inside_repo "$root" "$path" && [ -f "$root/$path" ] || continue
-      focused_lines "$root/$path" | while IFS= read -r n; do
-        echo "9a: oracle file $path line $n holds a focused test (.only or fdescribe); it runs only that test and skips the rest, so the green means less than it says. Remove it and record the slice again with a bumped --oracle-version (rule 8)"
+      # A scanner that fails prints nothing; that must fail the slice, never read as OK.
+      found="$(focused_lines "$root/$path")" || { echo "9a: could not scan oracle file $path"; continue; }
+      printf '%s\n' "$found" | while IFS= read -r n; do
+        case "$n" in
+          '') ;;
+          '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters; it was not scanned for a focused test, so split the line" ;;
+          *) echo "9a: oracle file $path line $n holds a focused test (.only or fdescribe); it runs only that test and skips the rest, so the green means less than it says. Remove it and record the slice again with a bumped --oracle-version (rule 8)" ;;
+        esac
       done
     done
 }
