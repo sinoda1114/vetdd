@@ -11,12 +11,47 @@
       "description": "The oracle of the latest accepted run; check-evidence rule 6 rehashes its files.",
       "$ref": "#/$defs/oracle"
     },
-    "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } }
+    "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } },
+    "oracle_versions": {
+      "description": "Why each oracle version changed, written by scripts/oracle-version.sh; absent in evidence recorded before the log existed. Once the key exists, check-evidence rule 8d asks for an entry for the version the final green rests on, unless it is the initial agreement (an older version left behind is history).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/oracleVersion" }
+    }
   },
   "$defs": {
     "sliceId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
     "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
     "gitObjectId": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "oracleVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "change", "reason", "agreement", "after_seq", "recorded_at"],
+      "properties": {
+        "version": { "$ref": "#/$defs/sliceId" },
+        "change": { "description": "initial: the first agreement; implementation: the test changed, the agreed behavior did not; meaning: the agreed behavior changed (needs an agreement).", "enum": ["initial", "implementation", "meaning"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "agreement": {
+          "description": "The re-agreement (principle 1a); required when change is meaning.",
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["via", "question", "answer"],
+              "properties": {
+                "via": { "enum": ["AskUserQuestion", "chat"] },
+                "question": { "type": "string", "minLength": 1 },
+                "answer": { "type": "string", "minLength": 1 }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "after_seq": { "description": "The highest run seq recorded when the entry was written (0 when none); the version's first red must come after it.", "type": "integer", "minimum": 0 },
+        "recorded_at": { "$ref": "#/$defs/timestamp" }
+      },
+      "if": { "properties": { "change": { "const": "meaning" } }, "required": ["change"] },
+      "then": { "properties": { "agreement": { "type": "object" } } }
+    },
     "oracle": {
       "type": "object",
       "additionalProperties": false,

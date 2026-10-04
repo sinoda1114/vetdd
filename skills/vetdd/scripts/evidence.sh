@@ -169,7 +169,8 @@ fi
 
 # NUL-split the argv so that arguments like --prefix never reach jq's option parser.
 cmd_json="$(printf '%s\0' "$@" | jq -Rs 'split("\u0000") | .[:-1]')"
-tmp_meta="$meta.tmp.$$"
+# A name nobody can predict, made with O_EXCL: a planted link at a guessed name is never followed.
+tmp_meta="$(mktemp "$dir/meta.json.XXXXXX")" || die "cannot create a temporary file in $dir"
 jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
   --arg outcome "$outcome" --argjson accepted "$accepted" \
   --arg started_at "$started_at" --arg ended_at "$ended_at" --arg log "$log_rel" \
@@ -195,7 +196,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
         env_keys: (env | keys | map(select(startswith("VETDD_"))) | sort)
       },
       oracle: $oracle
-    } + (if $tests == null then {} else {tests: $tests} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && mv "$tmp_meta" "$meta" || {
+    } + (if $tests == null then {} else {tests: $tests} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; die "could not update $meta"
 }
 

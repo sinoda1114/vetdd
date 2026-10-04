@@ -38,6 +38,8 @@ Before any product code, present the agreement through `AskUserQuestion`: exactl
 
 Q3 carries one recommended default for all four of its parts when the change is small and reversible; break it out into a second call only when the human rejects the default. Record the answers in the reply's Oracle section.
 
+Once the slice id is decided (step 4) and before the slice's first run, record the first agreement in the evidence as well: `"$VETDD/scripts/oracle-version.sh" <slice> --version <v> --change initial --reason-file <path>` (check-evidence rule 8d then asks for a recorded reason on the final version when it is a later one). Write the text to a file under `.vetdd/notes/` with the Write tool (the tree hash leaves `.vetdd/` out, so it never counts as a change) and pass the path (`--reason-file`, `--question-file`, `--answer-file`): text that came from an issue, a page, or a file must never be typed into a shell command, where a quote in it would end the quoting and run the rest. `--reason '<text>'` is only for text you wrote yourself that holds no quote.
+
 If the human says the task is unclear, stop vetdd and run a hearing first (`Call the Skill tool with "hearing"` when it exists; otherwise ask in chat).
 
 ## 3. Choose the parallel shape
