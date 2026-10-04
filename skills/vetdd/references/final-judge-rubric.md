@@ -18,8 +18,9 @@ candidates/c1/
   evidence/<slice>/runs/<log>    the log of each slice's red run (kind before or calibration, outcome
                                  target_failure), the undefined-imports audit run included; other run
                                  logs stay on the machine
-  evidence/<slice>/runs/<seq>-mutation.json   the normalized copy of each mutation audit report
-                                 (config.mutate, and each file's source and mutants)
+  evidence/<slice>/runs/<seq>-mutation.json   the copy of the mutation run that check-evidence judged
+                                 (the latest after a green of the final oracle): config.mutate, and
+                                 each mutated file's full source and mutants
 ```
 
 Sending the red-run logs is part of the default agreement (SKILL.md, Q4). If the human excluded them, criterion 1 cannot score 2 and the verdict is at most `partial`.

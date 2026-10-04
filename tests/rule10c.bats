@@ -382,3 +382,30 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   grep -q '(10c)' "$SCRIPTS/check-evidence.sh"
   jq -r '.properties.audits.description' "$SCHEMA" | grep -q '10c'
 }
+
+# --- review round 3 ------------------------------------------------------------------------------
+
+@test "with GNU sha256sum (which escapes a name holding a backslash) the hash is still plain (L3)" {
+  # A stand-in for GNU sha256sum: given a file name with a backslash it prefixes the digest with \,
+  # as coreutils does; reading standard input it prints the plain digest.
+  mkdir -p "$BATS_TEST_TMPDIR/gnu"
+  cat > "$BATS_TEST_TMPDIR/gnu/sha256sum" <<'SH'
+#!/bin/sh
+if [ $# -eq 0 ]; then shasum -a 256 | sed 's/ .*/  -/'; exit; fi
+d="$(shasum -a 256 < "$1" | cut -d' ' -f1)"
+case "$1" in *\\*) printf '\\%s  %s\n' "$d" "$1" ;; *) printf '%s  %s\n' "$d" "$1" ;; esac
+SH
+  chmod +x "$BATS_TEST_TMPDIR/gnu/sha256sum"
+  printf 'x\n' > 'src/a\b.ts'
+  git add -A && git commit -q -m bs
+  record_good_slice s1
+  jq --arg r "$REPO" --arg k 'src/a\b.ts' '.projectRoot = $r | .files = {($k): (.files["src/dueDate.ts"] | .source = "x\n" | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/bs.json"
+  PATH="$BATS_TEST_TMPDIR/gnu:$PATH" mutation s1 "$BATS_TEST_TMPDIR/bs.json"
+  PATH="$BATS_TEST_TMPDIR/gnu:$PATH" run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+}
+
+@test "Q4 names the mutation report copy and its full source; the judge gets the judged run's copy only (L2)" {
+  grep -n 'Q4 what leaves the machine' "$SCRIPTS/../SKILL.md" | grep -q 'mutation report'
+  grep -q 'the copy of the mutation run that check-evidence judged' "$SCRIPTS/../references/final-judge-rubric.md"
+}
