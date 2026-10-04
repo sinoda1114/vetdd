@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Record one oracle run as evidence for a slice.
 # Usage: evidence.sh <slice-id> <kind> [--outcome <o>] [--infra-exit <code>]... [--seam <s>]
-#                    [--oracle-version <v>] [--oracle-file <path>]... -- <command...>
+#                    [--oracle-version <v>] [--oracle-file <path>]... [--test-report jest-json:<path>]
+#                    -- <command...>
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
 #   --infra-exit <code> declares another exit code that means "could not observe" (for example a
 #   verify script's exit 2), so it is recorded as infrastructure_error and never counts as red
+# --test-report: the runner's JSON report at <path> (under .vetdd/reports/) is deleted before
+#   the run and read after it; its counts go on the run as `tests`. It never changes the outcome.
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -17,6 +20,7 @@ unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
 . "${BASH_SOURCE[0]%/*}/lib/common.sh"
 vetdd_require_jq evidence.sh
 . "${BASH_SOURCE[0]%/*}/lib/tree-hash.sh"
+. "${BASH_SOURCE[0]%/*}/lib/test-report.sh"
 
 [ $# -ge 2 ] || die "usage: evidence.sh <slice-id> <kind> [options] -- <command...>"
 slice="$1"; kind="$2"; shift 2
@@ -27,7 +31,7 @@ case "$kind" in
 esac
 
 outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "
-oracle_files=()
+oracle_files=(); report_opt=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --outcome) [ $# -ge 2 ] || die "--outcome needs a value"; outcome_opt="$2"; shift 2 ;;
@@ -40,6 +44,9 @@ while [ $# -gt 0 ]; do
       vetdd_is_slice_id "$2" || die "--oracle-version takes letters, digits, and . _ - (got an unsupported value)"
       version_opt="$2"; version_set=1; shift 2 ;;
     --oracle-file) [ $# -ge 2 ] || die "--oracle-file needs a value"; oracle_files+=("$2"); shift 2 ;;
+    --test-report) [ $# -ge 2 ] || die "--test-report needs jest-json:<path>"
+      case "$2" in jest-json:?*) report_opt="${2#jest-json:}" ;; *) die "--test-report takes jest-json:<path>" ;; esac
+      shift 2 ;;
     --) shift; break ;;
     *) die "unexpected argument '$1' (put the command after --)" ;;
   esac
@@ -77,6 +84,13 @@ if [ ${#rel_files[@]} -gt 1 ]; then
   rel_files=("${deduped[@]}")
 fi
 
+report_rel=""
+if [ -n "$report_opt" ]; then
+  report_rel="$(vetdd_report_rel "$root" "$report_opt")" \
+    || die "--test-report path is not a usable path inside the repository (a symbolic link, outside, through a file, or unreadable): $report_opt"
+  vetdd_report_allowed "$root" "$report_rel" \
+    || die "--test-report path must be an untracked file under .vetdd/reports/ (resolved to $report_rel)"
+fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
 mkdir -p "$dir/runs" || die "cannot create $dir"
@@ -100,6 +114,13 @@ tree_hash="$(vetdd_tree_hash "$root")" || die "could not hash the working tree"
 node_version=""
 if command -v node >/dev/null 2>&1; then node_version="$(node --version 2>/dev/null || true)"; fi
 
+# A stale report from an earlier run must never be read as this run's. Removed only now, after
+# every check that can stop the run, so a usage error leaves the earlier report in place. Its
+# directory is made here too: jest does not create it.
+if [ -n "$report_rel" ]; then
+  rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_rel"
+  mkdir -p -- "$(dirname -- "$root/$report_rel")" || die "cannot create the directory for $report_rel"
+fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$@" 2>&1 | tee "$dir/$log_rel"
 exit_code=${PIPESTATUS[0]}
@@ -119,6 +140,13 @@ case "$kind" in
   after|integrated) required=pass ;;
 esac
 accepted=true
+tests_json=null
+if [ -n "$report_rel" ]; then
+  tests_json="$(vetdd_test_report_import "$root" "$report_rel" "$dir/${log_rel%.log}.tests.json")" \
+    || tests_json='{"format": "jest-json", "status": "invalid"}'  # the run is recorded regardless
+  printf '%s' "$tests_json" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || tests_json='{"format": "jest-json", "status": "invalid"}'
+fi
 if [ -n "$required" ] && [ "$outcome" != "$required" ]; then accepted=false; fi
 
 # hash_files: repo-relative paths on stdin -> JSON [{path, sha256}] (sha256 null if missing)
@@ -149,7 +177,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
   --arg cwd "$cwd_rel" --arg node_version "$node_version" \
   --argjson seam_set "$seam_set" --arg seam "$seam_opt" \
   --argjson version_set "$version_set" --arg version "$version_opt" \
-  --argjson files "$files_json" '
+  --argjson files "$files_json" --argjson tests "$tests_json" '
   (.oracle
     | (if $seam_set == 1 then .seam = $seam else . end)
     | (if $version_set == 1 then .version = $version else . end)
@@ -167,7 +195,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
         env_keys: (env | keys | map(select(startswith("VETDD_"))) | sort)
       },
       oracle: $oracle
-    }]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && mv "$tmp_meta" "$meta" || {
+    } + (if $tests == null then {} else {tests: $tests} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; die "could not update $meta"
 }
 
