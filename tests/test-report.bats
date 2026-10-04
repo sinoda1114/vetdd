@@ -325,3 +325,15 @@ EOF
   run ev s2 calibration --test-report "jest-json:$arg" -- true
   [ "$status" -eq 2 ] || { echo "$output"; false; }
 }
+
+@test "an error that stops the run before it starts leaves the earlier report in place (Q1)" {
+  record_ok() { ev s1 calibration --test-report "jest-json:$R" -- sh -c "$(write_report "$FIX/vitest5-pass.json" 0)"; }
+  record_ok
+  [ -f "$REPO/$R" ]
+  # An inherited oracle path that leaves the repository stops the run with exit 2.
+  ln -s .. lnk
+  jq '.oracle.files = [{"path": "lnk/x.sh", "sha256": null}]' .vetdd/evidence/s1/meta.json > m && mv m .vetdd/evidence/s1/meta.json
+  run ev s1 calibration --test-report "jest-json:$R" -- true
+  [ "$status" -eq 2 ]
+  [ -f "$REPO/$R" ]
+}

@@ -91,14 +91,6 @@ if [ -n "$report_opt" ]; then
   vetdd_report_allowed "$root" "$report_rel" \
     || die "--test-report path must be an untracked file under .vetdd/reports/ (resolved to $report_rel)"
 fi
-# A stale report from an earlier run must never be read as this run's. Removed before the evidence
-# directory is created, so a usage error leaves no empty meta.json.
-# Its directory is made here: jest does not create it.
-if [ -n "$report_rel" ]; then
-  rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_rel"
-  mkdir -p -- "$(dirname -- "$root/$report_rel")" || die "cannot create the directory for $report_rel"
-fi
-
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
 mkdir -p "$dir/runs" || die "cannot create $dir"
@@ -122,6 +114,13 @@ tree_hash="$(vetdd_tree_hash "$root")" || die "could not hash the working tree"
 node_version=""
 if command -v node >/dev/null 2>&1; then node_version="$(node --version 2>/dev/null || true)"; fi
 
+# A stale report from an earlier run must never be read as this run's. Removed only now, after
+# every check that can stop the run, so a usage error leaves the earlier report in place. Its
+# directory is made here too: jest does not create it.
+if [ -n "$report_rel" ]; then
+  rm -f -- "$root/$report_rel" || die "cannot remove the stale test report $report_rel"
+  mkdir -p -- "$(dirname -- "$root/$report_rel")" || die "cannot create the directory for $report_rel"
+fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$@" 2>&1 | tee "$dir/$log_rel"
 exit_code=${PIPESTATUS[0]}
