@@ -3,13 +3,16 @@
 # (mutation-testing-report-schema 1.x): files[<path relative to projectRoot>] = {source, mutants[]}.
 
 # jq: a stryker-json report -> {projectRoot, keys, counts}. Errors (status invalid) when the shape is
-# not schema 1.x, a mutant has a status outside the final ones (Pending means the run did not finish),
-# or a file key holds a control character.
+# not schema 1.x, projectRoot is not absolute, a file key is not a plain relative path (no empty, . or
+# .. component, no control character), or a mutant has a status outside the final ones (Pending means
+# the run did not finish).
 VETDD_STRYKER_JSON='
   def final: . as $s | any(["Killed","Survived","NoCoverage","Timeout","CompileError","RuntimeError","Ignored"][]; . == $s);
+  def plain: . != "" and (explode | all(. > 31 and (. < 127 or . > 159))) and (split("/") | all(. != "" and . != "." and . != ".."));
   if type == "object" and (.schemaVersion | type) == "string" and (.schemaVersion | test("^1(\\.|$)"))
-     and (.projectRoot | type) == "string" and (.files | type) == "object" and (.files | length) > 0
-     and all(.files | keys[]; explode | all(. > 31 and (. < 127 or . > 159)))
+     and (.projectRoot | type) == "string" and (.projectRoot | startswith("/"))
+     and (.files | type) == "object" and (.files | length) > 0
+     and all(.files | keys[]; plain)
      and all(.files[]; type == "object" and (.source | type) == "string" and (.mutants | type) == "array"
        and all(.mutants[]; type == "object" and (.status | type) == "string" and (.status | final)))
   then . else error("not a stryker-json report") end
@@ -20,9 +23,16 @@ VETDD_STRYKER_JSON='
             compile_error: n("CompileError"), runtime_error: n("RuntimeError"), ignored: n("Ignored"),
             total: ($st | length)}}'
 
+# jq: the copy kept for the judge: the line ranges asked for (config.mutate), and per file its source and
+# each mutant's id, mutator, replacement, status, and location. Any other field of the raw report (the
+# rest of the config, free text a tool or a person added) is left out.
+VETDD_STRYKER_COPY='
+  {schemaVersion, config: {mutate: (.config.mutate // null)},
+   files: (.files | map_values({source, mutants: [.mutants[] | {id, mutatorName, replacement, status, location}]}))}'
+
 # vetdd_mutation_files <root> <report> <projectRoot> <keys...>: print [{path, sha256}] with each path
-# relative to <root> and the sha256 of the source the report mutated; fail when projectRoot or a path
-# leaves the repository.
+# relative to <root> in its on-disk spelling and the sha256 of the source the report mutated; fail
+# when projectRoot or a path leaves the repository.
 vetdd_mutation_files() {
   local root="$1" report="$2" pr="$3" key p prel src sum out=""; shift 3
   [ -d "$pr" ] || return 1
@@ -30,7 +40,7 @@ vetdd_mutation_files() {
   case "$pr" in "$root") prel="" ;; "$root"/*) prel="${pr#"$root"/}/" ;; *) return 1 ;; esac
   src="$(mktemp "${TMPDIR:-/tmp}/vetdd-source.XXXXXX")" || return 1
   for key in "$@"; do
-    p="$prel$key"
+    p="$(vetdd_disk_path "$root" "$prel$key")"
     if ! vetdd_inside_repo "$root" "$p" \
        || ! jq -j --arg k "$key" '.files[$k].source' "$report" > "$src" 2>/dev/null \
        || ! sum="$(vetdd_sha256 "$src")"; then
@@ -43,25 +53,32 @@ vetdd_mutation_files() {
 }
 
 # vetdd_mutation_report_import <root> <rel> <copy> <copy-rel>: print the run's audit.report object.
-# When the report is a regular file inside the repository and a usable stryker-json report, it is
-# copied byte for byte to <copy> (the judge reads config.mutate and each mutant there) and hashed;
-# otherwise status is missing or invalid, with a warning on stderr.
+# The report is read once, into a private temp file beside <copy>; the checks, the counts, the file
+# hashes, and the normalized copy all come from that one read, so a report rewritten meanwhile cannot
+# make the record and the copy disagree. The copy is renamed into place, never written through a link.
+# When the report is missing or not usable, status is missing or invalid, with a warning on stderr.
 vetdd_mutation_report_import() {
-  local root="$1" rel="$2" copy="$3" copy_rel="$4" status="" summary files sum k keys=()
+  local root="$1" rel="$2" copy="$3" copy_rel="$4" status="" summary files sum k keys=() raw="" norm=""
   rm -f -- "$copy"
   # Checked again here: the command that just ran could have swapped the report for a link.
   if ! vetdd_inside_repo "$root" "$rel" || [ -d "$root/$rel" ]; then status=invalid
   elif [ ! -e "$root/$rel" ]; then status=missing
   elif [ ! -f "$root/$rel" ]; then status=invalid
-  elif ! jq -e -s 'length == 1 and (.[0] | type) == "object"' "$root/$rel" >/dev/null 2>&1; then status=invalid
-  elif ! summary="$(jq -c "$VETDD_STRYKER_JSON" "$root/$rel" 2>/dev/null)"; then status=invalid
+  elif ! raw="$(mktemp "$(dirname -- "$copy")/.mutation.XXXXXX")" || ! norm="$(mktemp "$(dirname -- "$copy")/.mutation.XXXXXX")"; then status=invalid
+  elif [ -L "$root/$rel" ] || ! cat -- "$root/$rel" > "$raw" 2>/dev/null; then status=invalid
+  elif ! jq -e -s 'length == 1 and (.[0] | type) == "object"' "$raw" >/dev/null 2>&1; then status=invalid
+  elif ! summary="$(jq -c "$VETDD_STRYKER_JSON" "$raw" 2>/dev/null)"; then status=invalid
   else
     while IFS= read -r -d '' k; do keys+=("$k"); done < <(printf '%s' "$summary" | jq -j '.keys[] | ., "\u0000"')
-    if ! files="$(vetdd_mutation_files "$root" "$root/$rel" "$(printf '%s' "$summary" | jq -r '.projectRoot')" "${keys[@]}")"; then
+    if ! files="$(vetdd_mutation_files "$root" "$raw" "$(printf '%s' "$summary" | jq -r '.projectRoot')" "${keys[@]}")"; then
       status=invalid
-    elif ! cp -- "$root/$rel" "$copy" || ! sum="$(vetdd_sha256 "$copy")"; then status=invalid
+    elif ! jq "$VETDD_STRYKER_COPY" "$raw" > "$norm" 2>/dev/null || ! sum="$(vetdd_sha256 "$norm")" \
+         || ! chmod "$(vetdd_file_mode)" "$norm" || ! mv -f -- "$norm" "$copy"; then
+      status=invalid
     fi
   fi
+  [ -z "$raw" ] || rm -f -- "$raw"
+  [ -z "$norm" ] || rm -f -- "$norm"
   if [ -n "$status" ]; then
     rm -f -- "$copy"
     printf 'evidence.sh: warning: mutation report %s is %s; recorded audit.report.status=%s (the outcome still comes from the exit code)\n' \

@@ -55,8 +55,9 @@
 #               of that oracle, that ended target_failure (not forced with --outcome; the command is
 #               not compared with the green's, a blind spot), or an audits[] entry not_applicable with a reason
 #               (audit-note.sh) recorded after the final oracle first ran, so a note written for an older
-#               version stops counting once a new one has run. Asked only of a slice whose meta.json has an audits key or a run with
-#               an audit mark (evidence from before the audit, and a slice that never opts in, are not
+#               version stops counting once a new one has run. Asked only of a slice that opted in: a run with an audit mark other
+#               than mutation, or an audits key that is empty or holds an entry other than a mutation
+#               note (an unknown kind opts in; evidence from before the audit, and a slice that never opts in, are not
 #               asked: a blind spot, since a slice that never runs `calibrate.sh stub` is never told to).
 #               An audit run is never a red for rules 1 and 8 (the product was stubbed, not defective)
 #               and never the latest run of a command for rule 9b. A tripwire, not a boundary: it sees
@@ -237,11 +238,11 @@ def audited: .audit.kind == "undefined-imports";
 | ([$acc[] | select(green and .outcome == "pass")] | sort_by(.seq) | last) as $g
 | [$accepted[] | select(.kind == "calibration" and audited)] as $audits
 # Opted in to the undefined-imports audit: a run with its mark, or an audits key that is empty, not an
-# array, or holds any entry but a mutation note (an unknown kind fails closed). A mutation run or note
-# alone opts in to nothing here.
+# array, or holds any entry but a mutation note; a run with any audit mark but mutation (an unknown kind
+# fails closed, in both places). A mutation run or note alone opts in to nothing here.
 | (($meta | has("audits")) and (($meta.audits | type) != "array" or ($meta.audits | length) == 0
      or any($meta.audits[]; type != "object" or .kind != "mutation"))) as $noted_key
-| ($noted_key or ([$meta.runs[] | .audit.kind? == "undefined-imports"] | any)) as $opted
+| ($noted_key or ([$meta.runs[] | .audit as $a | $a != null and (($a | type) != "object" or $a.kind != "mutation")] | any)) as $opted
 | (
     ($audits[] | select(.outcome == "pass") | select($g == null or oid == ($g | oid))
      | "10a: the audit run \(.seq | num) (every import stubbed with undefined) still passed, so the test observes nothing; make the test call or check the product code"),
