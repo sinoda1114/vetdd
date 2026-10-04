@@ -229,12 +229,17 @@ def show: tostring | explode | map(select(. > 31 and (. < 127 or . > 159))) as $
   | if ($c | length) > 100 then ($c[0:100] | implode) + "..." else ($c | implode) end;
 [ group_by(.cmd | tojson)[] | sort_by(.seq) | . as $g | ($g | last) as $l | $g[:-1] as $earlier
   | select(($earlier | length) > 0)
+  # One index of what ran before: per test (file and name), the latest earlier run in which it ran and
+  # whether it failed there. Built once, so a large suite is not searched test by test.
+  | (reduce ($earlier[] | .seq as $s | .tests[] | select(ran) | {k: ([.file, .name] | tojson), s: $s, st: .status}) as $t ({};
+       .[$t.k] = (if (.[$t.k].e // -1) == $t.s
+                  then {e: $t.s, failed: (.[$t.k].failed or $t.st == "failed")}
+                  else {e: $t.s, failed: ($t.st == "failed")} end))) as $idx
   | ($l.tests | group_by([.file, .name])[] | select(all(.[]; idle))
      | {file: .[0].file, name: .[0].name, status: (if all(.[]; .status == "todo") then "todo" else "skipped" end)}) as $d
-  | ($earlier | map(select(.tests | any(.[]; .file == $d.file and .name == $d.name and ran))) | last) as $e
-  | select($e != null)
-  | {l: $l.seq, e: $e.seq, d: $d,
-     was: ($e.tests | map(select(.file == $d.file and .name == $d.name and ran)) | if any(.[]; .status == "failed") then "failed" else "passed" end)}
+  | ($idx[[$d.file, $d.name] | tojson]) as $x
+  | select($x != null)
+  | {l: $l.seq, e: $x.e, d: $d, was: (if $x.failed then "failed" else "passed" end)}
 ] as $f
 | ($f[:$max][] | "9b: test \"\(.d.name | show)\" in \(.d.file | show) ran (\(.was)) in run \(.e) but is \(.d.status) in run \(.l), the latest run of the same command; a test that stops running makes the green mean less than it says. Run it again, or say in the reply why it is \(.d.status)"),
   (if ($f | length) > $max then "9b: and \($f | length - $max) more tests ran in an earlier run and are skipped or todo in the latest run of their command" else empty end)'

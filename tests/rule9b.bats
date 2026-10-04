@@ -353,3 +353,40 @@ COPY1() { printf '%s' "$REPO/.vetdd/evidence/s1/runs/001-before.tests.json"; }
   [ "$status" -eq 0 ]
   [ "$output" = "s1: OK" ]
 }
+
+@test "rule 9b stays fast on a large filtered suite: two runs of 5000 tests, one passed then skipped (perf)" {
+  jq -n '{numTotalTests: 5000, testResults: [{name: "/work/big.test.ts", status: "passed",
+        assertionResults: [range(0; 5000) | {fullName: ("case \(.)"), title: ("case \(.)"), status: (if . == 0 then "passed" else "skipped" end)}]}]}' > "$BATS_TEST_TMPDIR/big1.json"
+  jq '(.testResults[0].assertionResults[0].status) = "skipped"' "$BATS_TEST_TMPDIR/big1.json" > "$BATS_TEST_TMPDIR/big2.json"
+  two_runs "$BATS_TEST_TMPDIR/big1.json" "$BATS_TEST_TMPDIR/big2.json"
+  SECONDS=0
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9b: test \"case 0\""* ]]
+  [ "$SECONDS" -le 5 ] || { echo "took $SECONDS s"; false; }
+}
+
+# --- review round 1: a large suite is compared in linear time -------------------------------------
+
+# big_report <name> <n> <from> <to>: n tests; those with from <= index < to passed, the rest skipped.
+big_report() {
+  jq -n --argjson n "$2" --argjson from "$3" --argjson to "$4" '
+    {numTotalTests: $n, testResults: [{name: "/work/big.test.ts", status: "passed", assertionResults:
+      [range(0; $n) | {fullName: "test \(.)", title: "t\(.)", status: (if . >= $from and . < $to then "passed" else "skipped" end)}]}]}' \
+    > "$BATS_TEST_TMPDIR/$1.json"
+  printf '%s' "$BATS_TEST_TMPDIR/$1.json"
+}
+
+@test "rule 9b compares two runs of 20000 tests each in linear time, not quadratic (codex review)" {
+  # Earlier: only the last test ran; latest: nothing ran. Every skipped test of the latest run used to
+  # be searched for in the whole earlier run (13 seconds for 5000 tests with the codex reviewer's jq; a
+  # little over a second for 20000 with jq 1.8.1, where the old search is not the bottleneck: this test
+  # guards the index against a regression, it was not red before it).
+  two_runs "$(big_report earlier 20000 19999 20000)" "$(big_report latest 20000 0 0)"
+  start=$SECONDS
+  run check s1
+  elapsed=$((SECONDS - start))
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"test 19999"* ]]
+  [ "$elapsed" -lt 5 ] || { echo "took ${elapsed}s"; false; }
+}
