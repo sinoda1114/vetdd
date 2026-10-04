@@ -983,3 +983,21 @@ slip_slice() {
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+@test "rule 8d messages point at the file form for text and at a bump to recover (E1, E2)" {
+  slip_slice
+  run check s1
+  [[ "$output" == *"--reason-file"* ]]
+  [[ "$output" == *"bump --oracle-version"* ]]
+  [[ "$output" != *"--reason '"* ]]
+}
+
+@test "rule 8d never builds a suggested command from a version that is not a plain name (E4)" {
+  slip_slice
+  tamper s1 '.runs[-1].oracle.version = "x;touch pwned"'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"8: the final oracle version is not a plain name"* ]]
+  [[ "$output" != *"touch pwned --change"* ]]
+  [[ "$output" != *"--version x;"* ]]
+}

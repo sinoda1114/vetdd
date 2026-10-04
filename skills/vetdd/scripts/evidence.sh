@@ -196,7 +196,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
         env_keys: (env | keys | map(select(startswith("VETDD_"))) | sort)
       },
       oracle: $oracle
-    } + (if $tests == null then {} else {tests: $tests} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod 0644 "$tmp_meta" && mv "$tmp_meta" "$meta" || {
+    } + (if $tests == null then {} else {tests: $tests} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; die "could not update $meta"
 }
 

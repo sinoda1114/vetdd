@@ -70,6 +70,10 @@ vetdd_disk_path() {
   printf '%s\n' "$out"
 }
 
+# vetdd_file_mode: the permissions a new file gets under the current umask (0666 & ~umask), in octal,
+# for a file made with mktemp (which is 0600) that replaces one written the ordinary way.
+vetdd_file_mode() { printf '%o' $((0666 & ~$(umask))); }
+
 # vetdd_inside_repo <root> <relative path>: true when the path has no control characters (paths
 # travel one per line), no . or .. component, its last component is not a symbolic link, and its
 # directory resolves under <root> (as given by pwd -P). A path whose directory does not exist opens

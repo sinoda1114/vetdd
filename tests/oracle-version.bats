@@ -227,3 +227,58 @@ ov() { "$SCRIPTS/oracle-version.sh" "$@"; }
   [ "$status" -eq 2 ]
   [ ! -e .vetdd/evidence/s1 ]
 }
+
+# --- review round 2 ---------------------------------------------------------------------------
+
+perm() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+
+@test "text read from a file is recorded verbatim, quotes and shell syntax included (E1)" {
+  printf "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran)\n" > "$BATS_TEST_TMPDIR/reason.txt"
+  printf 'what the user said? "yes" `now`\n' > "$BATS_TEST_TMPDIR/q.txt"
+  printf "it's fine\n" > "$BATS_TEST_TMPDIR/a.txt"
+  ov s1 --version v1 --change initial --reason first
+  run ov s1 --version v2 --change meaning --reason-file "$BATS_TEST_TMPDIR/reason.txt" \
+    --agreement-via chat --question-file "$BATS_TEST_TMPDIR/q.txt" --answer-file "$BATS_TEST_TMPDIR/a.txt"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.oracle_versions[1].reason')" = "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran)" ]
+  [ "$(mq s1 '.oracle_versions[1].agreement.question')" = 'what the user said? "yes" `now`' ]
+  [ "$(mq s1 '.oracle_versions[1].agreement.answer')" = "it's fine" ]
+  [ ! -e "$BATS_TEST_TMPDIR/ran" ]
+}
+
+@test "a text file with a control character, an empty file, a link, a directory, or a big file is refused (E1)" {
+  printf 'a\tb\n' > "$BATS_TEST_TMPDIR/tab.txt"; : > "$BATS_TEST_TMPDIR/empty.txt"
+  printf 'x\n' > "$BATS_TEST_TMPDIR/real.txt"; ln -s real.txt "$BATS_TEST_TMPDIR/link.txt"
+  mkdir "$BATS_TEST_TMPDIR/dir.txt"; head -c 5000 /dev/zero | tr '\0' 'a' > "$BATS_TEST_TMPDIR/big.txt"
+  printf 'two\nlines\n' > "$BATS_TEST_TMPDIR/two.txt"
+  for f in tab empty link dir big two nope; do
+    run ov s1 --version v1 --change initial --reason-file "$BATS_TEST_TMPDIR/$f.txt"
+    [ "$status" -eq 2 ] || { echo "$f: $output"; false; }
+  done
+  [ ! -e .vetdd/evidence/s1 ]
+}
+
+@test "a text option and its file form together, or twice, is a usage error (E1)" {
+  printf 'x\n' > "$BATS_TEST_TMPDIR/r.txt"
+  run ov s1 --version v1 --change initial --reason r --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  [ "$status" -eq 2 ]
+  run ov s1 --version v1 --change initial --reason r --reason again
+  [ "$status" -eq 2 ]
+}
+
+@test "--change initial is refused once the slice has an entry, and the message says how to recover (E2)" {
+  ov s1 --version v1 --change initial --reason first
+  run ov s1 --version v2 --change initial --reason second
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"implementation or meaning"* ]]
+  [ "$(mq s1 '.oracle_versions | length')" = "1" ]
+}
+
+@test "oracle-version.sh and evidence.sh keep the meta.json permissions the umask gives (E3)" {
+  ( umask 077; ov s1 --version v1 --change initial --reason r )
+  [ "$(perm .vetdd/evidence/s1/meta.json)" = "600" ]
+  ( umask 077; ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh )
+  [ "$(perm .vetdd/evidence/s1/meta.json)" = "600" ]
+  ( umask 022; ov s1 --version v2 --change implementation --reason r2 )
+  [ "$(perm .vetdd/evidence/s1/meta.json)" = "644" ]
+}
