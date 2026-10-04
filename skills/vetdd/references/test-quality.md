@@ -4,7 +4,7 @@ Applies whenever a test is written, changed, or kept. It grounds principle 4 in 
 
 ## The one question
 
-Would this test still pass if every function it imports returned `undefined`? If yes, it observes no behavior. Rewrite the assertion or delete the test (name the replacement coverage first).
+Would this test still pass if every function it imports returned `undefined`? If yes, it observes no behavior. Rewrite the assertion or delete the test (name the replacement coverage first). `calibrate.sh stub` asks the runner this question (modes/test.md, step 5), and check-evidence rule 10 fails a slice whose answer was yes.
 
 ## Where expected values come from
 

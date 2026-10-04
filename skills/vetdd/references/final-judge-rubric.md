@@ -1,4 +1,4 @@
-# Final judge rubric (version 4)
+# Final judge rubric (version 5)
 
 Used when test or verify mode sends one delivered change to the judge. One label, `c1`. Every criterion below is judged only from files in this layout; if a file the layout names is missing, the criterion that needs it scores 0 and the reply explains why.
 
@@ -37,9 +37,9 @@ A `<slice>: WARN (...)` line in `artifact/check-evidence.txt` (check-evidence ru
 
 ## 3. test-observes-behavior
 
-- 2: every test added or changed in `artifact/diff.patch` (full text in `artifact/tests/`) calls the subject through its public interface and asserts a literal value or a spec-guaranteed property whose source is named in the reply's Oracle section; no assertion is only existence, only a call, or a value recomputed from the code under test.
+- 2: every test added or changed in `artifact/diff.patch` (full text in `artifact/tests/`) calls the subject through its public interface and asserts a literal value or a spec-guaranteed property whose source is named in the reply's Oracle section; no assertion is only existence, only a call, or a value recomputed from the code under test; the check-evidence output has no `10a` or `10b` line (rule 10: every import stubbed with `undefined` must turn the oracle red).
 - 1: one hollow assertion exists but is paired with a meaningful one on another input.
-- 0: a test would still pass if every import returned `undefined`, or an existing assertion was weakened.
+- 0: the check-evidence output has a `10a` or `10b` line, or an existing assertion was weakened.
 
 ## 4. smallest-change
 
