@@ -94,6 +94,10 @@ vetdd_mutation_report_import() {
       status=invalid
     fi
   fi
+  # Stryker writes "files": {} when the --mutate ranges held no mutant at all: say so, it is not a broken run.
+  if [ "$status" = invalid ] && [ -n "$raw" ] && [ -f "$raw" ] && jq -e '.files == {}' "$raw" >/dev/null 2>&1; then
+    printf 'evidence.sh: warning: mutation report %s mutated nothing: the --mutate ranges held no mutant (an emptied function body needs the range to reach its closing brace)\n' "$rel" | vetdd_printable >&2
+  fi
   [ -z "$raw" ] || rm -f -- "$raw"
   [ -z "$norm" ] || rm -f -- "$norm"
   if [ -n "$status" ]; then

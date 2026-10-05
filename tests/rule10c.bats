@@ -205,33 +205,50 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   grep -q 'mutation.json' "$rub"
 }
 
-@test "ts-kata pins Stryker and its vitest runner, with a config that keeps reports out of the tree" {
-  local kata="$VETDD_ROOT/fixtures/ts-kata"
+@test "ts-kata pins Stryker, runs it through the command runner with the slice's tests, and keeps reports out of the tree (#20)" {
+  local kata="$VETDD_ROOT/fixtures/ts-kata" cfg
   [ "$(jq -r '.devDependencies["@stryker-mutator/core"]' "$kata/package.json")" = 10.0.0 ]
-  [ "$(jq -r '.devDependencies["@stryker-mutator/vitest-runner"]' "$kata/package.json")" = 10.0.0 ]
-  [ "$(jq -r '.testRunner' "$kata/stryker.config.json")" = vitest ]
-  [ "$(jq -r '.reporters | index("html")' "$kata/stryker.config.json")" = null ]
-  jq -r '.jsonReporter.fileName' "$kata/stryker.config.json" | grep -q '^\.vetdd/reports/'
+  # The vitest runner reported killable mutants as Survived with vitest 5 (#20): not a dependency.
+  [ "$(jq -r '.devDependencies["@stryker-mutator/vitest-runner"] // "none"' "$kata/package.json")" = none ]
+  [ ! -e "$kata/stryker.config.json" ]
+  command -v node >/dev/null || skip "node not installed"
+  cfg="$(cd "$kata" && VETDD_MUTATION_TESTS='src/a.test.ts src/b.test.ts' node --input-type=module -e 'const c = (await import("./stryker.config.mjs")).default; console.log(JSON.stringify(c))')"
+  [ "$(printf '%s' "$cfg" | jq -r '.testRunner')" = command ]
+  [ "$(printf '%s' "$cfg" | jq -r '.coverageAnalysis')" = off ]
+  [ "$(printf '%s' "$cfg" | jq -r '.commandRunner.command')" = 'npx --no-install vitest run src/a.test.ts src/b.test.ts' ]
+  [ "$(printf '%s' "$cfg" | jq -r '.reporters | index("html")')" = null ]
+  printf '%s' "$cfg" | jq -r '.jsonReporter.fileName' | grep -q '^\.vetdd/reports/'
   grep -qx '.stryker-tmp/' "$kata/.gitignore"
 }
 
-@test "integration (VETDD_REAL_STRYKER=1): real Stryker on a line range of a ts-kata copy, judged by 10c" {
+@test "integration (VETDD_REAL_STRYKER=1): the fixed lastDayOfMonth, its mutants killed by the slice's test, judged OK by 10c (#20)" {
   [ "${VETDD_REAL_STRYKER:-}" = 1 ] || skip "set VETDD_REAL_STRYKER=1 to run the real Stryker"
   local kata="$VETDD_ROOT/fixtures/ts-kata"
   [ -x "$kata/node_modules/.bin/stryker" ] || skip "fixtures/ts-kata/node_modules has no Stryker (npm ci there)"
-  local K="$BATS_TEST_TMPDIR/kata"
-  mkdir -p "$K" && cp -R "$kata/package.json" "$kata/tsconfig.json" "$kata/stryker.config.json" "$kata/.gitignore" "$kata/src" "$K/"
+  local K="$BATS_TEST_TMPDIR/kata" first last
+  mkdir -p "$K" && cp -R "$kata/package.json" "$kata/tsconfig.json" "$kata/stryker.config.mjs" "$kata/.gitignore" "$kata/src" "$K/"
   ln -s "$kata/node_modules" "$K/node_modules"
   cd "$K" && git init -q && git add -A && git commit -q -m init
-  ev k1 before --oracle-version v1 --oracle-file src/dueDate.test.ts -- sh -c 'exit 1' >/dev/null 2>&1 || true
-  ev k1 after -- ./node_modules/.bin/vitest run src/dueDate.test.ts >/dev/null 2>&1
-  run ev k1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/stryker.json \
-    -- ./node_modules/.bin/stryker run --mutate 'src/dueDate.ts:85-95'
+  # KATA.md (a): the slice's test, red on the defect, then the calendar fix.
+  printf 'import { expect, it } from "vitest";\nimport { closingDate } from "./dueDate.js";\nit("February month-end", () => { expect(closingDate("2026-02-15", "end")).toBe("2026-02-28"); });\n' > src/feb.test.ts
+  git add src/feb.test.ts
+  ev k1 before --oracle-version v1 --oracle-file src/feb.test.ts -- ./node_modules/.bin/vitest run src/feb.test.ts >/dev/null 2>&1 || true
+  perl -0pi -e 's/  const probe = .*?\n  if \(probe\.month === month\) return 31;\n  return fromUtc\(Date\.UTC\(year, month - 1, 30\)\)\.day;/  return fromUtc(Date.UTC(year, month, 0)).day;/s' src/dueDate.ts
+  ev k1 after -- ./node_modules/.bin/vitest run src/feb.test.ts >/dev/null 2>&1
+  # The whole function, closing brace included: an emptied body is a mutant of the whole block.
+  first="$(grep -n '^function lastDayOfMonth' src/dueDate.ts | cut -d: -f1)"
+  last="$(awk -v f="$first" 'NR > f && /^}/ { print NR; exit }' src/dueDate.ts)"
+  VETDD_MUTATION_TESTS=src/feb.test.ts run ev k1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/stryker.json \
+    -- ./node_modules/.bin/stryker run stryker.config.mjs --mutate "src/dueDate.ts:$first-$last"
   [ "$(jq -r '.runs[-1].audit.report.status' .vetdd/evidence/k1/meta.json)" = ok ] || { echo "$output"; false; }
-  [ "$(jq -r '.runs[-1].audit.report.counts.total' .vetdd/evidence/k1/meta.json)" -gt 0 ]
-  [ -z "$(git status --porcelain --untracked-files=all | grep -v '^?? .vetdd/')" ]
+  [ "$(jq -r '.runs[-1].audit.report.counts.killed' .vetdd/evidence/k1/meta.json)" -ge 1 ]
+  [ "$(jq -r '.runs[-1].audit.report.counts.survived' .vetdd/evidence/k1/meta.json)" = 0 ]
+  # The emptied body is caught: the vitest runner reported it Survived (#20).
+  jq -e '.files[].mutants[] | select(.mutatorName == "BlockStatement") | .status == "Killed"' .vetdd/evidence/k1/runs/003-mutation.json >/dev/null
+  # Stryker left nothing in the tree: only the slice's own change is there.
+  [ -z "$(git status --porcelain --untracked-files=all | grep -v -e '^?? .vetdd/' -e ' src/dueDate.ts$' -e ' src/feb.test.ts$')" ]
   run check k1
-  [[ "$output" == *"10c: mutation run 3:"* ]]
+  [[ "$output" != *"10c"* ]] || { echo "$output"; false; }
 }
 
 # --- review round 1 ------------------------------------------------------------------------------
@@ -430,5 +447,18 @@ SH
 }
 
 @test "test mode limits the mutation run to the slice's own test files (Devin)" {
-  grep -q -- "--testFiles '<the slice's test files>'" "$SCRIPTS/../modes/test.md"
+  # Since #20 the command runner gets the slice's test files through VETDD_MUTATION_TESTS.
+  grep -q "VETDD_MUTATION_TESTS='<the slice's test files>'" "$SCRIPTS/../modes/test.md"
+}
+
+# --- #20 ------------------------------------------------------------------------------------------
+
+@test "test mode runs Stryker through the command runner with the slice's tests, and says why (#20)" {
+  local doc="$SCRIPTS/../modes/test.md" p
+  p="$(grep 'Then run the mutation audit' "$doc")"
+  [[ "$p" == *'"testRunner": "command"'* ]]
+  [[ "$p" == *'VETDD_MUTATION_TESTS'* ]]
+  [[ "$p" == *'reported killable mutants as'* ]]
+  [[ "$p" != *'--testFiles'* ]]
+  [[ "$p" == *'closing brace'* ]]
 }
