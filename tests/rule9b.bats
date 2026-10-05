@@ -520,5 +520,7 @@ recv() {
 }
 
 @test "modes/test.md says 9b compares within one oracle version and when 9c warns about a missing report (round 4 #2)" {
-  sed -n '/^## Per slice/,/^## /p' "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q 'oracle version'
+  # The paragraph that states rule 9b names the oracle version; the 9c one says when a missing report warns.
+  awk 'BEGIN{RS=""} /rule 9b fails/' "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q 'oracle version'
+  awk 'BEGIN{RS=""} /WARN \(9c/' "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q 'absent when another run of that command asked for one'
 }

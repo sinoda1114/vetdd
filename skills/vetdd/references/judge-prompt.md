@@ -46,7 +46,8 @@ Winner: the label with the strictly highest total; "tie" when two or more labels
 highest total; "none" when there is one label. An inconclusive label is never the winner:
 score what you could not observe as 0.
 Confidence: "high" when every score has a cited file, no disagreement was found, and either
-the totals differ by 2 or more or, with one label (a final verdict), the conditions apply; "low" when any score lacks a citation or any label is
+the totals differ by 2 or more or, with one label (a final verdict), `conditions_check` reports
+that the final evidence applies to every agreed condition (or the agreement named none); "low" when any score lacks a citation or any label is
 inconclusive; "mid" otherwise.
 
 eval_id: {{eval_id}}   run_id: {{run_id}}

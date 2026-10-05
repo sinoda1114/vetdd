@@ -12,7 +12,7 @@ Work in vertical slices: one test → the smallest change that passes it → nex
 
 2. **Write the test.** One test, one behavior, expected value from the agreed source. Check it against the five hollow shapes in `references/test-quality.md`. Give each slice its own test file where the project allows it: the slice's oracle is that file's hash, so a later slice that adds a test to a shared file changes the earlier slice's oracle, and check-evidence rule 8 then asks for a new version and a new red for it.
 
-   When the agreement names a criterion observed on another surface than the agreed unit seam (a CLI line, an HTTP response), give it its own slice: a verify script in verify mode when the project has one that can drive that case, otherwise a shell check that runs the surface and compares its output, recorded with `evidence.sh` like a test (its red through `calibrate.sh unfix`, its green as `after` and `integrated`).
+   When the agreement names a criterion observed on another surface than the agreed unit seam (a CLI line, an HTTP response), give it its own slice: a verify script in verify mode when the project has one that can drive that case, otherwise a shell check that runs the surface and compares its output, recorded with `evidence.sh` like a test (its red through `calibrate.sh unfix`, its green as `after` and `integrated`). The check lives in a file in the repository named with `--oracle-file` (`calibrate.sh` takes no inline script), and a verify script's runs take `--infra-exit 2`, so its "could not observe" is never recorded as red.
 
 3. **Record `before`.**
    ```

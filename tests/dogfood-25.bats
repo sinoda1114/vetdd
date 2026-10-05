@@ -53,7 +53,8 @@ section() { awk -v h="$1" '$0 ~ "^## " { on = ($0 ~ h) } on' "$TEST_MD"; }
 
 @test "no paragraph of test.md runs past 250 words" {
   local longest
-  longest="$(awk 'BEGIN{RS=""} { n = split($0, w, /[ \n]+/); if (n > m) m = n } END { print m }' "$TEST_MD")"
+  # Each list item counts on its own (a list without blank lines is one awk paragraph); words are non-empty.
+  longest="$(awk 'BEGIN{RS=""} { k = split($0, items, /\n- /); for (i = 1; i <= k; i++) { n = 0; c = split(items[i], w, /[ \n]+/); for (j = 1; j <= c; j++) if (w[j] != "") n++; if (n > m) m = n } } END { print m }' "$TEST_MD")"
   [ "$longest" -le 250 ] || { echo "longest paragraph: $longest words"; false; }
 }
 
@@ -72,4 +73,35 @@ section() { awk -v h="$1" '$0 ~ "^## " { on = ($0 ~ h) } on' "$TEST_MD"; }
   [[ "$output" == *"actual line 1:   closing: 2026-03-31"* ]]
   run "$V/verify-due.sh" --date 15-02-2026
   [ "$status" -eq 2 ]
+}
+
+# --- review round 1 ------------------------------------------------------------------------------
+
+@test "verify mode points at test mode's Mutation section for the Stryker reporters (V1)" {
+  local verify="$BATS_TEST_DIRNAME/../skills/vetdd/modes/verify.md"
+  ! grep -q 'reporters of test mode step 5' "$verify" || false
+  grep -q 'reporters of test mode "Audits" › "Mutation"' "$verify"
+}
+
+@test "verify-due.sh --date needs both expectations, and an app usage error is exit 2, not 1 (V2)" {
+  run "$V/verify-due.sh" --date 2026-02-15
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--expect"* ]]
+  [ -x "$BATS_TEST_DIRNAME/../fixtures/ts-kata/node_modules/.bin/tsx" ] || skip "fixtures/ts-kata/node_modules is missing (npm ci there)"
+  VETDD_ARTIFACTS="$BATS_TEST_TMPDIR/a" run "$V/verify-due.sh" --date 2026-02-30 --expect 'closing: x' --expect-due 'due: y'
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+}
+
+@test "the judge prompt says which conditions make a single-label verdict high (conditions_check)" {
+  grep -A2 '^Confidence:' "$JUDGE_PROMPT" | grep -q 'conditions_check'
+}
+
+@test "a check on another surface lives in a file named with --oracle-file, and a verify script takes --infra-exit 2" {
+  local p; p="$(section '^## Per slice' | grep 'another surface')"
+  [[ "$p" == *"--oracle-file"* ]]
+  [[ "$p" == *"--infra-exit 2"* ]]
+}
+
+@test "the verify-ts-kata skill documents --date" {
+  grep -q -- '--date' "$BATS_TEST_DIRNAME/../fixtures/ts-kata/.claude/skills/verify-ts-kata/SKILL.md"
 }

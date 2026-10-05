@@ -10,7 +10,7 @@ unset CDPATH  # cd prints the directory it found through CDPATH, which breaks $(
 
 expect="closing: 2026-01-31"
 expect_due="due: 2026-03-02"
-date="2026-01-10"
+date="2026-01-10"; expect_set=0; expect_due_set=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --date)
@@ -19,12 +19,16 @@ while [ $# -gt 0 ]; do
       shift 2 ;;
     --expect|--expect-due)
       [ $# -ge 2 ] || { printf '%s: %s needs a value\n' "${0##*/}" "$1" >&2; exit 2; }
-      if [ "$1" = --expect ]; then expect="$2"; else expect_due="$2"; fi
+      if [ "$1" = --expect ]; then expect="$2"; expect_set=1; else expect_due="$2"; expect_due_set=1; fi
       shift 2 ;;
     *) printf 'verify-due.sh: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
 done
 
+# The defaults are for 2026-01-10: another date without both expectations would compare against them.
+if [ "$date" != 2026-01-10 ] && { [ "$expect_set" -eq 0 ] || [ "$expect_due_set" -eq 0 ]; }; then
+  printf '%s: --date %s needs --expect and --expect-due as well\n' "${0##*/}" "$date" >&2; exit 2
+fi
 can_drive || exit 2
 d="$(artifact_dir due)" || exit 2
 drive "$d" due "$date" || exit 2
@@ -40,5 +44,7 @@ printf 'expected line 1: %s\nactual line 1:   %s\n' "$expect" "$line1"
 printf 'expected line 2: %s\nactual line 2:   %s\n' "$expect_due" "$line2"
 printf 'expected lines:  2\nactual lines:    %s\n' "$count"
 printf 'expected exit:   0\nactual exit:     %s\n' "$code"
+# The app's own usage error (exit 2: an impossible date, a bad option) is not an observation of the feature.
+[ "$code" = 2 ] && { printf 'could not observe: the app reported a usage error (exit 2)\n'; exit 2; }
 [ "$code" = 0 ] && [ "$count" -eq 2 ] && [ "$line1" = "$expect" ] && [ "$line2" = "$expect_due" ] && exit 0
 exit 1
