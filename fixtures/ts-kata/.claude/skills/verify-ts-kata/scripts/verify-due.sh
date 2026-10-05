@@ -16,6 +16,9 @@ while [ $# -gt 0 ]; do
     --date)
       [ $# -ge 2 ] || { printf '%s: --date needs a value\n' "${0##*/}" >&2; exit 2; }
       case "$2" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) date="$2" ;; *) printf '%s: --date takes YYYY-MM-DD\n' "${0##*/}" >&2; exit 2 ;; esac
+      # On the calendar: the round trip through date(1) keeps it (BSD normalizes 02-30 to 03-02; GNU refuses it).
+      norm="$(date -j -f %Y-%m-%d "$2" +%Y-%m-%d 2>/dev/null || date -d "$2" +%Y-%m-%d 2>/dev/null)"
+      [ "$norm" = "$2" ] || { printf '%s: --date %s is not a calendar date\n' "${0##*/}" "$2" >&2; exit 2; }
       shift 2 ;;
     --expect|--expect-due)
       [ $# -ge 2 ] || { printf '%s: %s needs a value\n' "${0##*/}" "$1" >&2; exit 2; }
@@ -44,7 +47,5 @@ printf 'expected line 1: %s\nactual line 1:   %s\n' "$expect" "$line1"
 printf 'expected line 2: %s\nactual line 2:   %s\n' "$expect_due" "$line2"
 printf 'expected lines:  2\nactual lines:    %s\n' "$count"
 printf 'expected exit:   0\nactual exit:     %s\n' "$code"
-# The app's own usage error (exit 2: an impossible date, a bad option) is not an observation of the feature.
-[ "$code" = 2 ] && { printf 'could not observe: the app reported a usage error (exit 2)\n'; exit 2; }
 [ "$code" = 0 ] && [ "$count" -eq 2 ] && [ "$line1" = "$expect" ] && [ "$line2" = "$expect_due" ] && exit 0
 exit 1

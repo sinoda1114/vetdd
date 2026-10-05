@@ -12,7 +12,7 @@ V="$BATS_TEST_DIRNAME/../fixtures/ts-kata/.claude/skills/verify-ts-kata/scripts"
 section() { awk -v h="$1" '$0 ~ "^## " { on = ($0 ~ h) } on' "$TEST_MD"; }
 
 @test "the mutation audit runs in Close, after the integrated runs and before check-evidence, not in step 5 (rule 10c)" {
-  ! section '^## Per slice' | grep -q -- '--audit mutation'
+  ! section '^## Per slice' | grep -q -- '--audit mutation' || false
   section '^## Close' | grep -q -- '--audit mutation'
   # In Close, the audit step comes after the integrated step and before check-evidence.
   local close; close="$(section '^## Close')"
@@ -27,7 +27,7 @@ section() { awk -v h="$1" '$0 ~ "^## " { on = ($0 ~ h) } on' "$TEST_MD"; }
   local r; r="$(section 'refactor')"
   [[ "$r" == *"Skip it"* ]]
   [[ "$r" == *"Attention"* ]]
-  ! grep -q '^Refactoring is not part of the loop, and the author does not do it (both source projects observed that authors skip it or drift). Spawn a refactorer:$' "$TEST_MD"
+  ! grep -q '^Refactoring is not part of the loop, and the author does not do it (both source projects observed that authors skip it or drift). Spawn a refactorer:$' "$TEST_MD" || false
 }
 
 @test "an acceptance criterion on another surface than the agreed unit seam gets its own slice" {
@@ -104,4 +104,22 @@ section() { awk -v h="$1" '$0 ~ "^## " { on = ($0 ~ h) } on' "$TEST_MD"; }
 
 @test "the verify-ts-kata skill documents --date" {
   grep -q -- '--date' "$BATS_TEST_DIRNAME/../fixtures/ts-kata/.claude/skills/verify-ts-kata/SKILL.md"
+}
+
+# --- review round 2 ------------------------------------------------------------------------------
+
+@test "verify-due.sh checks the date is on the calendar itself, before the app runs (W1)" {
+  run "$V/verify-due.sh" --date 2026-02-30 --expect 'closing: x' --expect-due 'due: y'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not a calendar date"* ]] || { echo "$output"; false; }
+}
+
+@test "an app exit 2 on a valid date is the product failing, observed and not met (exit 1), never 'could not observe' (W1)" {
+  ! grep -q "could not observe: the app reported a usage error" "$V/verify-due.sh" || false
+}
+
+@test "the Stryker config and the other-surface slice point at the current mutation steps" {
+  ! grep -q 'test.md step 5' "$BATS_TEST_DIRNAME/../fixtures/ts-kata/stryker.config.mjs" || false
+  section '^## Per slice' | grep 'another surface' | grep -q 'verify.md'
+  grep -A3 '^Confidence:' "$JUDGE_PROMPT" | grep -q 'conditions_check.applies'
 }

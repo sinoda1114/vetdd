@@ -1,4 +1,4 @@
-// StrykerJS for vetdd's mutation audit (modes/test.md step 5).
+// StrykerJS for vetdd's mutation audit (modes/test.md "Audits" › "Mutation", run in Close step 2).
 import { execFileSync } from "node:child_process";
 
 // The command runner runs one command per mutant and reads only its exit code (0 = survived).
@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 // would keep the quotes, so this config is POSIX only), so ( ) $ [ ] and spaces stay part of the name.
 const tests = (process.env.VETDD_MUTATION_TESTS ?? "").split("\n").filter((p) => p !== "");
 if (tests.length === 0) {
-  throw new Error("set VETDD_MUTATION_TESTS to the slice's test files, one per line (vetdd test mode, step 5)");
+  throw new Error("set VETDD_MUTATION_TESTS to the slice's test files, one per line (vetdd test mode, Audits › Mutation)");
 }
 if (process.platform === "win32") {
   throw new Error("this config single-quotes test paths for POSIX sh; cmd.exe would keep the quotes (vetdd #21)");
