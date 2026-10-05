@@ -86,7 +86,8 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 @test "a report that is not a usable Stryker report is invalid and nothing of it is kept" {
   local f
-  for f in '"x"' '.files = {}' 'del(.files)' '.schemaVersion = "2.0"' 'del(.schemaVersion)' \
+  # .files = {} is "empty" since #21 (its own test).
+  for f in '"x"' 'del(.files)' '.schemaVersion = "2.0"' 'del(.schemaVersion)' \
            '.files["src/dueDate.ts"].mutants[0].status = "Pending"' \
            '.files["src/dueDate.ts"].mutants[0].status = "Exploded"' \
            '.files["src/dueDate.ts"].source = 5' '.files["src/dueDate.ts"].mutants = {}' \
@@ -154,7 +155,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 @test "a mutation run is not a red, never trips 10a, and does not ask the slice for an undefined-imports audit" {
   record_good_slice s1
   # Every mutant killed, so rule 10c (PR7b) has nothing to say either.
-  local K; K="$(report '.files["src/dueDate.ts"].mutants |= map(.status = "Killed")')"
+  local K; K="$(report '.files["src/dueDate.ts"].mutants |= map(.status = "Killed") | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run x"')"
   REPORT="$K" EXIT=1 ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1 || true
   REPORT="$K" EXIT=0 ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1
   run check s1
@@ -237,7 +238,8 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   local c=.vetdd/evidence/s1/runs/001-mutation.json
   [ "$(jq -c 'keys' "$c")" = '["config","files","schemaVersion"]' ]
   # config.command (#20): the command runner's command, so the judge sees which tests ran.
-  [ "$(jq -c '.config | keys' "$c")" = '["command","mutate"]' ]
+  # config.testRunner (#21): which Stryker runner produced the report.
+  [ "$(jq -c '.config | keys' "$c")" = '["command","mutate","testRunner"]' ]
   [ "$(jq -c '[.files[].mutants[] | keys] | unique' "$c")" = '[["id","location","mutatorName","replacement","status"]]' ]
   ! grep -q 'ignore the survivors\|secret-plugin' "$c"
   [ "$(mq s1 '.runs[-1].audit.report.sha256')" = "$(sha256_of "$c")" ]
@@ -264,7 +266,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 @test "an audit mark of an unknown kind on a run opts the slice in to rule 10 (fails closed)" {
   record_good_slice s1
-  REPORT="$(report '.files["src/dueDate.ts"].mutants |= map(.status = "Killed")')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1
+  REPORT="$(report '.files["src/dueDate.ts"].mutants |= map(.status = "Killed") | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run x"')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1
   run check s1
   [ "$output" = "s1: OK" ]
   tamper s1 '.runs[-1].audit.kind = "stryker"'
@@ -313,8 +315,41 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 # --- #20 ------------------------------------------------------------------------------------------
 
-@test "a report with no file mutated says the ranges held no mutant (#20)" {
+@test "a report with no file mutated is recorded empty, and says the ranges held no mutant (#20, #21)" {
   REPORT="$(report '.files = {}')" run mut
-  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ]
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = empty ]
+  run validate_schema "$REPO/.vetdd/evidence/s1/meta.json"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  REPORT="$(report '.files = {}')" run mut
   [[ "$output" == *"mutated nothing"* ]] || { echo "$output"; false; }
+}
+
+# --- #21 ------------------------------------------------------------------------------------------
+
+@test "a command-runner report must carry a non-empty command of at most 4096 printable characters (#21)" {
+  local f
+  for f in '.config.testRunner = "command" | del(.config.commandRunner)' \
+           '.config.testRunner = "command" | .config.commandRunner.command = null' \
+           '.config.testRunner = "command" | .config.commandRunner.command = ""' \
+           '.config.testRunner = "command" | .config.commandRunner.command = ("x" * 4097)'; do
+    rm -rf .vetdd
+    REPORT="$(report "$f")" run mut
+    [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "accepted: $f"; false; }
+  done
+  rm -rf .vetdd
+  REPORT="$(report '.config.testRunner = "command" | .config.commandRunner.command = ("x" * 4096)')" run mut
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ]
+}
+
+@test "the copy keeps the test runner Stryker used (#21)" {
+  REPORT="$(report)" mut >/dev/null 2>&1
+  [ "$(jq -r '.config.testRunner' .vetdd/evidence/s1/runs/001-mutation.json)" = vitest ]
+}
+
+@test "the schema takes empty as a report status, with nothing but format, path, and status (#21)" {
+  REPORT="$(report '.files = {}')" mut >/dev/null 2>&1
+  cp "$REPO/.vetdd/evidence/s1/meta.json" "$BATS_TEST_TMPDIR/ok.json"
+  jq '.runs[0].audit.report.counts = {}' "$BATS_TEST_TMPDIR/ok.json" > "$BATS_TEST_TMPDIR/bad.json"
+  run validate_schema "$BATS_TEST_TMPDIR/bad.json"
+  [ "$status" -ne 0 ]
 }
