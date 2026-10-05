@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Drive: `due 2026-01-10`; expect exit 0 and exactly two stdout lines.
-# Usage: verify-due.sh [--expect <line 1>] [--expect-due <line 2>]
-#   defaults "closing: 2026-01-31" (January has 31 days) and "due: 2026-03-02" (31 + 30 days)
+# Drive: `due <date>` (default 2026-01-10); expect exit 0 and exactly two stdout lines.
+# Usage: verify-due.sh [--date <YYYY-MM-DD>] [--expect <line 1>] [--expect-due <line 2>]
+#   defaults "closing: 2026-01-31" (January has 31 days) and "due: 2026-03-02" (31 + 30 days);
+#   with --date, give both expectations too (the defaults are for 2026-01-10)
 # Exit 0 observed and met, 1 observed and not met, 2 could not observe or usage error.
 set -u
 unset CDPATH  # cd prints the directory it found through CDPATH, which breaks $(cd ... && pwd)
@@ -9,8 +10,13 @@ unset CDPATH  # cd prints the directory it found through CDPATH, which breaks $(
 
 expect="closing: 2026-01-31"
 expect_due="due: 2026-03-02"
+date="2026-01-10"
 while [ $# -gt 0 ]; do
   case "$1" in
+    --date)
+      [ $# -ge 2 ] || { printf '%s: --date needs a value\n' "${0##*/}" >&2; exit 2; }
+      case "$2" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) date="$2" ;; *) printf '%s: --date takes YYYY-MM-DD\n' "${0##*/}" >&2; exit 2 ;; esac
+      shift 2 ;;
     --expect|--expect-due)
       [ $# -ge 2 ] || { printf '%s: %s needs a value\n' "${0##*/}" "$1" >&2; exit 2; }
       if [ "$1" = --expect ]; then expect="$2"; else expect_due="$2"; fi
@@ -21,7 +27,7 @@ done
 
 can_drive || exit 2
 d="$(artifact_dir due)" || exit 2
-drive "$d" due 2026-01-10 || exit 2
+drive "$d" due "$date" || exit 2
 code="$(cat "$d/exit_code.txt")"
 count=0; line1=""; line2=""
 while IFS= read -r line || [ -n "$line" ]; do

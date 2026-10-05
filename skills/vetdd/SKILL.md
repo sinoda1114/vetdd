@@ -48,11 +48,13 @@ Read `parallel/select.md` and apply its table. Most tasks are `single`. Before a
 
 ## 4. Run the mode
 
+In a project vetdd has not run in, run `"$VETDD/scripts/setup-project.sh"` once from its root first: it creates `.vetdd/`, adds it to `.gitignore`, and installs the pre-commit hook (it is idempotent, and keeps a foreign hook as `pre-commit.before-vetdd`).
+
 Read the mode file chosen in step 1 and follow it. Every oracle run goes through `"$VETDD/scripts/evidence.sh"`; never run the oracle bare when its result matters. Every subagent gets a brief built from `references/subagent-brief.md`, with a model from `"$VETDD/scripts/models.sh" <role>`, and with `$VETDD` written out as an absolute path (a subagent has none of your context).
 
 ## 5. Close
 
-1. Record every slice as `integrated` on the final tree (the mode file says how), then run `"$VETDD/scripts/check-evidence.sh" <slice-ids>` on that tree. Quote its output. If it fails, you are not done: fix the cause, never the evidence.
+1. Record every slice as `integrated` on the final tree and run the audits the mode file puts after it (test mode: the mutation audit), then run `"$VETDD/scripts/check-evidence.sh" <slice-ids>` on that tree. Quote its output. If it fails, you are not done: fix the cause, never the evidence.
 2. Obtain the separate judge's verdict when the mode calls for one (test mode: on the integrated diff; verify mode: on the evidence; eval mode: always).
 3. Write the reply in the format of `references/reply-format.md`. Every claim is labeled Measured, inferred, or guess.
 4. If progress became impossible (judge unavailable, environment unreachable, oracle `inconclusive` past the retry cap), end in `blocked` or `inconclusive` with the evidence so far. Never report done without evidence.

@@ -520,5 +520,5 @@ recv() {
 }
 
 @test "modes/test.md says 9b compares within one oracle version and when 9c warns about a missing report (round 4 #2)" {
-  sed -n 21p "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q 'oracle version'
+  sed -n '/^## Per slice/,/^## /p' "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q 'oracle version'
 }

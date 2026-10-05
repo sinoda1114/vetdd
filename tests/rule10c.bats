@@ -7,6 +7,9 @@
 
 load test_helper
 
+# mut_section <test.md>: the "### Mutation" section of test mode on one line (#25 split it into paragraphs).
+mut_section() { sed -n '/^### Mutation/,/^## /p' "$1" | tr '\n' ' '; }
+
 FIX_STRYKER="$BATS_TEST_DIRNAME/fixtures/reports/stryker10-range.json"
 
 setup() {
@@ -456,7 +459,7 @@ SH
 
 @test "test mode runs Stryker through the command runner with the slice's tests, and says why (#20)" {
   local doc="$SCRIPTS/../modes/test.md" p
-  p="$(grep 'Then run the mutation audit' "$doc")"
+  p="$(mut_section "$doc")"
   [[ "$p" == *'"testRunner": "command"'* ]]
   [[ "$p" == *'VETDD_MUTATION_TESTS'* ]]
   [[ "$p" == *'reported killable mutants as'* ]]
@@ -525,7 +528,7 @@ kata_cfg() {
 }
 
 @test "the docs: one path per line, quoted by the config, a refusal when unset, and vitest's file filter is a substring match (Q2, Q3)" {
-  local p; p="$(grep 'Then run the mutation audit' "$SCRIPTS/../modes/test.md")"
+  local p; p="$(mut_section "$SCRIPTS/../modes/test.md")"
   [[ "$p" != *'+ process.env.VETDD_MUTATION_TESTS'* ]]
   [[ "$p" == *'one per line'* ]]
   [[ "$p" == *'substring'* ]]
@@ -569,7 +572,7 @@ kata_cfg() {
   run kata_cfg ' src/a b.test.ts'
   [ "$output" = "npx --no-install vitest run ' src/a b.test.ts'" ] || { echo "$output"; false; }
   grep -q 'POSIX' "$VETDD_ROOT/fixtures/ts-kata/stryker.config.mjs"
-  grep 'Then run the mutation audit' "$SCRIPTS/../modes/test.md" | grep -q 'POSIX'
+  mut_section "$SCRIPTS/../modes/test.md" | grep -q 'POSIX'
 }
 
 @test "the copy's command is described in evidence.sh, the schema, and the rubric, which asks the judge to check it" {
@@ -653,7 +656,7 @@ kata_cfg() {
 }
 
 @test "test mode says Windows and empty once each (S5)" {
-  local p; p="$(grep 'Then run the mutation audit' "$SCRIPTS/../modes/test.md")"
+  local p; p="$(mut_section "$SCRIPTS/../modes/test.md")"
   [ "$(printf '%s' "$p" | grep -o 'cmd.exe' | wc -l | tr -d ' ')" = 1 ]
   [ "$(printf '%s' "$p" | grep -o 'recorded `empty`' | wc -l | tr -d ' ')" = 1 ]
 }
