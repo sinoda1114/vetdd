@@ -20,7 +20,7 @@ candidates/c1/
                                  logs stay on the machine
   evidence/<slice>/runs/<seq>-mutation.json   the copy of the mutation run that check-evidence judged
                                  (the latest after the final green run): config.mutate,
-                                 config.command (the test command run against each mutant, when
+                                 config.testRunner, config.command (the test command run against each mutant, when
                                  the command runner ran), and each mutated file's full source and
                                  mutants
 ```

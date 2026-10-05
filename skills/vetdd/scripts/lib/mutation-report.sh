@@ -42,7 +42,8 @@ VETDD_STRYKER_JSON='
 
 # jq: the copy kept for the judge: the line ranges asked for (config.mutate), the command the command
 # runner ran against each mutant (config.command: which tests faced them; kept only when testRunner is
-# "command", since Stryker writes a default commandRunner.command into every report), and per file its source and
+# "command", since Stryker writes a default commandRunner.command into every report), the runner itself
+# (config.testRunner), and per file its source and
 # each mutant's id, mutator, replacement, status, and location. Any other field of the raw report (the
 # rest of the config, free text a tool or a person added) is left out.
 VETDD_STRYKER_COPY='

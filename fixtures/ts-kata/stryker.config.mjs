@@ -1,5 +1,5 @@
 // StrykerJS for vetdd's mutation audit (modes/test.md step 5).
-import { globSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 // The command runner runs one command per mutant and reads only its exit code (0 = survived).
 // The vitest runner is not used: with vitest 5 it reported killable mutants as Survived (vetdd #20).
@@ -18,18 +18,19 @@ const option = tests.find((p) => p.startsWith("-"));
 if (option !== undefined) {
   throw new Error(`a test path in VETDD_MUTATION_TESTS starts with - and would be read as an option: ${JSON.stringify(option)}`);
 }
-// vitest selects every test file whose path contains a given filter: refuse a filter that would also
-// select a test file other than the one named, so only the slice's own tests face the mutants.
-const testFiles = globSync("**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}", {
-  exclude: (p) => p.includes("node_modules") || p.includes(".stryker-tmp"),
-});
+// vitest selects every test file whose path contains a filter (relative, ignoring letter case, by the
+// project's own include): ask vitest itself which files each path selects, and refuse a path that does
+// not select exactly one, so only the slice's own tests face the mutants.
 for (const p of tests) {
-  const selected = testFiles.filter((f) => f.includes(p.replace(/^\.\//, "")));
-  if (selected.length === 0) {
-    throw new Error(`VETDD_MUTATION_TESTS: ${JSON.stringify(p)} selects no test file`);
+  let listed;
+  try {
+    listed = execFileSync("npx", ["--no-install", "vitest", "list", "--filesOnly", p], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    throw new Error(`VETDD_MUTATION_TESTS: could not list the test files ${JSON.stringify(p)} selects (vitest list failed): ${e.message}`);
   }
-  if (selected.length > 1) {
-    throw new Error(`VETDD_MUTATION_TESTS: ${JSON.stringify(p)} also selects ${JSON.stringify(selected.slice(1))} besides ${JSON.stringify(selected[0])}; name the slice's test file so no other path contains it`);
+  const selected = listed.split("\n").filter((l) => l.trim() !== "");
+  if (selected.length !== 1) {
+    throw new Error(`VETDD_MUTATION_TESTS: ${JSON.stringify(p)} selects ${selected.length} test files (${JSON.stringify(selected)}); name the slice's test file so it selects exactly one`);
   }
 }
 const quote = (p) => `'${p.replaceAll("'", `'\\''`)}'`;

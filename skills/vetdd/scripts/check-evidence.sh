@@ -551,7 +551,10 @@ check_mutation() {
     else
       # The command runner is the one known to judge vitest 5 correctly (#20): any other runner is a warning.
       tr="$(jq -r '.config.testRunner // "" | if type == "string" then . else "?" end' "$root/$rel" 2>/dev/null)" || tr="?"
-      if [ -n "$tr" ] && [ "$tr" != command ]; then
+      if [ -z "$tr" ] && jq -e '(.config.command // null) == null' "$root/$rel" >/dev/null 2>&1; then
+        # A copy from before testRunner was kept, with no command: not the command runner, or unknown.
+        printf '%s\n' "10c: mutation run $seq does not say which Stryker runner it used (a copy from before vetdd #21, with no command), so it may be the vitest runner that reported killable mutants as Survived (vetdd #20); run the mutation audit again" >> "$warn_file"
+      elif [ -n "$tr" ] && [ "$tr" != command ]; then
         printf '%s\n' "10c: mutation run $seq ran Stryker's $tr runner, not the command runner; Stryker's vitest runner reported killable mutants as Survived with vitest 5 (vetdd #20), so read its survivors before trusting them" >> "$warn_file"
       fi
     fi
