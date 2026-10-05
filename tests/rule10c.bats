@@ -212,7 +212,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   # The vitest runner reported killable mutants as Survived with vitest 5 (#20): not a dependency.
   [ "$(jq -r '.devDependencies["@stryker-mutator/vitest-runner"] // "none"' "$kata/package.json")" = none ]
   [ ! -e "$kata/stryker.config.json" ]
-  command -v node >/dev/null || skip "node not installed"
+  need_kata_vitest
   cfg="$(cd "$kata" && VETDD_MUTATION_TESTS=$'src/dueDate.test.ts\nsrc/invoice.test.ts' node --input-type=module -e 'const c = (await import("./stryker.config.mjs")).default; console.log(JSON.stringify(c))')"
   [ "$(printf '%s' "$cfg" | jq -r '.testRunner')" = command ]
   [ "$(printf '%s' "$cfg" | jq -r '.coverageAnalysis')" = off ]
@@ -469,10 +469,16 @@ SH
 # kata_cfg <VETDD_MUTATION_TESTS value or "-unset">: the command the ts-kata config builds, or its error,
 # evaluated in a scratch project that holds the ts-kata config, its node_modules, and each named test
 # file (with one test, so vitest lists it), so the paths a test makes up exist.
+# need_kata_vitest: skip a test that reaches vitest list when ts-kata's dependencies are not installed
+# (a clean checkout, CI); the checks the config makes before vitest list run without them.
+need_kata_vitest() {
+  command -v node >/dev/null || skip "node not installed"
+  [ -x "$VETDD_ROOT/fixtures/ts-kata/node_modules/.bin/vitest" ] || skip "fixtures/ts-kata/node_modules is missing (npm ci there)"
+}
 kata_cfg() {
   local kata="$VETDD_ROOT/fixtures/ts-kata" P="$BATS_TEST_TMPDIR/cfgproj" f
-  [ -x "$kata/node_modules/.bin/vitest" ] || skip "fixtures/ts-kata/node_modules is missing (npm ci there)"
-  rm -rf "$P"; mkdir -p "$P" && cp "$kata/stryker.config.mjs" "$kata/package.json" "$P/" && ln -s "$kata/node_modules" "$P/node_modules"
+  rm -rf "$P"; mkdir -p "$P" && cp "$kata/stryker.config.mjs" "$kata/package.json" "$P/"
+  [ ! -d "$kata/node_modules" ] || ln -s "$kata/node_modules" "$P/node_modules"
   if [ "$1" != -unset ]; then
     while IFS= read -r f; do
       case "$f" in ''|-*) continue ;; esac
@@ -488,7 +494,7 @@ kata_cfg() {
 }
 
 @test "each test path is single-quoted for the shell, so ( ) \$ [ ] and quotes stay part of the name (Q1)" {
-  command -v node >/dev/null || skip "node not installed"
+  need_kata_vitest
   run kata_cfg $'app/(auth)/login.test.ts\nroutes/$id.test.ts\nsrc/[id].test.ts\nsrc/it\'s.test.ts'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$output" = "npx --no-install vitest run 'app/(auth)/login.test.ts' 'routes/\$id.test.ts' 'src/[id].test.ts' 'src/it'\\''s.test.ts'" ] || { echo "$output"; false; }
@@ -559,6 +565,7 @@ kata_cfg() {
   run kata_cfg $'-t\nsrc/a.test.ts'
   [ "$status" -ne 0 ]
   [[ "$output" == *"starts with -"* ]]
+  need_kata_vitest
   run kata_cfg ' src/a b.test.ts'
   [ "$output" = "npx --no-install vitest run ' src/a b.test.ts'" ] || { echo "$output"; false; }
   grep -q 'POSIX' "$VETDD_ROOT/fixtures/ts-kata/stryker.config.mjs"
@@ -587,7 +594,7 @@ kata_cfg() {
 }
 
 @test "the ts-kata config refuses a test path that is a substring of another test file's path (#21)" {
-  command -v node >/dev/null || skip "node not installed"
+  need_kata_vitest
   local kata="$VETDD_ROOT/fixtures/ts-kata"
   run sh -c "cd '$kata' && VETDD_MUTATION_TESTS=dueDate.test.ts node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -612,7 +619,7 @@ kata_cfg() {
 # --- #21 review round 1 ---------------------------------------------------------------------------
 
 @test "the config asks vitest which files a path selects: a match in another letter case is refused (S1)" {
-  command -v node >/dev/null || skip "node not installed"
+  need_kata_vitest
   # vitest matches case-insensitively: user.test.ts also selects src/adminUser.test.ts.
   KATA_CFG_EXTRA='src/adminUser.test.ts' run kata_cfg 'src/user.test.ts'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -649,4 +656,24 @@ kata_cfg() {
   local p; p="$(grep 'Then run the mutation audit' "$SCRIPTS/../modes/test.md")"
   [ "$(printf '%s' "$p" | grep -o 'cmd.exe' | wc -l | tr -d ' ')" = 1 ]
   [ "$(printf '%s' "$p" | grep -o 'recorded `empty`' | wc -l | tr -d ' ')" = 1 ]
+}
+
+# --- #21 review round 2 ---------------------------------------------------------------------------
+
+@test "a sandbox an interrupted Stryker left is not counted as a second test file (#21 round 2)" {
+  need_kata_vitest
+  KATA_CFG_EXTRA='.stryker-tmp/sandbox-x/src/a.test.ts' run kata_cfg 'src/a.test.ts'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "the checks before vitest list run without ts-kata's dependencies: unset, empty, and a leading - are refused (T1)" {
+  command -v node >/dev/null || skip "node not installed"
+  local kata="$VETDD_ROOT/fixtures/ts-kata" P="$BATS_TEST_TMPDIR/bare"
+  mkdir -p "$P" && cp "$kata/stryker.config.mjs" "$P/"
+  run sh -c "cd '$P' && VETDD_MUTATION_TESTS='-x' node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"starts with -"* ]]
+  run sh -c "cd '$P' && VETDD_MUTATION_TESTS= node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"set VETDD_MUTATION_TESTS"* ]]
 }

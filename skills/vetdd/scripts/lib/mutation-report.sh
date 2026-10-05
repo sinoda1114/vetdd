@@ -105,7 +105,11 @@ vetdd_mutation_report_import() {
     fi
   fi
   # Stryker writes "files": {} when the --mutate ranges held no mutant at all: recorded as empty, not invalid.
-  if [ "$status" = invalid ] && [ -n "$raw" ] && [ -f "$raw" ] && jq -e '.files == {} and (.schemaVersion | type) == "string"' "$raw" >/dev/null 2>&1; then
+  # Only a report that passes every other check: one object, schema 1.x, an absolute projectRoot, a command
+  # for the command runner (the same filter, run with a placeholder file in place of the empty files).
+  if [ "$status" = invalid ] && [ -n "$raw" ] && [ -f "$raw" ] \
+     && jq -e -s 'length == 1 and (.[0] | type) == "object" and .[0].files == {}' "$raw" >/dev/null 2>&1 \
+     && jq '.files = {"placeholder.ts": {"source": "", "mutants": []}}' "$raw" 2>/dev/null | jq -e "$VETDD_STRYKER_JSON" >/dev/null 2>&1; then
     status=empty
     printf 'evidence.sh: warning: mutation report %s mutated nothing: the --mutate ranges held no mutant (an emptied function body needs the range to reach its closing brace)\n' "$rel" | vetdd_printable >&2
   fi

@@ -24,11 +24,20 @@ if (option !== undefined) {
 for (const p of tests) {
   let listed;
   try {
-    listed = execFileSync("npx", ["--no-install", "vitest", "list", "--filesOnly", p], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    // The filter goes before the flags: --json takes an optional value and would read a path after it
+    // as the file to write. With nothing after it, the list goes to standard output.
+    listed = execFileSync("npx", ["--no-install", "vitest", "list", p, "--filesOnly", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   } catch (e) {
     throw new Error(`VETDD_MUTATION_TESTS: could not list the test files ${JSON.stringify(p)} selects (vitest list failed): ${e.message}`);
   }
-  const selected = listed.split("\n").filter((l) => l.trim() !== "");
+  let files;
+  try {
+    files = JSON.parse(listed).map((t) => t.file);
+  } catch (e) {
+    throw new Error(`VETDD_MUTATION_TESTS: could not read the list of test files ${JSON.stringify(p)} selects: ${e.message}`);
+  }
+  // One file once, wherever several projects list it; a sandbox an interrupted Stryker left is not the project.
+  const selected = [...new Set(files)].filter((f) => !f.split(/[\\/]/).includes(".stryker-tmp"));
   if (selected.length !== 1) {
     throw new Error(`VETDD_MUTATION_TESTS: ${JSON.stringify(p)} selects ${selected.length} test files (${JSON.stringify(selected)}); name the slice's test file so it selects exactly one`);
   }

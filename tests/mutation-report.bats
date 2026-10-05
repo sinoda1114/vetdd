@@ -353,3 +353,17 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   run validate_schema "$BATS_TEST_TMPDIR/bad.json"
   [ "$status" -ne 0 ]
 }
+
+@test "a report with no file is empty only when it passes every other check (#21 round 2)" {
+  local f
+  for f in '.files = {} | .schemaVersion = "2.0"' '.files = {} | .projectRoot = "src"' \
+           '.files = {} | .config.testRunner = "command" | del(.config.commandRunner)'; do
+    rm -rf .vetdd
+    REPORT="$(report "$f")" run mut
+    [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "empty: $f"; false; }
+  done
+  rm -rf .vetdd
+  printf '%s\n%s\n' "$(jq -c --arg r "$REPO" '.projectRoot = $r | .files = {}' "$FIX_STRYKER")" "$(jq -c --arg r "$REPO" '.projectRoot = $r | .files = {}' "$FIX_STRYKER")" > "$BATS_TEST_TMPDIR/two.json"
+  REPORT="$BATS_TEST_TMPDIR/two.json" run mut
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ]
+}
