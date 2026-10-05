@@ -22,6 +22,8 @@ VETDD_STRYKER_JSON='
      and (.projectRoot | type) == "string" and (.projectRoot | startswith("/"))
      and (.files | type) == "object" and (.files | length) > 0
      and all(.files | keys[]; plain)
+     and (.config.testRunner != "command" or (.config.commandRunner.command // null) == null
+          or ((.config.commandRunner.command | type) == "string" and (.config.commandRunner.command | printable)))
      and ((.config.mutate // null) == null
           or ((.config.mutate | type) == "array" and all(.config.mutate[]; type == "string" and printable)))
      and all(.files[]; type == "object" and (.source | type) == "string" and (.mutants | type) == "array"
@@ -34,11 +36,14 @@ VETDD_STRYKER_JSON='
             compile_error: n("CompileError"), runtime_error: n("RuntimeError"), ignored: n("Ignored"),
             total: ($st | length)}}'
 
-# jq: the copy kept for the judge: the line ranges asked for (config.mutate), and per file its source and
+# jq: the copy kept for the judge: the line ranges asked for (config.mutate), the command the command
+# runner ran against each mutant (config.command: which tests faced them; kept only when testRunner is
+# "command", since Stryker writes a default commandRunner.command into every report), and per file its source and
 # each mutant's id, mutator, replacement, status, and location. Any other field of the raw report (the
 # rest of the config, free text a tool or a person added) is left out.
 VETDD_STRYKER_COPY='
-  {schemaVersion, config: {mutate: (.config.mutate // null)},
+  {schemaVersion, config: {mutate: (.config.mutate // null),
+             command: (if .config.testRunner == "command" then (.config.commandRunner.command // null) else null end)},
    files: (.files | map_values({source, mutants: [.mutants[] | {id, mutatorName, replacement, status,
      location: {start: {line: .location.start.line, column: .location.start.column},
                 end: {line: .location.end.line, column: .location.end.column}}}]}))}'
@@ -93,6 +98,10 @@ vetdd_mutation_report_import() {
          || ! chmod "$(vetdd_file_mode)" "$norm" || ! mv -f -- "$norm" "$copy"; then
       status=invalid
     fi
+  fi
+  # Stryker writes "files": {} when the --mutate ranges held no mutant at all: say so, it is not a broken run.
+  if [ "$status" = invalid ] && [ -n "$raw" ] && [ -f "$raw" ] && jq -e '.files == {}' "$raw" >/dev/null 2>&1; then
+    printf 'evidence.sh: warning: mutation report %s mutated nothing: the --mutate ranges held no mutant (an emptied function body needs the range to reach its closing brace)\n' "$rel" | vetdd_printable >&2
   fi
   [ -z "$raw" ] || rm -f -- "$raw"
   [ -z "$norm" ] || rm -f -- "$norm"

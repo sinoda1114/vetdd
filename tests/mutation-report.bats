@@ -236,7 +236,8 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   [ "$status" -eq 0 ]
   local c=.vetdd/evidence/s1/runs/001-mutation.json
   [ "$(jq -c 'keys' "$c")" = '["config","files","schemaVersion"]' ]
-  [ "$(jq -c '.config | keys' "$c")" = '["mutate"]' ]
+  # config.command (#20): the command runner's command, so the judge sees which tests ran.
+  [ "$(jq -c '.config | keys' "$c")" = '["command","mutate"]' ]
   [ "$(jq -c '[.files[].mutants[] | keys] | unique' "$c")" = '[["id","location","mutatorName","replacement","status"]]' ]
   ! grep -q 'ignore the survivors\|secret-plugin' "$c"
   [ "$(mq s1 '.runs[-1].audit.report.sha256')" = "$(sha256_of "$c")" ]
@@ -308,4 +309,12 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 @test "the schema says the copy is the normalized report" {
   jq -r '."$defs".mutationReport.anyOf[0].properties.sha256.description' "$SCHEMA" | grep -q 'normalized'
+}
+
+# --- #20 ------------------------------------------------------------------------------------------
+
+@test "a report with no file mutated says the ranges held no mutant (#20)" {
+  REPORT="$(report '.files = {}')" run mut
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ]
+  [[ "$output" == *"mutated nothing"* ]] || { echo "$output"; false; }
 }
