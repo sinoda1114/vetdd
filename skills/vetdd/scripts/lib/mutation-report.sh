@@ -22,7 +22,7 @@ VETDD_STRYKER_JSON='
      and (.projectRoot | type) == "string" and (.projectRoot | startswith("/"))
      and (.files | type) == "object" and (.files | length) > 0
      and all(.files | keys[]; plain)
-     and ((.config.commandRunner.command // null) == null
+     and (.config.testRunner != "command" or (.config.commandRunner.command // null) == null
           or ((.config.commandRunner.command | type) == "string" and (.config.commandRunner.command | printable)))
      and ((.config.mutate // null) == null
           or ((.config.mutate | type) == "array" and all(.config.mutate[]; type == "string" and printable)))
@@ -37,11 +37,13 @@ VETDD_STRYKER_JSON='
             total: ($st | length)}}'
 
 # jq: the copy kept for the judge: the line ranges asked for (config.mutate), the command the command
-# runner ran against each mutant (config.command: which tests faced them), and per file its source and
+# runner ran against each mutant (config.command: which tests faced them; kept only when testRunner is
+# "command", since Stryker writes a default commandRunner.command into every report), and per file its source and
 # each mutant's id, mutator, replacement, status, and location. Any other field of the raw report (the
 # rest of the config, free text a tool or a person added) is left out.
 VETDD_STRYKER_COPY='
-  {schemaVersion, config: {mutate: (.config.mutate // null), command: (.config.commandRunner.command // null)},
+  {schemaVersion, config: {mutate: (.config.mutate // null),
+             command: (if .config.testRunner == "command" then (.config.commandRunner.command // null) else null end)},
    files: (.files | map_values({source, mutants: [.mutants[] | {id, mutatorName, replacement, status,
      location: {start: {line: .location.start.line, column: .location.start.column},
                 end: {line: .location.end.line, column: .location.end.column}}}]}))}'

@@ -3,10 +3,15 @@
 // The vitest runner is not used: with vitest 5 it reported killable mutants as Survived (vetdd #20).
 // VETDD_MUTATION_TESTS names the slice's own test files, one per line, so a mutant another test
 // kills is not counted for the slice. Unset or empty is an error: the whole suite would run silently.
-// Each path is single-quoted for the shell the command runner uses (sh -c), so ( ) $ [ ] stay names.
-const tests = (process.env.VETDD_MUTATION_TESTS ?? "").split("\n").map((p) => p.trim()).filter(Boolean);
+// Each path is single-quoted for the shell the command runner uses (sh -c on POSIX; cmd.exe on Windows
+// would keep the quotes, so this config is POSIX only), so ( ) $ [ ] and spaces stay part of the name.
+const tests = (process.env.VETDD_MUTATION_TESTS ?? "").split("\n").filter((p) => p !== "");
 if (tests.length === 0) {
   throw new Error("set VETDD_MUTATION_TESTS to the slice's test files, one per line (vetdd test mode, step 5)");
+}
+const option = tests.find((p) => p.startsWith("-"));
+if (option !== undefined) {
+  throw new Error(`a test path in VETDD_MUTATION_TESTS starts with - and would be read as an option: ${JSON.stringify(option)}`);
 }
 const quote = (p) => `'${p.replaceAll("'", `'\\''`)}'`;
 

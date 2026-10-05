@@ -319,7 +319,7 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
         ($m.seq | num) as $s | $m.audit.report as $rep
         | if ($rep | type) != "object" then error("no report")
           elif $rep.status != "ok" then
-            {copy: null, problems: ["10c: the report of mutation run \($s) is \(if $rep.status == "missing" then "missing" else "invalid" end); run the mutation audit again"], warns: [], files: []}
+            {copy: null, problems: ["10c: the report of mutation run \($s) is \(if $rep.status == "missing" then "missing" else "invalid" end); run the mutation audit again (an invalid report with no file in it means the --mutate ranges held no mutant: widen them to the function'"'"'s closing brace)"], warns: [], files: []}
           else
             ($rep.counts) as $c
             | ($c.survived | nn) as $sv | ($c.no_coverage | nn) as $nc | ($c.total | nn) as $t | ($c.ignored | nn) as $ig

@@ -497,7 +497,7 @@ kata_cfg() {
 
 @test "the copy keeps the command the runner ran, so the judge sees which tests faced the mutants" {
   local F="$FIX_STRYKER"
-  jq --arg r "$REPO" '.projectRoot = $r | .config.commandRunner = {command: "npx --no-install vitest run '"'"'src/a.test.ts'"'"'"}' "$F" > "$BATS_TEST_TMPDIR/c.json"
+  jq --arg r "$REPO" '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner = {command: "npx --no-install vitest run '"'"'src/a.test.ts'"'"'"}' "$F" > "$BATS_TEST_TMPDIR/c.json"
   REPORT="$BATS_TEST_TMPDIR/c.json" ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1
   [ "$(jq -r '.config.command' .vetdd/evidence/s1/runs/001-mutation.json)" = "npx --no-install vitest run 'src/a.test.ts'" ]
   # A command with a control character makes the report invalid.
@@ -513,4 +513,45 @@ kata_cfg() {
   [[ "$p" == *'substring'* ]]
   [[ "$p" == *'unset'* ]]
   grep -q 'VETDD_MUTATION_TESTS' "$SCRIPTS/check-evidence.sh"
+}
+
+# --- #20 review round 2 ---------------------------------------------------------------------------
+
+@test "the copy keeps the command only when the command runner ran: a vitest-runner report's default npm test is not kept (R1)" {
+  record_good_slice s1
+  # The saved real report: testRunner vitest, and Stryker's default commandRunner.command "npm test".
+  [ "$(jq -r '.config.testRunner + " " + .config.commandRunner.command' "$FIX_STRYKER")" = "vitest npm test" ]
+  mutation s1 "$(killed)"
+  [ "$(jq -r '.config.command' .vetdd/evidence/s1/runs/003-mutation.json)" = null ]
+  # A control character in an unused commandRunner.command does not make the report invalid.
+  mutation s1 "$(killed '.config.commandRunner.command = "a\u0009b"')"
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ]
+  mutation s1 "$(killed '.config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run '"'"'src/x.test.ts'"'"'"')"
+  [ "$(jq -r '.config.command' .vetdd/evidence/s1/runs/005-mutation.json)" = "npx --no-install vitest run 'src/x.test.ts'" ]
+}
+
+@test "an invalid report's 10c line says a range with no mutant needs widening, not just another run (R2)" {
+  record_good_slice s1
+  mutation s1 "$(report '.files = {}')"
+  run check s1
+  [[ "$output" == *"10c: the report of mutation run 3 is invalid"* ]]
+  [[ "$output" == *"closing brace"* ]] || { echo "$output"; false; }
+}
+
+@test "a test path starting with - is refused, a path keeps its spaces, and the quoting is said to be POSIX sh (R3)" {
+  command -v node >/dev/null || skip "node not installed"
+  run kata_cfg $'-t\nsrc/a.test.ts'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"starts with -"* ]]
+  run kata_cfg ' src/a b.test.ts'
+  [ "$output" = "npx --no-install vitest run ' src/a b.test.ts'" ] || { echo "$output"; false; }
+  grep -q 'POSIX' "$VETDD_ROOT/fixtures/ts-kata/stryker.config.mjs"
+  grep 'Then run the mutation audit' "$SCRIPTS/../modes/test.md" | grep -q 'POSIX'
+}
+
+@test "the copy's command is described in evidence.sh, the schema, and the rubric, which asks the judge to check it" {
+  grep -q 'config.command' "$SCRIPTS/evidence.sh"
+  jq -r '."$defs".mutationReport.anyOf[0].properties.sha256.description' "$SCHEMA" | grep -q 'command'
+  sed -n '/^```/,/^```/p' "$SCRIPTS/../references/final-judge-rubric.md" | grep -q 'config.command'
+  sed -n '/^## 3\. /,/^## 4\. /p' "$SCRIPTS/../references/final-judge-rubric.md" | grep -q 'config.command'
 }
