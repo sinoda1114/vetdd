@@ -319,7 +319,9 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
         ($m.seq | num) as $s | $m.audit.report as $rep
         | if ($rep | type) != "object" then error("no report")
           elif $rep.status != "ok" then
-            {copy: null, problems: ["10c: the report of mutation run \($s) is \(if $rep.status == "missing" then "missing" else "invalid" end); run the mutation audit again (an invalid report with no file in it means the --mutate ranges held no mutant: widen them to the function'"'"'s closing brace)"], warns: [], files: []}
+            {copy: null, problems: [if $rep.status == "empty"
+                then "10c: mutation run \($s) mutated nothing: the --mutate ranges held no mutant; widen them to the function'"'"'s closing brace"
+                else "10c: the report of mutation run \($s) is \(if $rep.status == "missing" then "missing" else "invalid" end); run the mutation audit again" end], warns: [], files: []}
           else
             ($rep.counts) as $c
             | ($c.survived | nn) as $sv | ($c.no_coverage | nn) as $nc | ($c.total | nn) as $t | ($c.ignored | nn) as $ig
@@ -532,7 +534,7 @@ check_slice() {
 # Rule 10c: problems on stdout, the ignored-mutant warning appended to $warn_file. The mutated files
 # are hashed here: each must still hold the source the report mutated.
 check_mutation() {
-  local slice="$1" meta="$2" out path sum seq rel
+  local slice="$1" meta="$2" out path sum seq rel tr
   if ! out="$(jq -c --arg slice "$slice" "$MUTATION_RULES" "$meta" 2>/dev/null)" \
      || ! printf '%s' "$out" | jq -e '(.problems | type) == "array" and (.warns | type) == "array" and (.files | type) == "array"' >/dev/null 2>&1; then
     echo "10c: could not evaluate the mutation audit (a run's audit record or the audits log is malformed)"
@@ -546,6 +548,15 @@ check_mutation() {
     if ! vetdd_inside_repo "$root" "$rel" || [ ! -f "$root/$rel" ] \
        || [ "$(vetdd_sha256 "$root/$rel")" != "$(printf '%s' "$out" | jq -r '.copy.sha256')" ]; then
       echo "10c: the copy of mutation run $seq's report is missing or does not match the sha256 recorded for it (or is a link); run the mutation audit again"
+    else
+      # The command runner is the one known to judge vitest 5 correctly (#20): any other runner is a warning.
+      tr="$(jq -r '.config.testRunner // "" | if type == "string" then . else "?" end' "$root/$rel" 2>/dev/null)" || tr="?"
+      if [ -z "$tr" ] && jq -e '(.config.command // null) == null' "$root/$rel" >/dev/null 2>&1; then
+        # A copy from before testRunner was kept, with no command: not the command runner, or unknown.
+        printf '%s\n' "10c: mutation run $seq does not say which Stryker runner it used (its report names no runner and no command), so it may be the vitest runner that reported killable mutants as Survived (vetdd #20); run the mutation audit again" >> "$warn_file"
+      elif [ -n "$tr" ] && [ "$tr" != command ]; then
+        printf '%s\n' "10c: mutation run $seq ran Stryker's $tr runner, not the command runner; Stryker's vitest runner reported killable mutants as Survived with vitest 5 (vetdd #20), so read its survivors before trusting them" >> "$warn_file"
+      fi
     fi
   fi
   # NUL-separated: a path is read exactly as recorded, backslashes and all.

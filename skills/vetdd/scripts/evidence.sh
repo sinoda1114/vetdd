@@ -21,7 +21,8 @@
 #   changed). The report at <path> (under .vetdd/reports/, the --test-report rules) is deleted before
 #   the run and read after it; the run gets audit: {"kind": "mutation", "report": {...}} with the
 #   counts by mutant status, the sha256 of each mutated file's source, and a copy of the report in
-#   runs/<seq>-mutation.json (normalized: config.mutate, config.command when the command runner ran,
+#   runs/<seq>-mutation.json (normalized: config.mutate, config.testRunner, config.command when the
+#   command runner ran,
 #   and each file's source and mutants). A marked
 #   run is never a red. It never changes the outcome.
 # The log and the run entry are always written. Exit 1 when the run violates its kind

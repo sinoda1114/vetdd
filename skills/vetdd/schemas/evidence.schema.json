@@ -38,7 +38,7 @@
             "format": { "const": "stryker-json" },
             "path": { "type": "string", "minLength": 1 },
             "status": { "const": "ok" },
-            "sha256": { "description": "Of the normalized copy at `copy`: config.mutate, config.command (the command runner's command, when it ran), and each file's source and mutants (id, mutatorName, replacement, status, location).", "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "sha256": { "description": "Of the normalized copy at `copy`: config.mutate, config.testRunner, config.command (the command runner's command, when it ran), and each file's source and mutants (id, mutatorName, replacement, status, location).", "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "copy": { "type": "string", "pattern": "^runs/[0-9]{3,}-mutation\\.json$" },
             "counts": {
               "description": "Mutants by final status: Killed, Survived, NoCoverage, Timeout, CompileError, RuntimeError, Ignored.",
@@ -73,7 +73,7 @@
           "properties": {
             "format": { "const": "stryker-json" },
             "path": { "type": "string", "minLength": 1 },
-            "status": { "description": "missing: no report after the run; invalid: not a usable stryker-json report.", "enum": ["missing", "invalid"] }
+            "status": { "description": "missing: no report after the run; invalid: not a usable stryker-json report; empty: the --mutate ranges held no mutant (Stryker wrote files {}).", "enum": ["missing", "invalid", "empty"] }
           }
         }
       ]

@@ -22,8 +22,12 @@ VETDD_STRYKER_JSON='
      and (.projectRoot | type) == "string" and (.projectRoot | startswith("/"))
      and (.files | type) == "object" and (.files | length) > 0
      and all(.files | keys[]; plain)
-     and (.config.testRunner != "command" or (.config.commandRunner.command // null) == null
-          or ((.config.commandRunner.command | type) == "string" and (.config.commandRunner.command | printable)))
+     # The command runner must name its command (the tests it ran), printable and at most 4096 characters.
+     and (.config.testRunner != "command"
+          or ((.config.commandRunner.command | type) == "string" and (.config.commandRunner.command | length) > 0
+              and (.config.commandRunner.command | length) <= 4096 and (.config.commandRunner.command | printable)))
+     and ((.config.testRunner // null) == null or ((.config.testRunner | type) == "string" and (.config.testRunner | printable)
+          and (.config.testRunner | length) <= 64))
      and ((.config.mutate // null) == null
           or ((.config.mutate | type) == "array" and all(.config.mutate[]; type == "string" and printable)))
      and all(.files[]; type == "object" and (.source | type) == "string" and (.mutants | type) == "array"
@@ -38,11 +42,12 @@ VETDD_STRYKER_JSON='
 
 # jq: the copy kept for the judge: the line ranges asked for (config.mutate), the command the command
 # runner ran against each mutant (config.command: which tests faced them; kept only when testRunner is
-# "command", since Stryker writes a default commandRunner.command into every report), and per file its source and
+# "command", since Stryker writes a default commandRunner.command into every report), the runner itself
+# (config.testRunner), and per file its source and
 # each mutant's id, mutator, replacement, status, and location. Any other field of the raw report (the
 # rest of the config, free text a tool or a person added) is left out.
 VETDD_STRYKER_COPY='
-  {schemaVersion, config: {mutate: (.config.mutate // null),
+  {schemaVersion, config: {mutate: (.config.mutate // null), testRunner: (.config.testRunner // null),
              command: (if .config.testRunner == "command" then (.config.commandRunner.command // null) else null end)},
    files: (.files | map_values({source, mutants: [.mutants[] | {id, mutatorName, replacement, status,
      location: {start: {line: .location.start.line, column: .location.start.column},
@@ -99,8 +104,13 @@ vetdd_mutation_report_import() {
       status=invalid
     fi
   fi
-  # Stryker writes "files": {} when the --mutate ranges held no mutant at all: say so, it is not a broken run.
-  if [ "$status" = invalid ] && [ -n "$raw" ] && [ -f "$raw" ] && jq -e '.files == {}' "$raw" >/dev/null 2>&1; then
+  # Stryker writes "files": {} when the --mutate ranges held no mutant at all: recorded as empty, not invalid.
+  # Only a report that passes every other check: one object, schema 1.x, an absolute projectRoot, a command
+  # for the command runner (the same filter, run with a placeholder file in place of the empty files).
+  if [ "$status" = invalid ] && [ -n "$raw" ] && [ -f "$raw" ] \
+     && jq -e -s 'length == 1 and (.[0] | type) == "object" and .[0].files == {}' "$raw" >/dev/null 2>&1 \
+     && jq '.files = {"placeholder.ts": {"source": "", "mutants": []}}' "$raw" 2>/dev/null | jq -e "$VETDD_STRYKER_JSON" >/dev/null 2>&1; then
+    status=empty
     printf 'evidence.sh: warning: mutation report %s mutated nothing: the --mutate ranges held no mutant (an emptied function body needs the range to reach its closing brace)\n' "$rel" | vetdd_printable >&2
   fi
   [ -z "$raw" ] || rm -f -- "$raw"
