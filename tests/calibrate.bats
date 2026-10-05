@@ -570,3 +570,33 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   run cal planted s1 --oracle-file SUB/t.sh -- sh sub/t.sh
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+# --- PR8: --infra-exit for verify scripts (exit 2 = could not observe) ------------------------------
+
+@test "planted passes --infra-exit to evidence.sh: a script that could not observe is infrastructure_error, not red" {
+  git add -A && git commit -q -m fix
+  printf '#!/bin/sh\nexit 2\n' > blind.sh
+  git add blind.sh && git commit -q -m blind
+  cal plant p1 --file value.txt --oracle-file blind.sh
+  printf '7\n' > value.txt
+  run cal planted p1 --oracle-file blind.sh --infra-exit 2 -- sh blind.sh
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ "$(mq p1 '.runs[-1].outcome')" = infrastructure_error ]
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -e "$(git rev-parse --git-dir)/vetdd-calib/p1" ]
+}
+
+@test "unfix takes --infra-exit too, and a bad value is refused before anything is parked" {
+  printf '#!/bin/sh\nexit 2\n' > blind.sh
+  git add blind.sh
+  run cal unfix u1 --file value.txt --oracle-file blind.sh --infra-exit 2 -- sh blind.sh
+  [ "$(mq u1 '.runs[-1].outcome')" = infrastructure_error ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  local v
+  for v in 0 256 x ''; do
+    run cal unfix u2 --file value.txt --oracle-file blind.sh --infra-exit "$v" -- sh blind.sh
+    [ "$status" -eq 2 ] || { echo "accepted --infra-exit [$v]"; false; }
+    [ "$(cat value.txt)" = 42 ]
+    [ ! -e "$(git rev-parse --git-dir)/vetdd-calib/u2" ]
+  done
+}
