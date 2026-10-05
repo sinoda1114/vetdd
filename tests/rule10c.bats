@@ -212,10 +212,10 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   [ "$(jq -r '.devDependencies["@stryker-mutator/vitest-runner"] // "none"' "$kata/package.json")" = none ]
   [ ! -e "$kata/stryker.config.json" ]
   command -v node >/dev/null || skip "node not installed"
-  cfg="$(cd "$kata" && VETDD_MUTATION_TESTS='src/a.test.ts src/b.test.ts' node --input-type=module -e 'const c = (await import("./stryker.config.mjs")).default; console.log(JSON.stringify(c))')"
+  cfg="$(cd "$kata" && VETDD_MUTATION_TESTS=$'src/a.test.ts\nsrc/b.test.ts' node --input-type=module -e 'const c = (await import("./stryker.config.mjs")).default; console.log(JSON.stringify(c))')"
   [ "$(printf '%s' "$cfg" | jq -r '.testRunner')" = command ]
   [ "$(printf '%s' "$cfg" | jq -r '.coverageAnalysis')" = off ]
-  [ "$(printf '%s' "$cfg" | jq -r '.commandRunner.command')" = 'npx --no-install vitest run src/a.test.ts src/b.test.ts' ]
+  [ "$(printf '%s' "$cfg" | jq -r '.commandRunner.command')" = "npx --no-install vitest run 'src/a.test.ts' 'src/b.test.ts'" ]
   [ "$(printf '%s' "$cfg" | jq -r '.reporters | index("html")')" = null ]
   printf '%s' "$cfg" | jq -r '.jsonReporter.fileName' | grep -q '^\.vetdd/reports/'
   grep -qx '.stryker-tmp/' "$kata/.gitignore"
@@ -461,4 +461,56 @@ SH
   [[ "$p" == *'reported killable mutants as'* ]]
   [[ "$p" != *'--testFiles'* ]]
   [[ "$p" == *'closing brace'* ]]
+}
+
+# --- #20 review round 1 ---------------------------------------------------------------------------
+
+# kata_cfg <VETDD_MUTATION_TESTS value or "-unset">: the command the ts-kata config builds, or its error.
+kata_cfg() {
+  local kata="$VETDD_ROOT/fixtures/ts-kata"
+  if [ "$1" = -unset ]; then
+    (cd "$kata" && env -u VETDD_MUTATION_TESTS node --input-type=module -e 'const c = (await import("./stryker.config.mjs")).default; console.log(c.commandRunner.command)' 2>&1)
+  else
+    (cd "$kata" && VETDD_MUTATION_TESTS="$1" node --input-type=module -e 'const c = (await import("./stryker.config.mjs")).default; console.log(c.commandRunner.command)' 2>&1)
+  fi
+}
+
+@test "each test path is single-quoted for the shell, so ( ) \$ [ ] and quotes stay part of the name (Q1)" {
+  command -v node >/dev/null || skip "node not installed"
+  run kata_cfg $'app/(auth)/login.test.ts\nroutes/$id.test.ts\nsrc/[id].test.ts\nsrc/it\'s.test.ts'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "npx --no-install vitest run 'app/(auth)/login.test.ts' 'routes/\$id.test.ts' 'src/[id].test.ts' 'src/it'\\''s.test.ts'" ] || { echo "$output"; false; }
+  # The quoted command, run by sh, hands vitest exactly those names.
+  local pre="printf '%s|'" cmd
+  cmd="$pre${output#npx --no-install vitest run}"
+  [ "$(sh -c "$cmd")" = 'app/(auth)/login.test.ts|routes/$id.test.ts|src/[id].test.ts|src/it'"'"'s.test.ts|' ]
+}
+
+@test "with VETDD_MUTATION_TESTS unset or empty the config refuses, instead of running the whole suite silently" {
+  command -v node >/dev/null || skip "node not installed"
+  run kata_cfg -unset
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"VETDD_MUTATION_TESTS"* ]]
+  run kata_cfg ''
+  [ "$status" -ne 0 ]
+}
+
+@test "the copy keeps the command the runner ran, so the judge sees which tests faced the mutants" {
+  local F="$FIX_STRYKER"
+  jq --arg r "$REPO" '.projectRoot = $r | .config.commandRunner = {command: "npx --no-install vitest run '"'"'src/a.test.ts'"'"'"}' "$F" > "$BATS_TEST_TMPDIR/c.json"
+  REPORT="$BATS_TEST_TMPDIR/c.json" ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1
+  [ "$(jq -r '.config.command' .vetdd/evidence/s1/runs/001-mutation.json)" = "npx --no-install vitest run 'src/a.test.ts'" ]
+  # A command with a control character makes the report invalid.
+  jq '.config.commandRunner.command = "a\u001bb"' "$BATS_TEST_TMPDIR/c.json" > "$BATS_TEST_TMPDIR/d.json"
+  REPORT="$BATS_TEST_TMPDIR/d.json" ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ]
+}
+
+@test "the docs: one path per line, quoted by the config, a refusal when unset, and vitest's file filter is a substring match (Q2, Q3)" {
+  local p; p="$(grep 'Then run the mutation audit' "$SCRIPTS/../modes/test.md")"
+  [[ "$p" != *'+ process.env.VETDD_MUTATION_TESTS'* ]]
+  [[ "$p" == *'one per line'* ]]
+  [[ "$p" == *'substring'* ]]
+  [[ "$p" == *'unset'* ]]
+  grep -q 'VETDD_MUTATION_TESTS' "$SCRIPTS/check-evidence.sh"
 }

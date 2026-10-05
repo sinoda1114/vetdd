@@ -313,7 +313,7 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
     | ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation" and .status == "not_applicable"
           and (.reason | type) == "string" and (.reason | length) > 0 and counts_for($first; $first_seq))] | length) as $noted
     | if $m == null then
-        {copy: null, problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after its last green run; run evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
+        {copy: null, problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after its last green run; run VETDD_MUTATION_TESTS=<the slice'"'"'s test files, one per line> evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
          warns: [], files: []}
       else
         ($m.seq | num) as $s | $m.audit.report as $rep

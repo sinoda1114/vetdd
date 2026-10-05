@@ -22,6 +22,8 @@ VETDD_STRYKER_JSON='
      and (.projectRoot | type) == "string" and (.projectRoot | startswith("/"))
      and (.files | type) == "object" and (.files | length) > 0
      and all(.files | keys[]; plain)
+     and ((.config.commandRunner.command // null) == null
+          or ((.config.commandRunner.command | type) == "string" and (.config.commandRunner.command | printable)))
      and ((.config.mutate // null) == null
           or ((.config.mutate | type) == "array" and all(.config.mutate[]; type == "string" and printable)))
      and all(.files[]; type == "object" and (.source | type) == "string" and (.mutants | type) == "array"
@@ -34,11 +36,12 @@ VETDD_STRYKER_JSON='
             compile_error: n("CompileError"), runtime_error: n("RuntimeError"), ignored: n("Ignored"),
             total: ($st | length)}}'
 
-# jq: the copy kept for the judge: the line ranges asked for (config.mutate), and per file its source and
+# jq: the copy kept for the judge: the line ranges asked for (config.mutate), the command the command
+# runner ran against each mutant (config.command: which tests faced them), and per file its source and
 # each mutant's id, mutator, replacement, status, and location. Any other field of the raw report (the
 # rest of the config, free text a tool or a person added) is left out.
 VETDD_STRYKER_COPY='
-  {schemaVersion, config: {mutate: (.config.mutate // null)},
+  {schemaVersion, config: {mutate: (.config.mutate // null), command: (.config.commandRunner.command // null)},
    files: (.files | map_values({source, mutants: [.mutants[] | {id, mutatorName, replacement, status,
      location: {start: {line: .location.start.line, column: .location.start.column},
                 end: {line: .location.end.line, column: .location.end.column}}}]}))}'

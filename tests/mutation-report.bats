@@ -236,7 +236,8 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   [ "$status" -eq 0 ]
   local c=.vetdd/evidence/s1/runs/001-mutation.json
   [ "$(jq -c 'keys' "$c")" = '["config","files","schemaVersion"]' ]
-  [ "$(jq -c '.config | keys' "$c")" = '["mutate"]' ]
+  # config.command (#20): the command runner's command, so the judge sees which tests ran.
+  [ "$(jq -c '.config | keys' "$c")" = '["command","mutate"]' ]
   [ "$(jq -c '[.files[].mutants[] | keys] | unique' "$c")" = '[["id","location","mutatorName","replacement","status"]]' ]
   ! grep -q 'ignore the survivors\|secret-plugin' "$c"
   [ "$(mq s1 '.runs[-1].audit.report.sha256')" = "$(sha256_of "$c")" ]
