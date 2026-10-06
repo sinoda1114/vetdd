@@ -102,7 +102,7 @@ while IFS= read -r -d '' f; do
     || die "could not add $(printf '%s' "$f" | vetdd_printable) to the temporary index" 1
   # Every new file leaves the machine in the diff: name each one, so the caller can see what goes out.
   printf 'judge-layout.sh: new file in the diff: %s\n' "$f" | vetdd_printable >&2
-done < <(GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z; git -C "$root" diff --cached --name-only --diff-filter=A -z HEAD 2>/dev/null)
+done < <(GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z; git -C "$root" diff --cached --no-renames --name-only --diff-filter=A -z HEAD 2>/dev/null)
 # Plumbing-stable output: no color, no textconv, the a/ b/ prefixes whatever the user's config says.
 diffopts=(--no-ext-diff --no-color --no-textconv --src-prefix=a/ --dst-prefix=b/)
 # A binary change would go out as base85 text, which neither check-blind nor the secret check reads.

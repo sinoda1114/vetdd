@@ -269,3 +269,17 @@ setup() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"new file in the diff: added.txt"* ]]
 }
+
+# --- PR review threads -----------------------------------------------------------------------------
+
+@test "a staged rename into an ignored path keeps the destination in the diff, not only the removal" {
+  # value.txt is tracked; move it under ignored/ in the index.
+  mkdir -p ignored && git mv -f value.txt ignored/value.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/ignored/value.txt$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "verify mode does not build its layout with judge-layout.sh, which does not copy verify artifacts" {
+  ! sed -n '/^### B/,/^### C/p' "$SCRIPTS/../modes/verify.md" | grep -q 'judge-layout.sh' || false
+}
