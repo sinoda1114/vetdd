@@ -2,7 +2,7 @@
 # Build the final judge's directory that references/final-judge-rubric.md "Layout" defines (test and
 # verify modes, Close), so it is never assembled by hand.
 # Usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]...
-#                        <slice-id>...
+#                        [--allow-binary <path>]... <slice-id>...
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
 #                                         file not in HEAD (untracked or staged) outside .vetdd/ included
 #                                         through a temporary index (the repository's own index is untouched)
@@ -21,7 +21,9 @@
 # --allow-secrets (paths relative to <dir>, e.g. c1/artifact/tests/*:email, only for test data a human
 # confirmed), which the printed judge.sh command repeats. Run it on the delivered tree.
 # Exit 0 built (it prints the judge.sh command); 1 a local step failed (a record could not be read,
-# check-blind could not run); 2 usage error (nothing is written); 4 the result is not blind
+# check-blind could not run); 2 usage error, or a binary file in the diff not named with --allow-binary
+# (nothing is written; git's base85 text of a binary file passes the blind and secret checks unseen);
+# 4 the result is not blind
 # (check-blind.sh's hits are printed; <dir> is left to inspect).
 set -u
 unset CDPATH
@@ -32,13 +34,14 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 vetdd_require_jq judge-layout.sh
 
-out=""; reply=""; base=""; slices=(); allow=()
+out=""; reply=""; base=""; slices=(); allow=(); binaries=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
     --reply) [ $# -ge 2 ] || die "--reply needs a file"; reply="$2"; shift 2 ;;
     --base) [ $# -ge 2 ] || die "--base needs a git ref"; base="$2"; shift 2 ;;
     --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; allow+=("$2"); shift 2 ;;
+    --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
     -*) die "unknown option: $(printf '%s' "$1" | vetdd_printable)" ;;
     *) slices+=("$1"); shift ;;
   esac
@@ -46,6 +49,12 @@ done
 [ -n "$out" ] && [ -n "$reply" ] && [ -n "$base" ] && [ ${#slices[@]} -gt 0 ] \
   || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... <slice-id>..."
 [ -f "$reply" ] && [ ! -L "$reply" ] || die "--reply must be a regular file"
+. "$here/lib/secret-patterns.sh"
+for a in ${allow[@]+"${allow[@]}"}; do
+  case "$a" in *:*) for k in $(printf '%s' "${a##*:}" | tr ',' ' '); do
+    case " $VETDD_SECRET_KINDS " in *" $k "*) ;; *) die "--allow-secrets: unknown secret kind '$(printf '%s' "$k" | vetdd_printable)' (one of: $VETDD_SECRET_KINDS)" ;; esac
+  done ;; esac
+done
 [ ! -e "$out" ] && [ ! -L "$out" ] || die "--out $out exists; give a new directory"
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
@@ -64,6 +73,8 @@ done
 
 # Where --out really is: the deepest existing ancestor resolved physically, the rest as written.
 case "$out" in /*) abs="$out" ;; *) abs="$PWD/$out" ;; esac
+# A . or .. in the path would be resolved later, by mkdir, past this check.
+case "/$abs/" in */./*|*/../*) die "--out must not hold a . or .. component" ;; esac
 d="$(dirname -- "$abs")"; tail="/${abs##*/}"
 while [ ! -d "$d" ] && [ "$d" != / ]; do tail="/${d##*/}$tail"; d="$(dirname -- "$d")"; done
 d="$(cd -P -- "$d" 2>/dev/null && pwd -P)" || die "--out is not a usable path"
@@ -73,14 +84,12 @@ case "$abs/" in
   "$root"/*) die "--out must be outside the repository or under its .vetdd/: its own files would change the tree check-evidence hashes" ;;
 esac
 
-C="$out/c1"
-mkdir -p "$C/artifact/tests" || die "cannot create $out" 1
-
-# The diff, with new files: a temporary index holds HEAD plus intent-to-add entries for every file not
-# in it (untracked, or staged but not committed), listed against that same index.
-idx="$(mktemp "${TMPDIR:-/tmp}/judge-layout-index.XXXXXX")" || die "cannot create a temporary index" 1
-trap 'rm -f "$idx"' EXIT
-rm -f "$idx"
+# The diff, with new files: a temporary index (in a private temporary directory) holds HEAD plus
+# intent-to-add entries for every file not in it: untracked ones listed against that index, and files the
+# repository's own index added (git add -f of an ignored file included).
+tmpd="$(mktemp -d "${TMPDIR:-/tmp}/judge-layout.XXXXXX")" || die "cannot create a temporary directory" 1
+trap 'rm -rf "$tmpd"' EXIT
+idx="$tmpd/index"
 if git -C "$root" rev-parse --verify -q HEAD >/dev/null; then
   GIT_INDEX_FILE="$idx" git -C "$root" read-tree HEAD || die "could not read HEAD into a temporary index" 1
 else
@@ -88,10 +97,26 @@ else
 fi
 while IFS= read -r -d '' f; do
   case "$f" in .vetdd|.vetdd/*) continue ;; esac
-  GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" add --intent-to-add -- "$f" \
+  # -f: a file the repository's index added with git add -f is ignored; the untracked list has no ignored file.
+  GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" add -f --intent-to-add -- "$f" \
     || die "could not add $(printf '%s' "$f" | vetdd_printable) to the temporary index" 1
-done < <(GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z)
-GIT_INDEX_FILE="$idx" git -C "$root" diff --no-ext-diff --binary "$base" -- . ':(exclude).vetdd' > "$C/artifact/diff.patch" \
+  # Every new file leaves the machine in the diff: name each one, so the caller can see what goes out.
+  printf 'judge-layout.sh: new file in the diff: %s\n' "$f" | vetdd_printable >&2
+done < <(GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z; git -C "$root" diff --cached --name-only --diff-filter=A -z HEAD 2>/dev/null)
+# Plumbing-stable output: no color, no textconv, the a/ b/ prefixes whatever the user's config says.
+diffopts=(--no-ext-diff --no-color --no-textconv --src-prefix=a/ --dst-prefix=b/)
+# A binary change would go out as base85 text, which neither check-blind nor the secret check reads.
+unallowed=""
+while IFS="$(printf '\t')" read -r added removed path; do
+  [ "$added" = - ] && [ "$removed" = - ] || continue
+  ok=0; for b in ${binaries[@]+"${binaries[@]}"}; do [ "$b" = "$path" ] && ok=1; done
+  [ "$ok" -eq 1 ] || unallowed="$unallowed $path"
+done < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --numstat --end-of-options "$base" -- . ':(exclude).vetdd')
+[ -z "$unallowed" ] || die "binary changes in the diff:$(printf '%s' "$unallowed" | vetdd_printable); name each one a human allowed to leave with --allow-binary <path>"
+
+C="$out/c1"
+mkdir -p "$C/artifact/tests" || die "cannot create $out" 1
+GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --binary --end-of-options "$base" -- . ':(exclude).vetdd' > "$C/artifact/diff.patch" \
   || die "git diff failed" 1
 
 cp -- "$reply" "$C/artifact/reply.md" || die "cannot copy the reply" 1
@@ -105,10 +130,12 @@ printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
 SEND='
 def green: .kind == "after" or .kind == "integrated";
 def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
-[.runs[] | select(.accepted != false)] as $acc
+def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array";
+[.runs[] | select(.accepted != false)] as $all
+| [$all[] | select(usable)] as $acc
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
 | ([.oracle.files[]? | .path | strings] | map("O\t" + .))
-  + ([$acc[] | select((.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
+  + ([$all[] | select((.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
                       and (.audit.kind? // "") != "mutation") | .log | strings] | map("L\t" + .))
   + (if $g == null then [] else
        ([$acc[] | select(.kind == "calibration" and .audit.kind? == "mutation" and .seq > $g.seq and oid == ($g | oid))]
@@ -147,7 +174,9 @@ done
 find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue
   ROOT="$root" LROOT="$logical_root" SROOT="$short_root" perl -pi -e '
-    for my $r (grep { length } @ENV{qw(ROOT LROOT SROOT)}) { s{\Q$r\E(?=/|[^\w.-]|$)}{<repo>}g }' "$f" || exit 1
+    BEGIN { my %s; @R = sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
+            map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @ENV{qw(ROOT LROOT SROOT)} }
+    for my $r (@R) { s{(?<![\w.\-/\\])\Q$r\E(?=/|\\/|[^\w.-]|$)}{<repo>}g }' "$f" || exit 1
 done || die "could not replace the repository path" 1
 
 allow_args=()
@@ -163,7 +192,7 @@ elif [ "$blind_rc" -ne 0 ]; then
 fi
 
 printf 'judge-layout.sh: built %s\n' "$out"
-printf 'next: "%s/judge.sh" --rubric "%s/references/final-judge-rubric.md" --candidates "%s" --out <judge.json> --eval-id <id> --run-id <id> --rubric-version <n>' \
-  "$here" "${here%/scripts}" "$out"
-for a in ${allow[@]+"${allow[@]}"}; do printf " --allow-secrets '%s'" "$a"; done
+printf 'next: %q --rubric %q --candidates %q --out <judge.json> --eval-id <id> --run-id <id> --rubric-version <n>' \
+  "$here/judge.sh" "${here%/scripts}/references/final-judge-rubric.md" "$out"
+for a in ${allow[@]+"${allow[@]}"}; do printf ' --allow-secrets %q' "$a"; done
 printf '\n'

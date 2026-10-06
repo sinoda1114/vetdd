@@ -31,7 +31,7 @@ setup() {
   # Green logs stay on the machine.
   [ ! -e "$C/evidence/s1/runs/002-after.log" ]
   # It prints the judge.sh command to run next.
-  [[ "$output" == *'judge.sh" --rubric'* ]]
+  [[ "$output" == *'judge.sh --rubric'* ]]
 }
 
 @test "a new untracked product file is in the diff, and the real index is left as it was" {
@@ -174,7 +174,7 @@ setup() {
   rm -rf "$BATS_TEST_TMPDIR/judge"
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets 'c1/artifact/tests/*:assignment' s2
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [[ "$output" == *"--allow-secrets 'c1/artifact/tests/*:assignment'"* ]]
+  [[ "$output" == *'--allow-secrets c1/artifact/tests/\*:assignment'* ]] || { echo "$output"; false; }
 }
 
 @test "the mutation audit's log is not sent as a red-run log, the undefined-imports audit's is" {
@@ -188,4 +188,84 @@ setup() {
   mu="$(jq -r '[.runs[] | select(.audit.kind == "mutation")][-1].log' .vetdd/evidence/s1/meta.json)"
   [ -f "$OUT/c1/evidence/s1/$ui" ]
   [ ! -e "$OUT/c1/evidence/s1/$mu" ]
+}
+
+# --- review round 2 ------------------------------------------------------------------------------
+
+@test "the temporary index lives in a private temporary directory, never at a freed name (Z1)" {
+  grep -q 'mktemp -d' "$SCRIPTS/judge-layout.sh"
+  ! grep -q 'rm -f "$idx"$' "$SCRIPTS/judge-layout.sh" || false
+}
+
+@test "a binary file in the diff stops the build unless named with --allow-binary (Z2)" {
+  printf 'a\0b' > blob.bin
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"blob.bin"* ]]
+  [ ! -e "$OUT" ]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-binary blob.bin s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q 'blob.bin' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "an --out whose missing part climbs with .. is refused (Z3)" {
+  run JL --out "$REPO/.vetdd/not-created/../../judge-dir" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ]
+  [ ! -e "$REPO/judge-dir" ]
+  run JL --out "$BATS_TEST_TMPDIR/x/../y" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ]
+}
+
+@test "a new file added with git add -f (ignored) is in the diff (Z4)" {
+  mkdir -p ignored && printf 'forced\n' > ignored/forced.txt && git add -f ignored/forced.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/ignored/forced.txt$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "a JSON-escaped path is replaced too, and a path that only ends with the root's name is kept (Z5)" {
+  local esc; esc="$(printf '%s' "$REPO" | sed 's#/#\\/#g')"
+  printf '{"cwd":"%s\\/x"} and /mnt%s/y\n' "$esc" "$REPO" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF '{"cwd":"<repo>\/x"}' "$OUT/c1/evidence/s1/runs/001-before.log"
+  grep -qF "/mnt$REPO/y" "$OUT/c1/evidence/s1/runs/001-before.log" || grep -qF "/mnt" "$OUT/c1/evidence/s1/runs/001-before.log"
+  ! grep -qF '/mnt<repo>' "$OUT/c1/evidence/s1/runs/001-before.log" || false
+}
+
+@test "the diff ignores the user's color, prefix, and textconv settings (Z7)" {
+  git config color.ui always && git config diff.noprefix true
+  printf 'new\n' > added.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/added.txt$' "$OUT/c1/artifact/diff.patch"
+  ! grep -q "$(printf '\033')" "$OUT/c1/artifact/diff.patch" || false
+}
+
+@test "an unknown --allow-secrets kind is a usage error before anything is written; the printed command is shell-quoted (Z8)" {
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets 'c1/x:nonsense' s1
+  [ "$status" -eq 2 ]
+  [ ! -e "$OUT" ]
+  run JL --out "$BATS_TEST_TMPDIR/it's dir" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local cmd; cmd="$(printf '%s\n' "$output" | sed -n 's/^next: //p' | sed 's/--out <judge.json>.*//')"
+  # The printed --candidates value, read back by a shell, is the directory itself.
+  eval "set -- $cmd"
+  local cand=""; while [ $# -gt 0 ]; do [ "$1" = --candidates ] && cand="$2"; shift; done
+  [ "$cand" = "$BATS_TEST_TMPDIR/it's dir" ] || { echo "got [$cand]"; false; }
+}
+
+@test "a check-blind that could not run is exit 1, not 4 (Y5, by behavior)" {
+  local fake="$BATS_TEST_TMPDIR/fakescripts"
+  cp -R "$SCRIPTS" "$fake"
+  printf '#!/bin/sh\nexit 2\n' > "$fake/check-blind.sh"
+  run "$fake/judge-layout.sh" --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "every new file going out in the diff is named on stderr" {
+  printf 'new\n' > added.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"new file in the diff: added.txt"* ]]
 }
