@@ -26,7 +26,7 @@ Ready when: `tsc --noEmit` exits 0. Teardown: `scripts/cleanup.sh` (nothing to k
 - due: `./node_modules/.bin/tsx src/cli.ts due 2026-01-10`, observes the exit code and all of stdout, expects exit `0` and exactly two lines: `closing: 2026-01-31` (January has 31 days; invoiced on the 10th, before the cutoff) and `due: 2026-03-02` (31 + 30 days)
 - usage: `./node_modules/.bin/tsx src/cli.ts due` with no date, observes the exit code and stderr, expects exit `2` and a line starting with `usage` (lowercase, case-sensitive)
 
-Scripts: `scripts/verify-due.sh [--expect <line 1>] [--expect-due <line 2>]`, `scripts/verify-usage.sh [--expect <exit code>]`.
+Scripts: `scripts/verify-due.sh [--date <YYYY-MM-DD> --expect <line 1> --expect-due <line 2>]` (`--date` drives another invoice date, default 2026-01-10, and needs both expectations), `scripts/verify-usage.sh [--expect <exit code>]`.
 
 ## Evidence
 
