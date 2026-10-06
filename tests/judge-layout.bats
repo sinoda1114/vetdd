@@ -108,3 +108,84 @@ setup() {
 @test "test mode's Close step 4 builds the layout with judge-layout.sh" {
   sed -n '/^## Close/,/^## /p' "$SCRIPTS/../modes/test.md" | grep -q 'judge-layout.sh'
 }
+
+# --- review round 1 ------------------------------------------------------------------------------
+
+@test "a staged new file not yet committed is in the diff (Y1)" {
+  printf 'staged\n' > staged.txt && git add staged.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/staged.txt$' "$OUT/c1/artifact/diff.patch"
+  [ "$(git diff --cached --name-only)" = staged.txt ]
+}
+
+@test "the path is replaced only as a whole path: a longer path that starts with it is kept (Y2)" {
+  printf '%s2/other and %s/x\n' "$REPO" "$REPO" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF '2/other and <repo>/x' "$OUT/c1/evidence/s1/runs/001-before.log"
+  ! grep -q '<repo>2/other' "$OUT/c1/evidence/s1/runs/001-before.log" || false
+}
+
+@test "the mutation copy sent is the one check-evidence judges: none when the latest mutation run after the final green is not usable (Y3)" {
+  mkdir -p src && jq -j '.files["src/dueDate.ts"].source' "$FIX_STRYKER" > src/dueDate.ts
+  printf 'mkdir -p .vetdd/reports\n[ -z "${REPORT:-}" ] || cp "$REPORT" .vetdd/reports/m.json\nexit 0\n' > mrun.sh
+  git add -A && git commit -q -m p && record_good_slice s1 >/dev/null 2>&1
+  jq --arg r "$REPO" '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "x" | .files["src/dueDate.ts"].mutants |= map(.status = "Killed")' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/k.json"
+  REPORT="$BATS_TEST_TMPDIR/k.json" ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1
+  ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1
+  [ "$(jq -r '.runs[-1].audit.report.status' .vetdd/evidence/s1/meta.json)" = missing ]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -z "$(ls "$OUT/c1/evidence/s1/runs" | grep mutation.json)" ]
+}
+
+@test "an --out inside the repository (outside .vetdd) is refused before anything is written (Y4)" {
+  run JL --out "$REPO/judge-dir" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ]
+  [ ! -e "$REPO/judge-dir" ]
+  run JL --out "$REPO/.vetdd/judge/c" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "a check-blind that could not run is a local failure (exit 1), not 'not blind' (Y5)" {
+  grep -q 'blind_rc' "$SCRIPTS/judge-layout.sh"
+}
+
+@test "a malformed meta.json fails the build instead of shipping an empty layout (Y6)" {
+  jq '.runs[0] = "x"' .vetdd/evidence/s1/meta.json > m && mv m .vetdd/evidence/s1/meta.json
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "an untracked file whose name starts with : is taken literally (Y7)" {
+  printf 'memo\n' > ':memo'
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF '+++ b/:memo' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "--allow-secrets passes to check-blind and to the printed judge command (Y8)" {
+  printf '# password = "hunter2hunter2"\n' >> test.sh
+  git add test.sh && git commit -q -m pw
+  record_good_slice s2 >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 4 ] || { echo "$output"; false; }
+  rm -rf "$BATS_TEST_TMPDIR/judge"
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets 'c1/artifact/tests/*:assignment' s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"--allow-secrets 'c1/artifact/tests/*:assignment'"* ]]
+}
+
+@test "the mutation audit's log is not sent as a red-run log, the undefined-imports audit's is" {
+  ev s1 calibration --audit undefined-imports -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  printf 'mkdir -p .vetdd/reports\nexit 1\n' > mrun.sh
+  ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1 || true
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local ui mu
+  ui="$(jq -r '[.runs[] | select(.audit.kind == "undefined-imports")][-1].log' .vetdd/evidence/s1/meta.json)"
+  mu="$(jq -r '[.runs[] | select(.audit.kind == "mutation")][-1].log' .vetdd/evidence/s1/meta.json)"
+  [ -f "$OUT/c1/evidence/s1/$ui" ]
+  [ ! -e "$OUT/c1/evidence/s1/$mu" ]
+}
