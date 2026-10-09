@@ -24,9 +24,12 @@
 # check-blind could not run); 2 usage error, or a binary file in the diff not named with --allow-binary
 # (nothing is written; git's base85 text of a binary file passes the blind and secret checks unseen);
 # 4 the result is not blind
-# (check-blind.sh's hits are printed; <dir> is left to inspect).
+# (check-blind.sh's hits are printed; <dir> is left to inspect, readable by the user only).
+# Everything written is private to the user (umask 077), and <dir> must be new, under directories only
+# the user or root can change (or sticky ones), so no other user can read it or swap it before the judge.
 set -u
-unset CDPATH
+unset CDPATH GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
+umask 077
 
 die() { printf 'judge-layout.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 
@@ -51,9 +54,7 @@ done
 [ -f "$reply" ] && [ ! -L "$reply" ] || die "--reply must be a regular file"
 . "$here/lib/secret-patterns.sh"
 for a in ${allow[@]+"${allow[@]}"}; do
-  case "$a" in *:*) for k in $(printf '%s' "${a##*:}" | tr ',' ' '); do
-    case " $VETDD_SECRET_KINDS " in *" $k "*) ;; *) die "--allow-secrets: unknown secret kind '$(printf '%s' "$k" | vetdd_printable)' (one of: $VETDD_SECRET_KINDS)" ;; esac
-  done ;; esac
+  err="$(vetdd_allow_secret_error "$a")" || die "$(printf '%s' "$err" | vetdd_printable)"
 done
 [ ! -e "$out" ] && [ ! -L "$out" ] || die "--out $out exists; give a new directory"
 
@@ -63,7 +64,7 @@ root="$(cd "$root" && pwd -P)"
 # prefix (macOS links /var, /tmp, and /etc there), and the logical path the caller's shell shows.
 prefix="$(git rev-parse --show-prefix 2>/dev/null)"; prefix="${prefix%/}"
 logical_root="${PWD%/}"; [ -z "$prefix" ] || logical_root="${logical_root%/"$prefix"}"
-short_root="${root#/private}"
+case "$root" in /private/*) short_root="${root#/private}" ;; *) short_root="$root" ;; esac
 git -C "$root" rev-parse --verify -q "$base^{commit}" >/dev/null || die "--base is not a commit: $(printf '%s' "$base" | vetdd_printable)"
 for s in "${slices[@]}"; do
   vetdd_is_slice_id "$s" || die "invalid slice id"
@@ -97,23 +98,38 @@ else
 fi
 while IFS= read -r -d '' f; do
   case "$f" in .vetdd|.vetdd/*) continue ;; esac
+  # A file staged and then removed is not in the delivered tree.
+  [ -e "$root/$f" ] || [ -L "$root/$f" ] || continue
   # -f: a file the repository's index added with git add -f is ignored; the untracked list has no ignored file.
   GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" add -f --intent-to-add -- "$f" \
     || die "could not add $(printf '%s' "$f" | vetdd_printable) to the temporary index" 1
   # Every new file leaves the machine in the diff: name each one, so the caller can see what goes out.
   printf 'judge-layout.sh: new file in the diff: %s\n' "$f" | vetdd_printable >&2
-done < <(GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z; git -C "$root" diff --cached --no-renames --name-only --diff-filter=A -z HEAD 2>/dev/null)
+done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
+             git -C "$root" diff --cached --no-renames --name-only --diff-filter=A -z HEAD 2>/dev/null; } | LC_ALL=C sort -zu)
 # Plumbing-stable output: no color, no textconv, the a/ b/ prefixes whatever the user's config says.
 diffopts=(--no-ext-diff --no-color --no-textconv --src-prefix=a/ --dst-prefix=b/)
 # A binary change would go out as base85 text, which neither check-blind nor the secret check reads.
+# -z: paths as they are (not quoted by core.quotePath); --no-renames: a renamed file under its new name.
 unallowed=""
-while IFS="$(printf '\t')" read -r added removed path; do
+while IFS= read -r -d '' rec; do
+  added="${rec%%$'\t'*}"; rest="${rec#*$'\t'}"; removed="${rest%%$'\t'*}"; path="${rest#*$'\t'}"
   [ "$added" = - ] && [ "$removed" = - ] || continue
   ok=0; for b in ${binaries[@]+"${binaries[@]}"}; do [ "$b" = "$path" ] && ok=1; done
   [ "$ok" -eq 1 ] || unallowed="$unallowed $path"
-done < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --numstat --end-of-options "$base" -- . ':(exclude).vetdd')
+done < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --numstat -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd')
 [ -z "$unallowed" ] || die "binary changes in the diff:$(printf '%s' "$unallowed" | vetdd_printable); name each one a human allowed to leave with --allow-binary <path>"
 
+# --out itself is made here, new (no -p), after its parents: each of those must be the user's or root's,
+# and not writable by others unless sticky, or someone else could rename the layout away and swap it.
+(mkdir -p -- "$(dirname -- "$abs")") || die "cannot create the parent of --out" 1
+a="$abs"
+while a="$(dirname -- "$a")"; do
+  [ -n "$(find "$a" -maxdepth 0 \( -user "$(id -u)" -o -user 0 \) \( \( ! -perm -020 ! -perm -002 \) -o -perm -1000 \) -print 2>/dev/null)" ] \
+    || die "--out: its parent $(printf '%s' "$a" | vetdd_printable) can be changed by another user; use a directory of your own (e.g. under \$TMPDIR)"
+  [ "$a" != / ] || break
+done
+mkdir -- "$abs" || die "--out $out exists or cannot be created; give a new directory"
 C="$out/c1"
 mkdir -p "$C/artifact/tests" || die "cannot create $out" 1
 GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --binary --end-of-options "$base" -- . ':(exclude).vetdd' > "$C/artifact/diff.patch" \
@@ -124,6 +140,8 @@ cp -- "$reply" "$C/artifact/reply.md" || die "cannot copy the reply" 1
 ce_rc=0
 (cd "$root" && "$here/check-evidence.sh" "${slices[@]}") > "$C/artifact/check-evidence.txt" 2>&1 || ce_rc=$?
 printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
+# 126 and 127: check-evidence.sh did not run; the judge would read a FAIL that is not one.
+[ "$ce_rc" -lt 126 ] || die "check-evidence.sh could not run (exit $ce_rc)" 1
 
 # The files to send for one slice, read from its record before anything is copied: a record that cannot
 # be read stops the build (exit 1) rather than ship an empty layout.
@@ -160,23 +178,26 @@ for s in "${slices[@]}"; do
         mkdir -p "$C/artifact/tests/$(dirname -- "$p")" && cp -- "$root/$p" "$C/artifact/tests/$p" || die "cannot copy an oracle file" 1 ;;
       L|M)
         # Named only by the runs/<seq>-<kind> pattern, and read only from inside the repository.
-        case "$p" in runs/[0-9][0-9][0-9]*-*.log|runs/[0-9][0-9][0-9]*-mutation.json) ;; *) continue ;; esac
-        case "$p" in */../*|*/./*) continue ;; esac
+        # A red-run log the record names must be there: without it the judge cannot see why the oracle failed.
+        bad="the record of $s names $(printf '%s' "$p" | vetdd_printable), which"
+        case "$p" in runs/[0-9][0-9][0-9]*-*.log|runs/[0-9][0-9][0-9]*-mutation.json) ;; *) die "$bad is not a runs/<seq>-<kind> file" 1 ;; esac
+        case "$p" in */../*|*/./*) die "$bad is not a runs/<seq>-<kind> file" 1 ;; esac
         rel=".vetdd/evidence/$s/$p"
-        vetdd_inside_repo "$root" "$rel" && [ -f "$root/$rel" ] || continue
+        vetdd_inside_repo "$root" "$rel" && [ -f "$root/$rel" ] || die "$bad is missing, a link, or outside the repository" 1
         cp -- "$root/$rel" "$C/evidence/$s/$p" || die "cannot copy $p of $s" 1 ;;
     esac
   done <<< "$list"
 done
 
 # Absolute paths of this machine never go to the judge: each spelling of the repository's path, only as
-# a whole path (followed by /, the end, or a character that is not part of a name).
+# a whole path (after file:// or a character that is not part of a path; followed by /, the end, a
+# period that ends a sentence, or a character that is not part of a name).
 find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue
   ROOT="$root" LROOT="$logical_root" SROOT="$short_root" perl -pi -e '
     BEGIN { my %s; @R = sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
             map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @ENV{qw(ROOT LROOT SROOT)} }
-    for my $r (@R) { s{(?<![\w.\-/\\])\Q$r\E(?=/|\\/|[^\w.-]|$)}{<repo>}g }' "$f" || exit 1
+    for my $r (@R) { s{(?:(?<=file://)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }' "$f" || exit 1
 done || die "could not replace the repository path" 1
 
 allow_args=()

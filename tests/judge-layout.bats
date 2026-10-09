@@ -283,3 +283,85 @@ setup() {
 @test "verify mode does not build its layout with judge-layout.sh, which does not copy verify artifacts" {
   ! sed -n '/^### B/,/^### C/p' "$SCRIPTS/../modes/verify.md" | grep -q 'judge-layout.sh' || false
 }
+
+# --- #28 -------------------------------------------------------------------------------------------
+
+@test "#28: --out and everything in it are private to the user, also when the build stops not blind (exit 4)" {
+  printf 'written by Claude\n' >> "$BATS_TEST_TMPDIR/reply.md"
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 4 ] || { echo "$output"; false; }
+  [ "$(ls -ld "$OUT" | cut -c1-10)" = "drwx------" ]
+  [ -z "$(find "$OUT" -perm -004 -o -perm -040 | head -1)" ]
+}
+
+@test "#28: an --out whose parent others could write without the sticky bit is refused; a private parent is fine" {
+  # Anyone who can write a directory without the sticky bit can rename the layout away and swap in another.
+  mkdir -m 777 "$BATS_TEST_TMPDIR/open"; chmod 777 "$BATS_TEST_TMPDIR/open"
+  run JL --out "$BATS_TEST_TMPDIR/open/c" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"parent"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/open/c" ]
+  # A missing parent is made private to the user.
+  run JL --out "$BATS_TEST_TMPDIR/new/deeper/c" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(ls -ld "$BATS_TEST_TMPDIR/new/deeper" | cut -c1-10)" = "drwx------" ]
+}
+
+@test "#28: a file:// URL and a path that ends a sentence have the repository path replaced too" {
+  printf 'at file://%s/src/x.mjs:3\nran in %s.\n' "$REPO" "$REPO" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF 'at file://<repo>/src/x.mjs:3' "$OUT/c1/evidence/s1/runs/001-before.log"
+  grep -qF 'ran in <repo>.' "$OUT/c1/evidence/s1/runs/001-before.log"
+  ! grep -rqF "$REPO" "$OUT" || false
+}
+
+@test "#28: --allow-binary matches a name with non-ASCII characters" {
+  printf 'a\0b' > "$(printf 'b\303\274.bin')"
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-binary "$(printf 'b\303\274.bin')" s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#28: --allow-binary matches a renamed binary by its new name" {
+  printf 'a\0b' > old.bin && git add old.bin && git commit -qm bin
+  git mv old.bin new.bin
+  # Both sides leave as base85 (git diff --binary carries the removed content as the reverse patch).
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-binary new.bin s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"old.bin"* ]]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-binary new.bin --allow-binary old.bin s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#28: an --allow-secrets value check-blind would refuse is a usage error before anything is written" {
+  local v
+  for v in 'c1/x:' 'c1/x:email,' ':email'; do
+    run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets "$v" s1
+    [ "$status" -eq 2 ] || { echo "$v: $output"; false; }
+    [ ! -e "$OUT" ]
+  done
+}
+
+@test "#28: a check-evidence.sh that cannot run stops the build (exit 1)" {
+  local fake="$BATS_TEST_TMPDIR/fakescripts"
+  cp -R "$SCRIPTS" "$fake"
+  chmod -x "$fake/check-evidence.sh"
+  run "$fake/judge-layout.sh" --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "#28: a red-run log the record names but the repository lacks stops the build (exit 1)" {
+  rm .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"001-before.log"* ]]
+}
+
+@test "#28: a staged new file removed from the working tree is skipped; a staged one is named once" {
+  printf 'gone\n' > gone.txt && git add gone.txt && rm gone.txt
+  printf 'kept\n' > kept.txt && git add kept.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(printf '%s\n' "$output" | grep -c 'new file in the diff: kept.txt')" -eq 1 ]
+  grep -q '^+++ b/kept.txt$' "$OUT/c1/artifact/diff.patch"
+}
