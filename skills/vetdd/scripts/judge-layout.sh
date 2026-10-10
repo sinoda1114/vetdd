@@ -17,9 +17,11 @@
 #                                         final oracle, when its report is usable); green logs stay here
 # <dir> must be outside the repository or under its .vetdd/ (anywhere else, its own files would change
 # the tree check-evidence hashes). Every copied text file has the repository's absolute path, as a whole
-# path, replaced with <repo>, and a .claude directory (where verify mode keeps its skill) renamed .agent,
-# in names and text alike, since the judge must not see the author's tool; then check-blind.sh --profile
-# judge runs on <dir>, with each
+# path, replaced with <repo>, and the user's home directory with <home> (unless HOME is a shared place
+# such as /tmp); a .claude directory (where verify mode keeps its skill) is renamed .agent, in names and
+# text alike, since the judge must not see the author's tool (.agent2, .agent3, ... when that name is
+# already in what is sent, so two paths never become one); then check-blind.sh --profile judge runs on
+# <dir>, with each
 # --allow-secrets (paths relative to <dir>, e.g. c1/artifact/tests/*:email, only for test data a human
 # confirmed), which the printed judge.sh command repeats. Run it on the delivered tree.
 # Exit 0 built (it prints the judge.sh command); 1 a local step failed (a record could not be read,
@@ -157,14 +159,6 @@ printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
 # 126 and 127: check-evidence.sh did not run; the judge would read a FAIL that is not one.
 [ "$ce_rc" -lt 126 ] || die "check-evidence.sh could not run (exit $ce_rc)" 1
 
-# agent_path <path>: the path with each .claude component renamed .agent (verify mode keeps its skill
-# under .claude/skills/, and the judge must not see the author's tool).
-agent_path() {
-  local p="/$1"
-  while [ "${p#*/.claude/}" != "$p" ]; do p="${p%%/.claude/*}/.agent/${p#*/.claude/}"; done
-  printf '%s' "${p#/}"
-}
-
 # The files to send for one slice, read from its record before anything is copied: a record that cannot
 # be read stops the build (exit 1) rather than ship an empty layout.
 SEND='
@@ -197,11 +191,7 @@ for s in "${slices[@]}"; do
       O)
         vetdd_inside_repo "$root" "$p" && [ -f "$root/$p" ] \
           || die "oracle file of $s is missing, a link, or outside the repository: $(printf '%s' "$p" | vetdd_printable)" 1
-        dest="$(agent_path "$p")"
-        # Two oracle files that become one name after the rename (.claude/x and .agent/x) stop the build.
-        [ ! -e "$C/artifact/tests/$dest" ] || cmp -s -- "$root/$p" "$C/artifact/tests/$dest" \
-          || die "oracle files of $s become one name when .claude/ is sent as .agent/: $(printf '%s' "$dest" | vetdd_printable)" 1
-        mkdir -p "$C/artifact/tests/$(dirname -- "$dest")" && cp -- "$root/$p" "$C/artifact/tests/$dest" || die "cannot copy an oracle file" 1 ;;
+        mkdir -p "$C/artifact/tests/$(dirname -- "$p")" && cp -- "$root/$p" "$C/artifact/tests/$p" || die "cannot copy an oracle file" 1 ;;
       L|M)
         # Named only by the runs/<seq>-<kind> pattern, and read only from inside the repository.
         # A red-run log the record names must be there: without it the judge cannot see why the oracle failed.
@@ -220,24 +210,31 @@ done
 # path; followed by /, the end, a period that ends a sentence, or a character that is not part of a name).
 home_phys="$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P)" || home_phys=""
 case "$home_phys" in /private/*) home_short="${home_phys#/private}" ;; *) home_short="" ;; esac
-home_log="${HOME%/}"
-for h in home_phys home_short home_log; do [ "${!h}" != / ] || printf -v "$h" '%s' ""; done
-# The rename of .claude to .agent must not make two different paths one.
-if grep -Eq '(^|[^[:alnum:]_.-])\.agent/' "$C/artifact/diff.patch" && grep -Eq '(^|[^[:alnum:]_.-])\.claude/' "$C/artifact/diff.patch"; then
-  die "the diff has both a .claude/ and an .agent/ path; sending .claude/ as .agent/ would make them one" 1
-fi
+home_log="${HOME:-}"; home_log="${home_log%/}"
+# A HOME in a shared place would turn other paths there into <home>: leave those alone.
+case "$home_phys" in ""|/|/tmp|/private/tmp|/var|/private/var|/var/tmp|/private/var/tmp) home_phys=""; home_short=""; home_log="" ;; esac
+# The name a .claude directory is sent as: .agent, or the first of .agent2, .agent3, ... that appears
+# nowhere in what is sent (as a name, or as a path component in text), so two paths never become one.
+tok=.agent; n=1
+while [ -n "$(find "$out" -name "$tok" -print 2>/dev/null | head -n 1)" ] \
+      || LC_ALL=C grep -rIqE '(^|[^[:alnum:]_.])\.'"${tok#.}"'(\\)?/' "$out"; do
+  n=$((n + 1)); tok=".agent$n"
+done
+find "$out" -depth -type d -name .claude | while IFS= read -r d; do
+  mv -- "$d" "$(dirname -- "$d")/$tok" || exit 1
+done || die "could not rename a .claude directory in the layout" 1
 find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue
-  ROOT="$root" LROOT="$logical_root" SROOT="$short_root" H1="$home_phys" H2="$home_short" H3="$home_log" perl -pi -e '
+  ROOT="$root" LROOT="$logical_root" SROOT="$short_root" H1="$home_phys" H2="$home_short" H3="$home_log" TOK="$tok" perl -pi -e '
     BEGIN { sub spell { my %s; sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
                         map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @_ }
             @R = spell(@ENV{qw(ROOT LROOT SROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
     for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
     for my $r (@H) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<home>}g }
     # A .claude directory, as a path component (also JSON-escaped, and on a removed line of the diff), is
-    # sent as .agent.
-    s{(?:(?<=^-)|(?<![\w.-]))\.claude(?=\\?/)}{.agent}g' "$f" || exit 1
-done || die "could not replace the repository path" 1
+    # sent under the free name chosen above.
+    s{(?:(?<=^-)|(?<![\w.-]))\.claude(?=\\?/)}{$ENV{TOK}}g' "$f" || exit 1
+done || die "could not replace the paths of this machine" 1
 
 allow_args=()
 for a in ${allow[@]+"${allow[@]}"}; do allow_args+=(--allow-secrets "$a"); done

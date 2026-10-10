@@ -418,12 +418,6 @@ setup() {
   [ -z "$(find "$OUT" -iname '*claude*')" ]
 }
 
-@test "#35: a model name elsewhere still stops the build (only the .claude directory is renamed)" {
-  printf 'written by Claude\n' >> "$BATS_TEST_TMPDIR/reply.md"
-  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
-  [ "$status" -eq 4 ]
-}
-
 @test "#35: test mode takes a surface slice's red as before while the fix is not in the tree, unfix once it is" {
   local l; l="$(grep -F 'another surface than the agreed unit seam' "$SCRIPTS/../modes/test.md")"
   [[ "$l" == *'as `before` while the fix is not in the tree'* ]]
@@ -452,17 +446,49 @@ setup() {
   grep -qx -- '-.agent/' "$OUT/c1/artifact/diff.patch"
 }
 
-@test "#35 r1: a .claude path and an .agent path that would meet after renaming stop the build (exit 1)" {
+@test "#35 r2: when .agent is taken, .claude is sent under a free name, so two oracle files never become one" {
   mkdir -p .claude/x .agent/x
-  printf 'one\n' > .claude/x/t.sh; printf 'two\n' > .agent/x/t.sh
+  printf 'same\n' > .claude/x/t.sh; printf 'same\n' > .agent/x/t.sh
   git add -f .claude .agent && git commit -qm both
   printf '0\n' > value.txt
   ev s3 before --seam unit --oracle-version v1 --oracle-file test.sh --oracle-file .claude/x/t.sh --oracle-file .agent/x/t.sh -- sh test.sh >/dev/null 2>&1
   printf '42\n' > value.txt
   ev s3 after -- sh test.sh >/dev/null 2>&1
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s3
-  [ "$status" -eq 1 ] || { echo "$output"; false; }
-  [[ "$output" == *".agent"* ]]
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$OUT/c1/artifact/tests/.agent/x/t.sh" ]
+  [ -f "$OUT/c1/artifact/tests/.agent2/x/t.sh" ]
+  grep -q '"\.agent/x/t\.sh"' "$OUT/c1/evidence/s3/meta.json"
+  grep -q '"\.agent2/x/t\.sh"' "$OUT/c1/evidence/s3/meta.json"
+}
+
+@test "#35 r2: different names under .claude/ and .agent/ build, each under its own name" {
+  mkdir -p .claude .agent && printf 'a\n' > .claude/x.sh && printf 'b\n' > .agent/y.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/.agent/y.sh$' "$OUT/c1/artifact/diff.patch"
+  grep -q '^+++ b/.agent2/x.sh$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#35 r2: a removed .agent/ line next to an added .claude/ line stays two different names" {
+  printf '.agent/\n' >> .gitignore && git add .gitignore && git commit -qm ignore
+  sed -i.bak 's#^\.agent/$#.claude/#' .gitignore && rm -f .gitignore.bak
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx -- '-.agent/' "$OUT/c1/artifact/diff.patch"
+  grep -qx -- '+.agent2/' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#35 r2: an unset HOME does not stop the build" {
+  run env -u HOME "$SCRIPTS/judge-layout.sh" --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#35 r2: a HOME in a shared place (/var) is not replaced" {
+  printf 'cache in /var/cache\n' >> .vetdd/evidence/s1/runs/001-before.log
+  HOME=/var run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF 'cache in /var/cache' "$OUT/c1/evidence/s1/runs/001-before.log"
 }
 
 @test "#35 r1: the user's home directory is replaced with <home> (a .claude path under it no longer stops the build)" {
