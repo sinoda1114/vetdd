@@ -33,7 +33,7 @@ Before any product code, present the agreement through `AskUserQuestion`: exactl
 |---|---|
 | Q1 acceptance | the behavior as an exact assertion, with its expected value and that value's source (a hand-worked example, the spec, a known-good output) |
 | Q2 seam | where the oracle sits, in the format of `references/seam-proposal.md` |
-| Q3 scope and run | which existing oracles must stay green (name the command); out of scope and known blind spots; target environment and the run conditions that can change the result; budget (number of subagents, retry cap default 3, wall-clock limit if any) |
+| Q3 scope and run | which existing oracles must stay green (name the command); out of scope and known blind spots; target environment and the run conditions that can change the result; budget (number of subagents, retry cap default 3, wall-clock limit if any); the parallel shape when it is not `single` (step 3: the shape, each unit's slice id, oracle file, and files, at most 3 concurrent workers by default), which is the hearing principle 8 asks for before concurrent writes |
 | Q4 what leaves the machine | external actions authorized in advance, naming what is sent and where (default: what `references/final-judge-rubric.md` "Layout" lists, to the judge's provider: the diff, the reply draft, the `check-evidence.sh` output, the oracle files, each slice's `meta.json` and red-run log, and, for a slice with a mutation audit, the copy of its judged mutation report, which holds the full source of each mutated product file and the test command run against each mutant; all other run logs stay local). `meta.json` records each command's arguments, so a secret passed on a command line would leave with it: pass secrets through the environment, never as arguments |
 
 Q3 carries one recommended default for all four of its parts when the change is small and reversible; break it out into a second call only when the human rejects the default. Record the answers in the reply's Oracle section.
@@ -44,7 +44,7 @@ If the human says the task is unclear, stop vetdd and run a hearing first (`Call
 
 ## 3. Choose the parallel shape
 
-Read `parallel/select.md` and apply its table. Most tasks are `single`. Before any shape with two or more concurrent writers (counting yourself), hold the hearing required by principle 8, then read `parallel/arena.md` or `parallel/swarm.md`.
+Read `parallel/select.md` and apply its table. Most tasks are `single`. Answer it before step 2 when you can, so the agreement covers the shape (Q3). Before any shape with two or more concurrent writers (counting yourself) that the agreement did not cover, stop and ask once (principle 8), then read `parallel/arena.md` or `parallel/swarm.md`.
 
 ## 4. Run the mode
 

@@ -35,6 +35,7 @@ Label each claim Measured (you ran it) or inferred.
 `<record instructions>` depends on the role:
 
 - author: "Record `before` first; it must end target_failure for the agreed reason. Then make the smallest change and record `after`; it must end pass."
+- swarm author (`parallel/swarm.md`): the author's text, then "Run the undefined-imports audit as `<test mode Audits text>` says, or record why it does not apply. Then commit your changes on the branch this worktree is on (`git add <the files you changed>` and `git commit`); never push, merge, rebase, or switch branches." In its brief, replace "Do not commit" in the Scope block with this.
 - refactorer: "Record only `after`, once, after your final edit (or once with no edit). Do not record `before`; the parent already recorded a calibration red for this slice. Leave out `--oracle-version` and `--oracle-file`: the slice keeps the oracle the parent recorded, and naming a different set or version fails check-evidence rule 8."
 - verifier or judge-side reader: "Do not record anything; read the evidence under .vetdd/evidence/ only."
 

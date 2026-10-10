@@ -14,10 +14,10 @@ Answer two questions after the oracle is agreed. Write the result in the todo li
 
 Rules that apply to every shape other than single:
 
-- Hearing first (principle 8): before two or more parties write concurrently, run a hearing on the requirements; ambiguity multiplies by N.
+- Hearing first (principle 8): before two or more parties write concurrently, agree on the shape and the units; ambiguity multiplies by N. When the shape is known at step 2 of SKILL.md, this is part of that agreement (Q3); otherwise stop once and ask before any worker starts.
 - One writer per worktree; readers may share. The parent does not write while workers write unless it was counted in the hearing.
 - Workers never touch the stash, global git config, or shared external services.
 - Before removing a worker's worktree, copy `.vetdd/evidence/<slice>/` into the main repository. If this is skipped, `check-evidence.sh` on the integrated tree fails with `schema: no meta.json for this slice`, and that failure is correct.
 - Completion is judged on the integrated tree with `integrated` evidence, never on a worker's slice.
 
-Until `parallel/arena.md` and `parallel/swarm.md` exist (Phase 6), any shape other than single ends the task in `blocked` with the reason "parallel mode not yet available"; do not improvise a fan-out.
+`parallel/swarm.md` is available. Until `parallel/arena.md` exists, an arena (and arena, then swarm) ends the task in `blocked` with the reason "arena not yet available"; do not improvise a fan-out.
