@@ -95,7 +95,7 @@ The config refuses an unset or empty value rather than run the whole suite silen
 
 Kill every survivor by strengthening the test (then bump the version and record its red and green, as for any test change). A mutant that cannot change behavior (an equivalent mutant) is disabled in the product code with `// Stryker disable next-line <mutator>: <reason>`, and the ignored count is a `WARN (10c: ...)` line whose mutants and reasons go into the reply's Attention.
 
-When no mutation tool exists for the language, record why with `audit-note.sh <slice> --kind mutation --not-applicable --reason-file <path>`. Once a mutation run of the final oracle exists, the latest one is judged and a note does not lift it; a run that went wrong (a missing or invalid report) is fixed by running the audit again. Rule 10c asks only a slice with a mutation run or note; it is a tripwire, not a boundary: it trusts the report, and the judge compares the ranges in the report's copy with the diff.
+When no mutation tool exists for the language, record why with `audit-note.sh <slice> --kind mutation --not-applicable --reason-file <path>`. Once a mutation run of the final oracle exists, the latest one is judged and a note does not lift it; a run that went wrong (a missing or invalid report) is fixed by running the audit again. Rule 10c asks every slice whose final oracle has a JS or TS file (`.js` `.jsx` `.mjs` `.cjs` `.ts` `.tsx` `.mts` `.cts`), which fails without a run or a note, and any other slice once it has a mutation run or note; it is a tripwire, not a boundary: it trusts the report, and the judge compares the ranges in the report's copy with the diff.
 
 ## After all slices are green: refactor by a separate agent (optional)
 

@@ -7,13 +7,16 @@ load test_helper
 
 setup() { make_repo; }
 
-# record_oracle <file> <content>: the content is the oracle file; the command is test.sh.
+# record_oracle <file> <content>: the content is the oracle file; the command is test.sh. A JS/TS
+# oracle is asked for the mutation audit (rule 10c, #25); these tests are about 9a, so it gets a note.
 record_oracle() {
   printf '%s\n' "$2" > "$1"
   printf '0\n' > value.txt
   ev s1 before --oracle-version v1 --oracle-file "$1" -- sh test.sh
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh
+  printf 'rule 9a test: no product to mutate\n' > "$BATS_TEST_TMPDIR/mut-note.txt"
+  "$SCRIPTS/audit-note.sh" s1 --kind mutation --not-applicable --reason-file "$BATS_TEST_TMPDIR/mut-note.txt" >/dev/null
 }
 
 @test "rule 9a fails an it.only in a TS oracle file and names the file and line" {

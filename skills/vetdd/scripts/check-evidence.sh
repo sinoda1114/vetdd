@@ -69,7 +69,8 @@
 #               recorded sha256), mutated and tested something, let no mutant survive or go uncovered,
 #               and its mutated files still hold the source it mutated; with no such run, a mutation
 #               note written after the final oracle first ran. Ignored mutants are a WARN (10c). Asked
-#               only of a slice with a mutation run or note. A tripwire, not a boundary: it trusts the
+#               of a slice whose final oracle has a JS or TS file (.js .jsx .mjs .cjs .ts .tsx .mts
+#               .cts), and of any other slice with a mutation run or note. A tripwire, not a boundary: it trusts the
 #               report (what Stryker mutated and how it ran), and the ranges are the judge's to check.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
 #         "<slice>: WARN (9c|10c: <reason>)" line per warning (advice for the reply's Attention section;
@@ -283,7 +284,8 @@ def audited: .audit.kind == "undefined-imports";
 
 # Rule 10c, over the accepted runs and the audits log: the mutation audit of the final oracle. One JSON
 # object: problems and warnings (rule text with run numbers only), and the files of the judged run for
-# the shell to hash. Asked only of a slice with a mutation run or a mutation note.
+# the shell to hash. Asked of a slice whose final oracle has a JS or TS file, and of any other slice with
+# a mutation run or a mutation note.
 MUTATION_RULES='
 # A not_applicable note counts for the final oracle when it was written after that oracle first ran:
 # by after_seq (the last run number then) when it has one, else by its time (a note written before
@@ -300,7 +302,10 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
 . as $meta
 | [.runs[] | select(.accepted != false and usable)] as $acc
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
-| (([$meta.runs[] | mut] | any) or ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation")] | length > 0)) as $opted
+# A final oracle with a JS or TS file is always asked (#25: Stryker covers those languages); any other
+# slice only once it has a mutation run or note.
+| (([$meta.runs[] | mut] | any) or ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation")] | length > 0)
+   or ($g != null and ([$g.oracle.files[]? | .path? | strings | select(test("\\.([cm]?[jt]s|[jt]sx)$"))] | length > 0))) as $opted
 | if ($opted | not) or $g == null then {problems: [], warns: [], files: [], copy: null}
   else
     ($g | oid) as $fo

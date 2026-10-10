@@ -680,3 +680,43 @@ kata_cfg() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"set VETDD_MUTATION_TESTS"* ]]
 }
+
+# --- #25: a JS/TS oracle is asked for the mutation audit (owner's decision 2026-10-10: FAIL) -------
+
+# jsts_slice <slice> <oracle file>: a red-then-green slice whose oracle is that file.
+jsts_slice() {
+  cp test.sh "$2" && git add -- "$2" && git commit -q -m "oracle $2"
+  printf '0\n' > value.txt
+  ev "$1" before --seam unit --oracle-version v1 --oracle-file "$2" -- sh test.sh
+  printf '42\n' > value.txt
+  ev "$1" after -- sh test.sh
+}
+
+@test "#25: a slice whose final oracle has a JS or TS file fails without a mutation run or note" {
+  local f
+  for f in a.test.ts b.test.tsx c.test.mts d.test.cts e.test.js f.test.jsx g.test.mjs h.test.cjs; do
+    jsts_slice "s-${f%%.*}" "$f" >/dev/null 2>&1
+    run check "s-${f%%.*}"
+    [ "$status" -eq 1 ] || { echo "$f: $output"; false; }
+    [[ "$output" == *"FAIL (10c: no mutation audit"* ]] || { echo "$f: $output"; false; }
+  done
+}
+
+@test "#25: a JS or TS oracle is satisfied by a mutation note written after it first ran" {
+  jsts_slice s1 a.test.ts >/dev/null 2>&1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)" >/dev/null
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "#25: an oracle with no JS or TS file is still not asked" {
+  jsts_slice s1 check.py >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "#25: test mode says a JS or TS oracle is always asked for the mutation audit" {
+  grep -q 'Rule 10c asks every slice whose final oracle has a JS or TS file' "$SCRIPTS/../modes/test.md"
+}
