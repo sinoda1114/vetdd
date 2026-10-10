@@ -305,7 +305,7 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
 # A final oracle with a JS or TS file is always asked (#25: Stryker covers those languages); any other
 # slice only once it has a mutation run or note.
 | (([$meta.runs[] | mut] | any) or ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation")] | length > 0)
-   or ($g != null and ([$g.oracle.files[]? | .path? | strings | select(test("\\.([cm]?[jt]s|[jt]sx)$"))] | length > 0))) as $opted
+   or ($g != null and ([$g.oracle.files[]? | .path? | strings | select(test("\\.([cm]?[jt]s|[jt]sx)$"; "i"))] | length > 0))) as $opted
 | if ($opted | not) or $g == null then {problems: [], warns: [], files: [], copy: null}
   else
     ($g | oid) as $fo

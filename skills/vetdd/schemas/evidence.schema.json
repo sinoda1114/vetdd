@@ -18,7 +18,7 @@
       "items": { "$ref": "#/$defs/oracleVersion" }
     },
     "audits": {
-      "description": "Why an audit does not apply to this slice, written by scripts/audit-note.sh; absent when none was recorded. Once the key exists with an undefined-imports entry or empty (or a run carries an undefined-imports audit mark), check-evidence rule 10b asks for an undefined-imports audit of the final oracle: an accepted audit run, or an entry here. A mutation entry is the rule 10c alternative to a mutation run, for a language with no mutation tool; a mutation run or entry is what makes rule 10c ask.",
+      "description": "Why an audit does not apply to this slice, written by scripts/audit-note.sh; absent when none was recorded. Once the key exists with an undefined-imports entry or empty (or a run carries an undefined-imports audit mark), check-evidence rule 10b asks for an undefined-imports audit of the final oracle: an accepted audit run, or an entry here. A mutation entry is the rule 10c alternative to a mutation run, for a language with no mutation tool or a slice that changed no runtime product code. Rule 10c asks every slice whose final oracle has a JS or TS file, and any other slice with a mutation run or entry.",
       "type": "array",
       "items": { "$ref": "#/$defs/auditNote" }
     }

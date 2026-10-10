@@ -720,3 +720,25 @@ jsts_slice() {
 @test "#25: test mode says a JS or TS oracle is always asked for the mutation audit" {
   grep -q 'Rule 10c asks every slice whose final oracle has a JS or TS file' "$SCRIPTS/../modes/test.md"
 }
+
+@test "#25 r1: the extension is matched ignoring letter case, as rule 9a does" {
+  jsts_slice s1 Foo.test.TS >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"FAIL (10c: no mutation audit"* ]]
+}
+
+@test "#25 r1: a JS or TS slice that changes no runtime code is told to record a note (test mode, rung 11, schema)" {
+  local p; p="$(sed -n '/^### Mutation/,/^## /p' "$SCRIPTS/../modes/test.md" | tr '\n' ' ')"
+  [[ "$p" == *"changed no runtime product code"* ]]
+  grep -q 'mutation note' "$SCRIPTS/../references/feedback-loop-ladder.md"
+  jq -r '.. | .description? // empty' "$SCRIPTS/../schemas/evidence.schema.json" | grep -q 'JS or TS file'
+}
+
+@test "#25 r1: a type-test slice (a .ts type test and tsconfig.json) with a mutation note is OK" {
+  printf '{}\n' > tsconfig.json
+  jsts_slice s1 d.typetest.ts >/dev/null 2>&1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)" >/dev/null
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
