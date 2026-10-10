@@ -503,3 +503,14 @@ setup() {
 @test "#35 r1: verify mode's node_modules link survives a sandbox reused for the next mutant (ln -sfn)" {
   grep -q 'ln -sfn ../../node_modules node_modules' "$SCRIPTS/../modes/verify.md"
 }
+
+# --- Phase 6 swarm ---------------------------------------------------------------------------------
+
+@test "a swarm worker's worktree path (<repo>.vetdd-wt/<slice>) in a log is replaced with <repo>" {
+  printf ' RUN  v5 %s.vetdd-wt/s1\nat %s.vetdd-wt/s1/src/x.ts:3\n' "$REPO" "$REPO" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx ' RUN  v5 <repo>' "$OUT/c1/evidence/s1/runs/001-before.log"
+  grep -qx 'at <repo>/src/x.ts:3' "$OUT/c1/evidence/s1/runs/001-before.log"
+  if grep -rqF "vetdd-wt" "$OUT"; then grep -rnF vetdd-wt "$OUT"; false; fi
+}

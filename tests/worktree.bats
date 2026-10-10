@@ -137,3 +137,25 @@ unit() {
   grep -q 'arena' "$SCRIPTS/../parallel/select.md"
   grep -q 'parallel shape' "$SCRIPTS/../SKILL.md"
 }
+
+@test "evidence.sh integrated --rerun runs the command of the slice's last after run, from the same directory" {
+  unit sa test.sh value.txt 42
+  # A coverage oracle recorded as integrated in between is not what --rerun runs.
+  ev sa integrated -- sh -c 'true' >/dev/null 2>&1
+  run ev sa integrated --rerun
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .cmd | join(" ")')" = "sh test.sh" ]
+  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .outcome')" = pass ]
+  # Not with a command, not for another kind, not from another directory, not without a green run.
+  run ev sa integrated --rerun -- sh test.sh
+  [ "$status" -eq 2 ]
+  run ev sa before --rerun
+  [ "$status" -eq 2 ]
+  (cd sub && run ev sa integrated --rerun; [ "$status" -eq 2 ])
+  run ev nogreen integrated --rerun
+  [ "$status" -eq 2 ]
+}
+
+@test "swarm.md integrates each unit with evidence.sh integrated --rerun" {
+  grep -q 'integrated --rerun' "$SCRIPTS/../parallel/swarm.md"
+}

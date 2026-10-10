@@ -4,6 +4,10 @@
 #                    [--oracle-version <v>] [--oracle-file <path>]... [--test-report jest-json:<path>]
 #                    [--audit undefined-imports | --audit mutation --mutation-report stryker-json:<path>]
 #                    -- <command...>
+#        evidence.sh <slice-id> integrated --rerun
+#          runs again the command of the slice's last accepted `after` run (its own test command, not a
+#          coverage oracle recorded later), which must have run from the current directory (a swarm
+#          parent integrating units it did not type)
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
@@ -47,7 +51,7 @@ case "$kind" in
 esac
 
 outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "
-oracle_files=(); report_opt=""; audit_opt=""; mreport_opt=""; mreport_set=0
+oracle_files=(); report_opt=""; audit_opt=""; mreport_opt=""; mreport_set=0; rerun=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --outcome) [ $# -ge 2 ] || die "--outcome needs a value"; outcome_opt="$2"; shift 2 ;;
@@ -69,11 +73,17 @@ while [ $# -gt 0 ]; do
     --mutation-report) [ $# -ge 2 ] || die "--mutation-report needs stryker-json:<path>"
       case "$2" in stryker-json:?*) mreport_opt="${2#stryker-json:}"; mreport_set=1 ;; *) die "--mutation-report takes stryker-json:<path>" ;; esac
       shift 2 ;;
+    --rerun) rerun=1; shift ;;
     --) shift; break ;;
     *) die "unexpected argument '$1' (put the command after --)" ;;
   esac
 done
-[ $# -ge 1 ] || die "no command given after --"
+if [ "$rerun" -eq 1 ]; then
+  [ $# -eq 0 ] || die "--rerun takes no command: it runs the slice's recorded one"
+  [ "$kind" = integrated ] || die "--rerun goes with an integrated run only"
+else
+  [ $# -ge 1 ] || die "no command given after --"
+fi
 [ -z "$audit_opt" ] || [ "$kind" = calibration ] || die "--audit goes with a calibration run only"
 if [ "$audit_opt" = mutation ]; then
   [ "$mreport_set" -eq 1 ] || die "--audit mutation needs --mutation-report stryker-json:<path>"
@@ -89,6 +99,20 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git rep
 root="$(cd "$root" && pwd -P)"
 prefix="$(git rev-parse --show-prefix)"
 cwd_rel="${prefix%/}"; [ -n "$cwd_rel" ] || cwd_rel="."
+
+if [ "$rerun" -eq 1 ]; then
+  rmeta="$root/.vetdd/evidence/$slice/meta.json"
+  [ -f "$rmeta" ] && [ ! -L "$rmeta" ] || die "--rerun: no evidence for slice $slice"
+  last="$(jq -c '[.runs[]? | select(.accepted != false and .kind == "after" and .outcome == "pass")] | last // empty' "$rmeta" 2>/dev/null)" \
+    || die "--rerun: cannot read the evidence of slice $slice"
+  [ -n "$last" ] || die "--rerun: slice $slice has no accepted after run to rerun"
+  [ "$(printf '%s' "$last" | jq -r '.conditions.cwd // empty')" = "$cwd_rel" ] \
+    || die "--rerun: the slice's last green run ran from $(printf '%s' "$last" | jq -r '.conditions.cwd // "?"'), not from $cwd_rel"
+  rcmd=()
+  while IFS= read -r -d '' a; do rcmd+=("$a"); done < <(printf '%s' "$last" | jq -j '.cmd[]? | strings | ., "\u0000"')
+  [ ${#rcmd[@]} -gt 0 ] || die "--rerun: the slice's last green run has no command"
+  set -- "${rcmd[@]}"
+fi
 
 # Resolve oracle files to repo-relative paths before running anything.
 rel_files=()

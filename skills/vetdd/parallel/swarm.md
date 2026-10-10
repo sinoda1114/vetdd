@@ -18,9 +18,9 @@ One writer per unit, each in its own worktree, each recording its own red and gr
 4. **Integrate in series.** In the main repository, for each unit in the agreed order:
    1. `git merge --no-ff --no-edit vetdd/<slice>`.
    2. `"$VETDD/scripts/worktree.sh" remove <slice>`: it brings back the unit's evidence, verify artifacts, and notes, removes the worktree, and deletes the merged branch.
-   3. Record `integrated` for every unit merged so far (`evidence.sh <slice> integrated -- <its command>`).
+   3. Record `integrated` for every unit merged so far: `"$VETDD/scripts/evidence.sh" <slice> integrated --rerun` runs the command the unit's own green run recorded, so none is typed again.
    If the merge conflicts (`git merge --abort`) or an `integrated` run of any unit is red (`git reset --hard ORIG_HEAD`, which leaves `.vetdd/` alone, then record `integrated` again for the units merged before it), do not fix it by hand: the split was wrong for that unit (`parallel/select.md` Q2). Note it in the reply's Attention, take the unit's evidence back with `worktree.sh remove` (its unmerged branch is kept; delete it with `git branch -D vetdd/<slice>` once noted), and after the other units are in, run it again as a new unit with a new slice id (`<slice>-2`) from the integrated tree, through steps 1–4. Leave the abandoned slice id out of Close.
-5. **Close** as the mode file says, on the integrated tree, for every merged slice id: Close step 1's `integrated` runs, the mutation audit of each slice, `check-evidence.sh <every slice>`, and one judge layout with every slice (`judge-layout.sh ... <every slice>`).
+5. **Close** as the mode file says, on the integrated tree, for every merged slice id: Close step 1's `integrated` runs (each slice's own command with `--rerun`, and every coverage oracle the agreement named, such as the whole suite and the type check), the mutation audit of each slice, `check-evidence.sh <every slice>`, and one judge layout with every slice (`judge-layout.sh ... <every slice>`).
 
 ## Rules for workers
 
