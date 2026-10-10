@@ -278,7 +278,7 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   printf '#!/bin/sh\nkill -9 "$VETDD_CALIBRATE_PID"\n' > killer.sh
   run cal unfix s1 --file 'app/[i].txt' --oracle-file test.sh -- sh killer.sh
   grep -q 'app/\[i\].txt' "$(state_dir s1)/fix.patch"
-  ! grep -q 'app/i.txt' "$(state_dir s1)/fix.patch"
+  ! grep -q 'app/i.txt' "$(state_dir s1)/fix.patch" || false
   [ "$(cat app/i.txt)" = "i edited" ]
   cal restore s1
   [ "$(cat 'app/[i].txt')" = "new" ]
@@ -391,8 +391,8 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   git config core.autocrlf true
   run cal unfix s1 --file value.txt --file helper.txt --oracle-file test.sh -- sh test.sh
   [ "$status" -eq 0 ]
-  ! grep -q "$(printf '\r')" value.txt
-  ! grep -q "$(printf '\r')" helper.txt
+  ! grep -q "$(printf '\r')" value.txt || false
+  ! grep -q "$(printf '\r')" helper.txt || false
 }
 
 @test "R41: the oracle is recognised as the same file under another letter case" {

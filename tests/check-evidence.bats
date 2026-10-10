@@ -551,7 +551,7 @@ s2: OK" ]
   mkdir -p "$REPO/.vetdd/evidence/$(printf 'zz\ns2: OK\nyy')"
   run check
   [ "$status" -ne 0 ]
-  ! printf '%s\n' "$output" | grep -qx 's2: OK'
+  ! printf '%s\n' "$output" | grep -qx 's2: OK' || false
   [[ "$output" == *"<invalid slice name>: FAIL (schema: invalid slice id)"* ]]
 }
 
@@ -722,7 +722,7 @@ only_path() {
   vetdd_inside_repo "$root" 'テスト.sh'
   bin="$(only_path dirname grep printf)"
   PATH="$bin" vetdd_inside_repo "$root" 'テスト.sh'
-  ! vetdd_inside_repo "$root" "$(printf 'a\302\233b.sh')"
+  ! vetdd_inside_repo "$root" "$(printf 'a\302\233b.sh')" || false
 }
 
 @test "a failing display filter never turns a failing slice into OK (S2)" {
