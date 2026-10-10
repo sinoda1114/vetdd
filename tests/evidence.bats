@@ -199,7 +199,7 @@ setup() { make_repo; }
 @test "conditions record sorted VETDD_ env var names only" {
   VETDD_ZETA=1 VETDD_ALPHA=secret OTHER_VAR=1 ev s1 calibration -- true
   [ "$(mq s1 '.runs[0].conditions.env_keys | join(",")')" = "VETDD_ALPHA,VETDD_ZETA" ]
-  ! grep -q secret "$REPO/.vetdd/evidence/s1/meta.json"
+  ! grep -q secret "$REPO/.vetdd/evidence/s1/meta.json" || false
 }
 
 @test "conditions record node_version when node exists" {

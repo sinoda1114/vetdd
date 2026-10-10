@@ -248,8 +248,8 @@ COPY1() { printf '%s' "$REPO/.vetdd/evidence/s1/runs/001-before.tests.json"; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"9b: "* ]]
   [[ "$output" == *"evil"* ]]
-  ! printf '%s' "$output" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')"
-  ! printf '%s\n' "$output" | grep -qx 's1: OK'
+  ! printf '%s' "$output" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" || false
+  ! printf '%s\n' "$output" | grep -qx 's1: OK' || false
 }
 
 @test "rule 9b lists at most 5 tests and says how many more" {

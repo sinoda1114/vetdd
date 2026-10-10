@@ -241,7 +241,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   # config.testRunner (#21): which Stryker runner produced the report.
   [ "$(jq -c '.config | keys' "$c")" = '["command","mutate","testRunner"]' ]
   [ "$(jq -c '[.files[].mutants[] | keys] | unique' "$c")" = '[["id","location","mutatorName","replacement","status"]]' ]
-  ! grep -q 'ignore the survivors\|secret-plugin' "$c"
+  ! grep -q 'ignore the survivors\|secret-plugin' "$c" || false
   [ "$(mq s1 '.runs[-1].audit.report.sha256')" = "$(sha256_of "$c")" ]
   [ "$(jq -j '.files["src/dueDate.ts"].source' "$c")" = "$(cat src/dueDate.ts)" ]
 }

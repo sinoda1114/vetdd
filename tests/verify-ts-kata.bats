@@ -262,5 +262,5 @@ copy_fixture() {
 @test "SKILL.md states what exit 2 means as implemented (node, tsx, probe)" {
   grep -q 'could not observe' "$SKILL/SKILL.md"
   grep -q 'probe' "$SKILL/SKILL.md"
-  ! grep -q '(node or tsx missing)' "$SKILL/SKILL.md"
+  ! grep -q '(node or tsx missing)' "$SKILL/SKILL.md" || false
 }
