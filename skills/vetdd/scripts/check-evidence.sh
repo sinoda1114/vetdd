@@ -75,6 +75,8 @@
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
 #         "<slice>: WARN (9c|10c: <reason>)" line per warning (advice for the reply's Attention section;
 #         it holds no recorded text).
+# --before-close (the pre-commit hook): a slice whose mutation audit has not run yet gets a 10c WARN, not
+#         a FAIL, since the audit waits for Close; every other failure stays a FAIL.
 # Exit code: number of failing slices (capped at 125; a WARN line never counts); 2 on usage errors.
 set -u
 
@@ -86,9 +88,11 @@ vetdd_require_jq check-evidence.sh
 
 repo="."
 slices=()
+before_close=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) [ $# -ge 2 ] || die "--repo needs a value"; repo="$2"; shift 2 ;;
+    --before-close) before_close=true; shift ;;
     -*) die "unknown option '$1'" ;;
     *) slices+=("$1"); shift ;;
   esac
@@ -318,8 +322,11 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
     | ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation" and .status == "not_applicable"
           and (.reason | type) == "string" and (.reason | length) > 0 and counts_for($first; $first_seq))] | length) as $noted
     | if $m == null then
-        {copy: null, problems: (if $noted > 0 then [] else ["10c: no mutation audit for the final oracle after its last green run; run VETDD_MUTATION_TESTS=<the slice'"'"'s test files, one per line> evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>"] end),
-         warns: [], files: []}
+        ("10c: no mutation audit for the final oracle after its last green run; run VETDD_MUTATION_TESTS=<the slice'"'"'s test files, one per line> evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>") as $missing
+        # Before Close (the pre-commit hook) the audit is not due yet: say so, do not block.
+        | if $noted > 0 then {copy: null, problems: [], warns: [], files: []}
+          elif $before_close then {copy: null, problems: [], warns: [$missing + " (due in Close; not yet run)"], files: []}
+          else {copy: null, problems: [$missing], warns: [], files: []} end
       else
         ($m.seq | num) as $s | $m.audit.report as $rep
         | if ($rep | type) != "object" then error("no report")
@@ -540,7 +547,7 @@ check_slice() {
 # are hashed here: each must still hold the source the report mutated.
 check_mutation() {
   local slice="$1" meta="$2" out path sum seq rel tr
-  if ! out="$(jq -c --arg slice "$slice" "$MUTATION_RULES" "$meta" 2>/dev/null)" \
+  if ! out="$(jq -c --arg slice "$slice" --argjson before_close "$before_close" "$MUTATION_RULES" "$meta" 2>/dev/null)" \
      || ! printf '%s' "$out" | jq -e '(.problems | type) == "array" and (.warns | type) == "array" and (.files | type) == "array"' >/dev/null 2>&1; then
     echo "10c: could not evaluate the mutation audit (a run's audit record or the audits log is malformed)"
     return

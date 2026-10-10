@@ -51,7 +51,8 @@ done
 failed=0
 if [ ${#slices[@]} -gt 0 ]; then
   say "staged oracle files touch slice(s): ${slices[*]}; running check-evidence.sh"
-  "$VETDD_SCRIPTS_DIR/check-evidence.sh" --repo "$root" "${slices[@]}" >&2
+  # --before-close: a commit before Close is not blocked for the mutation audit, which waits for Close.
+  "$VETDD_SCRIPTS_DIR/check-evidence.sh" --before-close --repo "$root" "${slices[@]}" >&2
   failed=$?
 elif [ "$invalid" -eq 0 ]; then
   say "no staged file belongs to a slice oracle; nothing to check"

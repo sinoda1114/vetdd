@@ -198,3 +198,25 @@ warned_oracle_edit() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"s1: WARN (9c: "* ]]
 }
+
+@test "#25: a JS/TS slice committed before Close is not blocked for its missing mutation audit (a WARN says it comes in Close)" {
+  printf 'it("x", () => {});\n' > a.test.ts && git add a.test.ts && git commit -qm oracle
+  printf '0\n' > value.txt
+  ev s1 before --seam unit --oracle-version v1 --oracle-file a.test.ts -- sh test.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  printf '// more\n' >> a.test.ts
+  printf '0\n' > value.txt
+  ev s1 before --seam unit --oracle-version v2 --oracle-file a.test.ts -- sh test.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  git add a.test.ts
+  run hook
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (10c: no mutation audit"*"Close"* ]] || { echo "$output"; false; }
+  # check-evidence on its own (Close step 3) still fails it.
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"s1: FAIL (10c: no mutation audit"* ]]
+}
+
