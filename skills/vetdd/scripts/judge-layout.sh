@@ -198,6 +198,9 @@ for s in "${slices[@]}"; do
         vetdd_inside_repo "$root" "$p" && [ -f "$root/$p" ] \
           || die "oracle file of $s is missing, a link, or outside the repository: $(printf '%s' "$p" | vetdd_printable)" 1
         dest="$(agent_path "$p")"
+        # Two oracle files that become one name after the rename (.claude/x and .agent/x) stop the build.
+        [ ! -e "$C/artifact/tests/$dest" ] || cmp -s -- "$root/$p" "$C/artifact/tests/$dest" \
+          || die "oracle files of $s become one name when .claude/ is sent as .agent/: $(printf '%s' "$dest" | vetdd_printable)" 1
         mkdir -p "$C/artifact/tests/$(dirname -- "$dest")" && cp -- "$root/$p" "$C/artifact/tests/$dest" || die "cannot copy an oracle file" 1 ;;
       L|M)
         # Named only by the runs/<seq>-<kind> pattern, and read only from inside the repository.
@@ -212,17 +215,28 @@ for s in "${slices[@]}"; do
   done <<< "$list"
 done
 
-# Absolute paths of this machine never go to the judge: each spelling of the repository's path, only as
-# a whole path (after file:// or a character that is not part of a path; followed by /, the end, a
-# period that ends a sentence, or a character that is not part of a name).
+# Absolute paths of this machine never go to the judge: each spelling of the repository's path, then of
+# the user's home directory, only as a whole path (after file:// or a character that is not part of a
+# path; followed by /, the end, a period that ends a sentence, or a character that is not part of a name).
+home_phys="$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P)" || home_phys=""
+case "$home_phys" in /private/*) home_short="${home_phys#/private}" ;; *) home_short="" ;; esac
+home_log="${HOME%/}"
+for h in home_phys home_short home_log; do [ "${!h}" != / ] || printf -v "$h" '%s' ""; done
+# The rename of .claude to .agent must not make two different paths one.
+if grep -Eq '(^|[^[:alnum:]_.-])\.agent/' "$C/artifact/diff.patch" && grep -Eq '(^|[^[:alnum:]_.-])\.claude/' "$C/artifact/diff.patch"; then
+  die "the diff has both a .claude/ and an .agent/ path; sending .claude/ as .agent/ would make them one" 1
+fi
 find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue
-  ROOT="$root" LROOT="$logical_root" SROOT="$short_root" perl -pi -e '
-    BEGIN { my %s; @R = sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
-            map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @ENV{qw(ROOT LROOT SROOT)} }
+  ROOT="$root" LROOT="$logical_root" SROOT="$short_root" H1="$home_phys" H2="$home_short" H3="$home_log" perl -pi -e '
+    BEGIN { sub spell { my %s; sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
+                        map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @_ }
+            @R = spell(@ENV{qw(ROOT LROOT SROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
     for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
-    # A .claude directory, as a path component (also JSON-escaped), is sent as .agent.
-    s{(?<![\w.-])\.claude(?=\\?/)}{.agent}g' "$f" || exit 1
+    for my $r (@H) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<home>}g }
+    # A .claude directory, as a path component (also JSON-escaped, and on a removed line of the diff), is
+    # sent as .agent.
+    s{(?:(?<=^-)|(?<![\w.-]))\.claude(?=\\?/)}{.agent}g' "$f" || exit 1
 done || die "could not replace the repository path" 1
 
 allow_args=()

@@ -434,6 +434,46 @@ setup() {
   grep -q 'node_modules.*symbolic link\|symbolic link.*node_modules' "$SCRIPTS/../modes/verify.md"
 }
 
-@test "#35: the rubric's Layout says .claude/ is sent as .agent/" {
+@test "#35: the rubric's Layout says the author's tool directory is sent as .agent/" {
   grep -q '\.agent/' "$SCRIPTS/../references/final-judge-rubric.md"
+}
+
+@test "#35 r1: the real final rubric passes the judge's blind check (judge.sh copies it into the judge's input)" {
+  mkdir -p "$BATS_TEST_TMPDIR/rb" && cp "$SCRIPTS/../references/final-judge-rubric.md" "$BATS_TEST_TMPDIR/rb/rubric.md"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/rb" --profile judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#35 r1: a removed line naming .claude/ in the diff is renamed too" {
+  printf '.claude/\n' >> .gitignore && git add .gitignore && git commit -qm ignore
+  sed -i.bak '$d' .gitignore && rm -f .gitignore.bak
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx -- '-.agent/' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#35 r1: a .claude path and an .agent path that would meet after renaming stop the build (exit 1)" {
+  mkdir -p .claude/x .agent/x
+  printf 'one\n' > .claude/x/t.sh; printf 'two\n' > .agent/x/t.sh
+  git add -f .claude .agent && git commit -qm both
+  printf '0\n' > value.txt
+  ev s3 before --seam unit --oracle-version v1 --oracle-file test.sh --oracle-file .claude/x/t.sh --oracle-file .agent/x/t.sh -- sh test.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s3 after -- sh test.sh >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s3
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *".agent"* ]]
+}
+
+@test "#35 r1: the user's home directory is replaced with <home> (a .claude path under it no longer stops the build)" {
+  local home; home="$(cd -P "$HOME" && pwd -P)"
+  printf 'ran %s/.claude/skills/vetdd/scripts/evidence.sh\n' "$HOME" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF 'ran <home>/.agent/skills/vetdd/scripts/evidence.sh' "$OUT/c1/evidence/s1/runs/001-before.log"
+  if grep -rqF "$home/" "$OUT"; then grep -rnF "$home/" "$OUT"; false; fi
+}
+
+@test "#35 r1: verify mode's node_modules link survives a sandbox reused for the next mutant (ln -sfn)" {
+  grep -q 'ln -sfn ../../node_modules node_modules' "$SCRIPTS/../modes/verify.md"
 }
