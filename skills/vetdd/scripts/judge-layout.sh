@@ -74,6 +74,8 @@ done
 
 # Where --out really is: the deepest existing ancestor resolved physically, the rest as written.
 case "$out" in /*) abs="$out" ;; *) abs="$PWD/$out" ;; esac
+while [ "$abs" != / ] && [ "${abs%/}" != "$abs" ]; do abs="${abs%/}"; done
+[ "$abs" != / ] || die "--out must name a new directory"
 # A . or .. in the path would be resolved later, by mkdir, past this check.
 case "/$abs/" in */./*|*/../*) die "--out must not hold a . or .. component" ;; esac
 d="$(dirname -- "$abs")"; tail="/${abs##*/}"
@@ -84,6 +86,18 @@ case "$abs/" in
   "$root"/.vetdd/*) ;;
   "$root"/*) die "--out must be outside the repository or under its .vetdd/: its own files would change the tree check-evidence hashes" ;;
 esac
+# Every existing ancestor (resolved physically, so no link on the way can be swapped later) must be the
+# user's or root's, and not writable by group or others unless sticky; otherwise someone else could
+# rename the layout away and put another in its place before the judge reads it. ACLs are not checked.
+a="$d"
+while :; do
+  [ -n "$(find "$a" -maxdepth 0 \( -user "$(id -u)" -o -user 0 \) \( \( ! -perm -020 ! -perm -002 \) -o -perm -1000 \) -print 2>/dev/null)" ] \
+    || die "--out: its parent $(printf '%s' "$a" | vetdd_printable) is not the user's or root's, or is writable by group or others without the sticky bit; use a directory of your own (e.g. under \${TMPDIR:-/tmp})"
+  [ "$a" != / ] || break
+  a="$(dirname -- "$a")"
+done
+# From here on, only the checked physical path is used.
+out="$abs"
 
 # The diff, with new files: a temporary index (in a private temporary directory) holds HEAD plus
 # intent-to-add entries for every file not in it: untracked ones listed against that index, and files the
@@ -120,16 +134,14 @@ while IFS= read -r -d '' rec; do
 done < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --numstat -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd')
 [ -z "$unallowed" ] || die "binary changes in the diff:$(printf '%s' "$unallowed" | vetdd_printable); name each one a human allowed to leave with --allow-binary <path>"
 
-# --out itself is made here, new (no -p), after its parents: each of those must be the user's or root's,
-# and not writable by others unless sticky, or someone else could rename the layout away and swap it.
-(mkdir -p -- "$(dirname -- "$abs")") || die "cannot create the parent of --out" 1
-a="$abs"
-while a="$(dirname -- "$a")"; do
-  [ -n "$(find "$a" -maxdepth 0 \( -user "$(id -u)" -o -user 0 \) \( \( ! -perm -020 ! -perm -002 \) -o -perm -1000 \) -print 2>/dev/null)" ] \
-    || die "--out: its parent $(printf '%s' "$a" | vetdd_printable) can be changed by another user; use a directory of your own (e.g. under \$TMPDIR)"
-  [ "$a" != / ] || break
+# The missing directories, then --out itself, one level at a time and each new (no -p, so nothing put
+# there in the meantime is followed), private to the user (umask 077).
+a="${d%/}"; rest="${tail#/}"
+while [ "${rest#*/}" != "$rest" ]; do
+  a="$a/${rest%%/*}"; rest="${rest#*/}"
+  mkdir -- "$a" || die "cannot create $(printf '%s' "$a" | vetdd_printable)" 1
 done
-mkdir -- "$abs" || die "--out $out exists or cannot be created; give a new directory"
+mkdir -- "$abs" || die "--out $(printf '%s' "$abs" | vetdd_printable) exists or cannot be created; give a new directory"
 C="$out/c1"
 mkdir -p "$C/artifact/tests" || die "cannot create $out" 1
 GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --binary --end-of-options "$base" -- . ':(exclude).vetdd' > "$C/artifact/diff.patch" \
@@ -197,7 +209,7 @@ find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   ROOT="$root" LROOT="$logical_root" SROOT="$short_root" perl -pi -e '
     BEGIN { my %s; @R = sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
             map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @ENV{qw(ROOT LROOT SROOT)} }
-    for my $r (@R) { s{(?:(?<=file://)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }' "$f" || exit 1
+    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }' "$f" || exit 1
 done || die "could not replace the repository path" 1
 
 allow_args=()

@@ -252,7 +252,8 @@ setup() {
   # The printed --candidates value, read back by a shell, is the directory itself.
   eval "set -- $cmd"
   local cand=""; while [ $# -gt 0 ]; do [ "$1" = --candidates ] && cand="$2"; shift; done
-  [ "$cand" = "$BATS_TEST_TMPDIR/it's dir" ] || { echo "got [$cand]"; false; }
+  # The physical path judge-layout.sh checked (the test directory may sit behind a link such as /var).
+  [ "$cand" = "$(cd -P "$BATS_TEST_TMPDIR" && pwd -P)/it's dir" ] || { echo "got [$cand]"; false; }
 }
 
 @test "a check-blind that could not run is exit 1, not 4 (Y5, by behavior)" {
@@ -364,4 +365,35 @@ setup() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(printf '%s\n' "$output" | grep -c 'new file in the diff: kept.txt')" -eq 1 ]
   grep -q '^+++ b/kept.txt$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#28 r1: an --out with a trailing slash is built (its parent exists)" {
+  mkdir -p "$(dirname "$OUT")"
+  run JL --out "$OUT/" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$OUT/c1/artifact/diff.patch" ]
+}
+
+@test "#28 r1: the layout is built at the checked physical path, not through a link another user could swap" {
+  mkdir -m 700 "$BATS_TEST_TMPDIR/safe"; ln -s "$BATS_TEST_TMPDIR/safe" "$BATS_TEST_TMPDIR/link"
+  local phys; phys="$(cd -P "$BATS_TEST_TMPDIR/safe" && pwd -P)"
+  run JL --out "$BATS_TEST_TMPDIR/link/c" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"built $phys/c"* ]]
+  [[ "$output" == *"--candidates $phys/c"* ]]
+}
+
+@test "#28 r1: under an unsafe parent nothing is created, not even the missing directories in between" {
+  mkdir -m 777 "$BATS_TEST_TMPDIR/open"; chmod 777 "$BATS_TEST_TMPDIR/open"
+  run JL --out "$BATS_TEST_TMPDIR/open/new/c" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ ! -e "$BATS_TEST_TMPDIR/open/new" ]
+}
+
+@test "#28 r1: a file: URL with JSON-escaped slashes has the repository path replaced" {
+  local esc; esc="$(printf '%s' "$REPO" | sed 's#/#\\/#g')"
+  printf '{"u":"file:\\/\\/%s\\/x.mjs"}\n' "$esc" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF '"file:\/\/<repo>\/x.mjs"' "$OUT/c1/evidence/s1/runs/001-before.log"
 }
