@@ -220,3 +220,26 @@ warned_oracle_edit() {
   [[ "$output" == *"s1: FAIL (10c: no mutation audit"* ]]
 }
 
+
+@test "#25: a hook installed before #25 (no --before-close) still only warns before Close" {
+  local old="$BATS_TEST_TMPDIR/oldhooks"; mkdir -p "$old"
+  sed 's/ --before-close//' "$SCRIPTS/hooks/pre-commit" > "$old/pre-commit"; chmod +x "$old/pre-commit"
+  ! grep -q -- '--before-close' "$old/pre-commit" || false
+  printf 'it("x", () => {});\n' > a.test.ts && git add a.test.ts && git commit -qm oracle
+  printf '0\n' > value.txt
+  ev s1 before --seam unit --oracle-version v1 --oracle-file a.test.ts -- sh test.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  printf '// more\n' >> a.test.ts
+  printf '0\n' > value.txt
+  ev s1 before --seam unit --oracle-version v2 --oracle-file a.test.ts -- sh test.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  git add a.test.ts
+  VETDD_SCRIPTS_DIR="$SCRIPTS" run "$old/pre-commit"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (10c: no mutation audit"* ]]
+  # Outside a hook, check-evidence.sh still fails it.
+  run check s1
+  [ "$status" -eq 1 ]
+}

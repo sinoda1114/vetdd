@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Check recorded evidence (plan §2.4).
-# Usage: check-evidence.sh [--repo <dir>] [<slice-id>...]
+# Usage: check-evidence.sh [--repo <dir>] [--before-close] [<slice-id>...]
 # History:  (1) a red run precedes the first green run, and no red before follows the last green
 #           (2) accepted before runs are target_failure
 #           (3) accepted after/integrated runs are pass, and the latest after/integrated run passed
@@ -75,7 +75,8 @@
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
 #         "<slice>: WARN (9c|10c: <reason>)" line per warning (advice for the reply's Attention section;
 #         it holds no recorded text).
-# --before-close (the pre-commit hook): a slice whose mutation audit has not run yet gets a 10c WARN, not
+# --before-close (the pre-commit hook; also VETDD_BEFORE_CLOSE=1, which lib/common.sh sets in any
+#         pre-commit hook): a slice whose mutation audit has not run yet gets a 10c WARN, not
 #         a FAIL, since the audit waits for Close; every other failure stays a FAIL.
 # Exit code: number of failing slices (capped at 125; a WARN line never counts); 2 on usage errors.
 set -u
@@ -89,6 +90,8 @@ vetdd_require_jq check-evidence.sh
 repo="."
 slices=()
 before_close=false
+# Set by lib/common.sh in a pre-commit hook (a hook installed before #25 does not pass the option).
+[ "${VETDD_BEFORE_CLOSE:-}" = 1 ] && before_close=true
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) [ $# -ge 2 ] || die "--repo needs a value"; repo="$2"; shift 2 ;;
