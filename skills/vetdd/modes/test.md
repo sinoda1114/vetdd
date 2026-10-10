@@ -95,7 +95,7 @@ The config refuses an unset or empty value rather than run the whole suite silen
 
 Kill every survivor by strengthening the test (then bump the version and record its red and green, as for any test change). A mutant that cannot change behavior (an equivalent mutant) is disabled in the product code with `// Stryker disable next-line <mutator>: <reason>`, and the ignored count is a `WARN (10c: ...)` line whose mutants and reasons go into the reply's Attention.
 
-When no mutation tool exists for the language, record why with `audit-note.sh <slice> --kind mutation --not-applicable --reason-file <path>`. Once a mutation run of the final oracle exists, the latest one is judged and a note does not lift it; a run that went wrong (a missing or invalid report) is fixed by running the audit again. Rule 10c asks only a slice with a mutation run or note; it is a tripwire, not a boundary: it trusts the report, and the judge compares the ranges in the report's copy with the diff.
+When no mutation tool exists for the language, or the slice changed no runtime product code (a type test of rung 11, a slice that only adds tests), record why with `audit-note.sh <slice> --kind mutation --not-applicable --reason-file <path>`. Once a mutation run of the final oracle exists, the latest one is judged and a note does not lift it; a run that went wrong (a missing or invalid report) is fixed by running the audit again. Rule 10c asks every slice whose final oracle has a JS or TS file (`.js` `.jsx` `.mjs` `.cjs` `.ts` `.tsx` `.mts` `.cts`), which fails without a run or a note (evidence recorded before #25 included: record the audit or the note again; the pre-commit hook only warns before Close, since the audit is not due yet), and any other slice once it has a mutation run or note; it is a tripwire, not a boundary: it trusts the report, and the judge compares the ranges in the report's copy with the diff.
 
 ## After all slices are green: refactor by a separate agent (optional)
 
@@ -115,7 +115,7 @@ Read the refactorer's diff yourself. Reject any change that alters an assertion,
    ```
    Leave out `--oracle-version` and `--oracle-file`: the run keeps the slice's oracle, and naming another set or an earlier version fails check-evidence rule 8. All must end `pass`. Earlier `after` runs stay as history; only this last record has to match the delivered tree.
 
-2. **Run the mutation audit** for every slice that changed product code (`VETDD_MUTATION_TESTS=... "$VETDD/scripts/evidence.sh" <slice> calibration --audit mutation ...`, as "Audits" › "Mutation" says), now that no green run follows. A later slice or the refactor may have moved that slice's lines: run it on the lines the slice's behavior lives in now (`git diff <base>` shows where they moved).
+2. **Run the mutation audit** for every slice that changed product code (`VETDD_MUTATION_TESTS=... "$VETDD/scripts/evidence.sh" <slice> calibration --audit mutation ...`, as "Audits" › "Mutation" says), now that no green run follows; a JS or TS slice that changed no runtime product code records a mutation note instead. A later slice or the refactor may have moved that slice's lines: run it on the lines the slice's behavior lives in now (`git diff <base>` shows where they moved).
 
 3. `"$VETDD/scripts/check-evidence.sh" <every slice id>` on the delivered tree, with no edits in between. Quote the output.
 

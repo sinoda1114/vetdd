@@ -2,7 +2,8 @@
 # Rule 10c (PR7b): the mutation audit of the final oracle. The latest mutation run recorded after a
 # green run of the final oracle must have a usable report that mutated something, with no survived and
 # no uncovered mutant, of product files that have not changed since. Ignored mutants (Stryker disable
-# comments) are a WARN. A slice that never ran a mutation audit or wrote a mutation note is not asked.
+# comments) are a WARN. A slice whose final oracle has a JS or TS file is always asked (#25); any other
+# slice only once it ran a mutation audit or wrote a mutation note.
 # Also: audit-note.sh --kind mutation, the copy's location rebuilt, the docs, and real Stryker (opt-in).
 
 load test_helper
@@ -679,4 +680,84 @@ kata_cfg() {
   run sh -c "cd '$P' && VETDD_MUTATION_TESTS= node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
   [ "$status" -ne 0 ]
   [[ "$output" == *"set VETDD_MUTATION_TESTS"* ]]
+}
+
+# --- #25: a JS/TS oracle is asked for the mutation audit (owner's decision 2026-10-10: FAIL) -------
+
+# jsts_slice <slice> <oracle file>: a red-then-green slice whose oracle is that file.
+jsts_slice() {
+  cp test.sh "$2" && git add -- "$2" && git commit -q -m "oracle $2"
+  printf '0\n' > value.txt
+  ev "$1" before --seam unit --oracle-version v1 --oracle-file "$2" -- sh test.sh
+  printf '42\n' > value.txt
+  ev "$1" after -- sh test.sh
+}
+
+@test "#25: a slice whose final oracle has a JS or TS file fails without a mutation run or note" {
+  local f
+  for f in a.test.ts b.test.tsx c.test.mts d.test.cts e.test.js f.test.jsx g.test.mjs h.test.cjs; do
+    jsts_slice "s-${f%%.*}" "$f" >/dev/null 2>&1
+    run check "s-${f%%.*}"
+    [ "$status" -eq 1 ] || { echo "$f: $output"; false; }
+    [[ "$output" == *"FAIL (10c: no mutation audit"* ]] || { echo "$f: $output"; false; }
+  done
+}
+
+@test "#25: a JS or TS oracle is satisfied by a mutation note written after it first ran" {
+  jsts_slice s1 a.test.ts >/dev/null 2>&1
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)" >/dev/null
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "#25: an oracle with no JS or TS file is still not asked" {
+  jsts_slice s1 check.py >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "#25: test mode says a JS or TS oracle is always asked for the mutation audit" {
+  grep -q 'Rule 10c asks every slice whose final oracle has a JS or TS file' "$SCRIPTS/../modes/test.md"
+}
+
+@test "#25 r1: the extension is matched ignoring letter case, as rule 9a does" {
+  jsts_slice s1 Foo.test.TS >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"FAIL (10c: no mutation audit"* ]]
+}
+
+@test "#25 r1: a JS or TS slice that changes no runtime code is told to record a note (test mode, rung 11, schema)" {
+  local p; p="$(mut_section "$SCRIPTS/../modes/test.md")"
+  [[ "$p" == *"changed no runtime product code"* ]]
+  [[ "$p" == *"pre-commit hook only warns"* ]]
+  grep -q 'mutation note' "$SCRIPTS/../references/feedback-loop-ladder.md"
+  jq -r '.. | .description? // empty' "$SCRIPTS/../schemas/evidence.schema.json" | grep -q 'JS or TS file'
+}
+
+@test "#25 r1: a type-test slice (a .ts type test and tsconfig.json) with a mutation note is OK" {
+  printf '{}\n' > tsconfig.json && git add tsconfig.json && git commit -qm tsconfig
+  cp test.sh d.typetest.ts && git add d.typetest.ts && git commit -qm oracle
+  printf '0\n' > value.txt
+  ev s1 before --seam unit --oracle-version v1 --oracle-file d.typetest.ts --oracle-file tsconfig.json -- sh test.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  an s1 --kind mutation --not-applicable --reason-file "$(note_file)" >/dev/null
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#25: --before-close (the pre-commit hook) turns only the missing audit into a WARN; a survived mutant still fails" {
+  jsts_slice s1 a.test.ts >/dev/null 2>&1
+  run "$SCRIPTS/check-evidence.sh" --before-close s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (10c: no mutation audit"*"Close"* ]]
+  mutation s1 "$(report)"
+  run "$SCRIPTS/check-evidence.sh" --before-close s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: FAIL (10c: mutation run"*"survived"* ]]
 }

@@ -1,5 +1,10 @@
 # Shared helpers for vetdd scripts (bash 3.2 compatible; builtins only until jq is confirmed).
 
+# A pre-commit hook sources this file from the installed scripts, whatever its own copy's age: mark its
+# environment, so check-evidence.sh treats it as --before-close even when a hook installed before #25
+# does not pass the option (the mutation audit is not due before Close).
+case "${0##*/}" in pre-commit) export VETDD_BEFORE_CLOSE=1 ;; esac
+
 # vetdd_require_jq <script-name>: exit 2 with an install hint when jq is missing.
 vetdd_require_jq() {
   command -v jq >/dev/null 2>&1 && return 0
