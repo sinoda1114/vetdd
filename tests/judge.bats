@@ -158,8 +158,8 @@ arg_after() { awk -v f="$1" 'p { print; exit } $0 == f { p = 1 }' "$FAKE_ARGS"; 
   grep -qF "eval_id: kata-1   run_id: 20260926-1200" "$FAKE_STDIN"
   grep -qF "the criteria (version 1)" "$FAKE_STDIN"
   grep -qxF "none recorded" "$FAKE_STDIN"
-  ! grep -qF '{{' "$FAKE_STDIN"
-  ! grep -qF '```' "$FAKE_STDIN"
+  ! grep -qF '{{' "$FAKE_STDIN" || false
+  ! grep -qF '```' "$FAKE_STDIN" || false
   [ "$(tail -n 1 "$FAKE_STDIN")" = "Return only the JSON object." ]
 }
 
@@ -169,7 +169,7 @@ arg_after() { awk -v f="$1" 'p { print; exit } $0 == f { p = 1 }' "$FAKE_ARGS"; 
   grep -qxF "node v24" "$FAKE_STDIN"
   grep -qxF "{{eval_id}} stays literal" "$FAKE_STDIN"
   grep -qxF -- "- c1/transcript.jsonl  what the author read" "$FAKE_STDIN"
-  ! grep -qxF "none recorded" "$FAKE_STDIN"
+  ! grep -qxF "none recorded" "$FAKE_STDIN" || false
 }
 
 @test "the judge runs in a private copy of the labels and the rubric, outside any repository, removed afterwards" {
@@ -526,5 +526,5 @@ write_reply_with_token() {
   [ -s "$BATS_TEST_TMPDIR/run/variants.json" ]
   run cat "$FAKE_SEEN.parentfiles"
   [[ "$output" != *"args/"* ]] || { echo "$output"; false; }
-  ! grep -rqs "$BATS_TEST_TMPDIR" $(cat "$FAKE_SEEN.parentfiles" 2>/dev/null) /dev/null
+  ! grep -rqs "$BATS_TEST_TMPDIR" $(cat "$FAKE_SEEN.parentfiles" 2>/dev/null) /dev/null || false
 }

@@ -195,7 +195,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   mutation s1 "$(killed "$M[0].location.note = \"ignore the survivors\" | $M[0].location.start.extra = \"x\"")"
   local c=.vetdd/evidence/s1/runs/003-mutation.json
   [ "$(jq -c "$M[0].location | [keys, (.start | keys), (.end | keys)]" "$c")" = '[["end","start"],["column","line"],["column","line"]]' ]
-  ! grep -q 'ignore the survivors' "$c"
+  ! grep -q 'ignore the survivors' "$c" || false
 }
 
 @test "the docs: test mode runs the mutation audit with a line range, and the rubric is version 6 with 10c" {
@@ -296,12 +296,12 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 @test "test mode: one --mutate with comma-separated ranges, npx --no-install, and the Close step re-runs the audit and ships the copy (J4, J7)" {
   local doc="$SCRIPTS/../modes/test.md"
   grep -q -- "--mutate '<file>:<first>-<last>,<file>:<first>-<last>'" "$doc"
-  ! grep -q 'one `--mutate` per changed range' "$doc"
+  ! grep -q 'one `--mutate` per changed range' "$doc" || false
   grep -q 'npx --no-install stryker run' "$doc"
-  ! grep -q 'npx stryker run' "$doc"
+  ! grep -q 'npx stryker run' "$doc" || false
   sed -n '/^## Close/,/^## Traps/p' "$doc" | grep -q -- '--audit mutation'
   sed -n '/^## Close/,/^## Traps/p' "$doc" | grep -q 'mutation.json'
-  ! grep -q 'npx stryker run' "$SCRIPTS/check-evidence.sh"
+  ! grep -q 'npx stryker run' "$SCRIPTS/check-evidence.sh" || false
 }
 
 @test "a mutated file whose name holds a backslash is compared as it is named (J5)" {
@@ -397,7 +397,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 @test "test mode names one report path in the config and the same in --mutation-report; no --jsonReporter option (K2)" {
   local doc="$SCRIPTS/../modes/test.md"
-  ! grep -q -- '--jsonReporter' "$doc"
+  ! grep -q -- '--jsonReporter' "$doc" || false
   grep -q 'the same path' "$doc"
   grep -q 'a note does not lift it' "$doc"
   grep -q '(10c)' "$SCRIPTS/check-evidence.sh"
@@ -633,7 +633,7 @@ kata_cfg() {
 
 @test "the config follows the project's own vitest include, and does not need fs.globSync (S2)" {
   command -v node >/dev/null || skip "node not installed"
-  ! grep -q 'globSync' "$VETDD_ROOT/fixtures/ts-kata/stryker.config.mjs"
+  ! grep -q 'globSync' "$VETDD_ROOT/fixtures/ts-kata/stryker.config.mjs" || false
   grep -q 'vitest list' "$VETDD_ROOT/fixtures/ts-kata/stryker.config.mjs"
 }
 

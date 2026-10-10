@@ -780,7 +780,7 @@ audit_run() {
   local doc="$SCRIPTS/../modes/test.md"
   # The step-5 sentence about a vacuous test must name the order that gives a red on the new version.
   grep -q 'oracle-version.sh.*calibrate.sh unfix' "$doc"
-  ! grep -q 'record its `before` again, and audit again' "$doc"
+  ! grep -q 'record its `before` again, and audit again' "$doc" || false
 }
 
 # --- round 3 ---------------------------------------------------------------------------------------
@@ -811,7 +811,7 @@ audit_run() {
 @test "the rubric judges the test text whether or not an audit ran, and wants the audit log to show the test's own failure" {
   local rub="$BATS_TEST_DIRNAME/../skills/vetdd/references/final-judge-rubric.md" sec
   sec="$(sed -n '/^## 3\. /,/^## 4\. /p' "$rub")"
-  ! printf '%s' "$sec" | grep -q 'where a slice has no `audit` run'
+  ! printf '%s' "$sec" | grep -q 'where a slice has no `audit` run' || false
   printf '%s' "$sec" | grep -q 'does not provide an export named'
 }
 
@@ -832,7 +832,7 @@ audit_run() {
 }
 
 @test "audit-note.sh does not name a skill eval as a slice it applies to" {
-  ! sed -n 1,8p "$SCRIPTS/audit-note.sh" | grep -q 'eval'
+  ! sed -n 1,8p "$SCRIPTS/audit-note.sh" | grep -q 'eval' || false
 }
 
 # --- round 5 ---------------------------------------------------------------------------------------
