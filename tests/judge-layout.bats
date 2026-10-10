@@ -397,3 +397,109 @@ setup() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -qF '"file:\/\/<repo>\/x.mjs"' "$OUT/c1/evidence/s1/runs/001-before.log"
 }
+
+# --- #35 -------------------------------------------------------------------------------------------
+
+@test "#35: a verify script under .claude/skills/ does not stop the blind check: the directory is sent as .agent/" {
+  mkdir -p .claude/skills/verify-x
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > .claude/skills/verify-x/verify-a.sh
+  git add .claude && git commit -qm verify
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file .claude/skills/verify-x/verify-a.sh -- sh .claude/skills/verify-x/verify-a.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh .claude/skills/verify-x/verify-a.sh >/dev/null 2>&1
+  printf 'new\n' > .claude/skills/verify-x/notes.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD~1 s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$OUT/c1/artifact/tests/.agent/skills/verify-x/verify-a.sh" ]
+  grep -q '^+++ b/.agent/skills/verify-x/notes.txt$' "$OUT/c1/artifact/diff.patch"
+  grep -q '"\.agent/skills/verify-x/verify-a\.sh"' "$OUT/c1/evidence/s2/meta.json"
+  if grep -rqi 'claude' "$OUT"; then grep -rni claude "$OUT"; false; fi
+  [ -z "$(find "$OUT" -iname '*claude*')" ]
+}
+
+@test "#35: test mode takes a surface slice's red as before while the fix is not in the tree, unfix once it is" {
+  local l; l="$(grep -F 'another surface than the agreed unit seam' "$SCRIPTS/../modes/test.md")"
+  [[ "$l" == *'as `before` while the fix is not in the tree'* ]]
+  [[ "$l" == *'`calibrate.sh unfix` once it is'* ]]
+}
+
+@test "#35: verify mode warns that Stryker does not link a node_modules that is itself a link" {
+  grep -q 'node_modules.*symbolic link\|symbolic link.*node_modules' "$SCRIPTS/../modes/verify.md"
+}
+
+@test "#35: the rubric's Layout says the author's tool directory is sent as .agent/" {
+  grep -q '\.agent/' "$SCRIPTS/../references/final-judge-rubric.md"
+}
+
+@test "#35 r1: the real final rubric passes the judge's blind check (judge.sh copies it into the judge's input)" {
+  mkdir -p "$BATS_TEST_TMPDIR/rb" && cp "$SCRIPTS/../references/final-judge-rubric.md" "$BATS_TEST_TMPDIR/rb/rubric.md"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/rb" --profile judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#35 r1: a removed line naming .claude/ in the diff is renamed too" {
+  printf '.claude/\n' >> .gitignore && git add .gitignore && git commit -qm ignore
+  sed -i.bak '$d' .gitignore && rm -f .gitignore.bak
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx -- '-.agent/' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#35 r2: when .agent is taken, .claude is sent under a free name, so two oracle files never become one" {
+  mkdir -p .claude/x .agent/x
+  printf 'same\n' > .claude/x/t.sh; printf 'same\n' > .agent/x/t.sh
+  git add -f .claude .agent && git commit -qm both
+  printf '0\n' > value.txt
+  ev s3 before --seam unit --oracle-version v1 --oracle-file test.sh --oracle-file .claude/x/t.sh --oracle-file .agent/x/t.sh -- sh test.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s3 after -- sh test.sh >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s3
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$OUT/c1/artifact/tests/.agent/x/t.sh" ]
+  [ -f "$OUT/c1/artifact/tests/.agent2/x/t.sh" ]
+  grep -q '"\.agent/x/t\.sh"' "$OUT/c1/evidence/s3/meta.json"
+  grep -q '"\.agent2/x/t\.sh"' "$OUT/c1/evidence/s3/meta.json"
+}
+
+@test "#35 r2: different names under .claude/ and .agent/ build, each under its own name" {
+  mkdir -p .claude .agent && printf 'a\n' > .claude/x.sh && printf 'b\n' > .agent/y.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/.agent/y.sh$' "$OUT/c1/artifact/diff.patch"
+  grep -q '^+++ b/.agent2/x.sh$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#35 r2: a removed .agent/ line next to an added .claude/ line stays two different names" {
+  printf '.agent/\n' >> .gitignore && git add .gitignore && git commit -qm ignore
+  sed -i.bak 's#^\.agent/$#.claude/#' .gitignore && rm -f .gitignore.bak
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx -- '-.agent/' "$OUT/c1/artifact/diff.patch"
+  grep -qx -- '+.agent2/' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#35 r2: an unset HOME does not stop the build" {
+  run env -u HOME "$SCRIPTS/judge-layout.sh" --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#35 r2: a HOME in a shared place (/var) is not replaced" {
+  printf 'cache in /var/cache\n' >> .vetdd/evidence/s1/runs/001-before.log
+  HOME=/var run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF 'cache in /var/cache' "$OUT/c1/evidence/s1/runs/001-before.log"
+}
+
+@test "#35 r1: the user's home directory is replaced with <home> (a .claude path under it no longer stops the build)" {
+  local home; home="$(cd -P "$HOME" && pwd -P)"
+  printf 'ran %s/.claude/skills/vetdd/scripts/evidence.sh\n' "$HOME" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qF 'ran <home>/.agent/skills/vetdd/scripts/evidence.sh' "$OUT/c1/evidence/s1/runs/001-before.log"
+  if grep -rqF "$home/" "$OUT"; then grep -rnF "$home/" "$OUT"; false; fi
+}
+
+@test "#35 r1: verify mode's node_modules link survives a sandbox reused for the next mutant (ln -sfn)" {
+  grep -q 'ln -sfn ../../node_modules node_modules' "$SCRIPTS/../modes/verify.md"
+}
