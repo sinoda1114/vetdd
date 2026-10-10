@@ -397,3 +397,43 @@ setup() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -qF '"file:\/\/<repo>\/x.mjs"' "$OUT/c1/evidence/s1/runs/001-before.log"
 }
+
+# --- #35 -------------------------------------------------------------------------------------------
+
+@test "#35: a verify script under .claude/skills/ does not stop the blind check: the directory is sent as .agent/" {
+  mkdir -p .claude/skills/verify-x
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > .claude/skills/verify-x/verify-a.sh
+  git add .claude && git commit -qm verify
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file .claude/skills/verify-x/verify-a.sh -- sh .claude/skills/verify-x/verify-a.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh .claude/skills/verify-x/verify-a.sh >/dev/null 2>&1
+  printf 'new\n' > .claude/skills/verify-x/notes.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD~1 s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$OUT/c1/artifact/tests/.agent/skills/verify-x/verify-a.sh" ]
+  grep -q '^+++ b/.agent/skills/verify-x/notes.txt$' "$OUT/c1/artifact/diff.patch"
+  grep -q '"\.agent/skills/verify-x/verify-a\.sh"' "$OUT/c1/evidence/s2/meta.json"
+  if grep -rqi 'claude' "$OUT"; then grep -rni claude "$OUT"; false; fi
+  [ -z "$(find "$OUT" -iname '*claude*')" ]
+}
+
+@test "#35: a model name elsewhere still stops the build (only the .claude directory is renamed)" {
+  printf 'written by Claude\n' >> "$BATS_TEST_TMPDIR/reply.md"
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 4 ]
+}
+
+@test "#35: test mode takes a surface slice's red as before while the fix is not in the tree, unfix once it is" {
+  local l; l="$(grep -F 'another surface than the agreed unit seam' "$SCRIPTS/../modes/test.md")"
+  [[ "$l" == *'as `before` while the fix is not in the tree'* ]]
+  [[ "$l" == *'`calibrate.sh unfix` once it is'* ]]
+}
+
+@test "#35: verify mode warns that Stryker does not link a node_modules that is itself a link" {
+  grep -q 'node_modules.*symbolic link\|symbolic link.*node_modules' "$SCRIPTS/../modes/verify.md"
+}
+
+@test "#35: the rubric's Layout says .claude/ is sent as .agent/" {
+  grep -q '\.agent/' "$SCRIPTS/../references/final-judge-rubric.md"
+}

@@ -17,7 +17,9 @@
 #                                         final oracle, when its report is usable); green logs stay here
 # <dir> must be outside the repository or under its .vetdd/ (anywhere else, its own files would change
 # the tree check-evidence hashes). Every copied text file has the repository's absolute path, as a whole
-# path, replaced with <repo>; then check-blind.sh --profile judge runs on <dir>, with each
+# path, replaced with <repo>, and a .claude directory (where verify mode keeps its skill) renamed .agent,
+# in names and text alike, since the judge must not see the author's tool; then check-blind.sh --profile
+# judge runs on <dir>, with each
 # --allow-secrets (paths relative to <dir>, e.g. c1/artifact/tests/*:email, only for test data a human
 # confirmed), which the printed judge.sh command repeats. Run it on the delivered tree.
 # Exit 0 built (it prints the judge.sh command); 1 a local step failed (a record could not be read,
@@ -155,6 +157,14 @@ printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
 # 126 and 127: check-evidence.sh did not run; the judge would read a FAIL that is not one.
 [ "$ce_rc" -lt 126 ] || die "check-evidence.sh could not run (exit $ce_rc)" 1
 
+# agent_path <path>: the path with each .claude component renamed .agent (verify mode keeps its skill
+# under .claude/skills/, and the judge must not see the author's tool).
+agent_path() {
+  local p="/$1"
+  while [ "${p#*/.claude/}" != "$p" ]; do p="${p%%/.claude/*}/.agent/${p#*/.claude/}"; done
+  printf '%s' "${p#/}"
+}
+
 # The files to send for one slice, read from its record before anything is copied: a record that cannot
 # be read stops the build (exit 1) rather than ship an empty layout.
 SEND='
@@ -187,7 +197,8 @@ for s in "${slices[@]}"; do
       O)
         vetdd_inside_repo "$root" "$p" && [ -f "$root/$p" ] \
           || die "oracle file of $s is missing, a link, or outside the repository: $(printf '%s' "$p" | vetdd_printable)" 1
-        mkdir -p "$C/artifact/tests/$(dirname -- "$p")" && cp -- "$root/$p" "$C/artifact/tests/$p" || die "cannot copy an oracle file" 1 ;;
+        dest="$(agent_path "$p")"
+        mkdir -p "$C/artifact/tests/$(dirname -- "$dest")" && cp -- "$root/$p" "$C/artifact/tests/$dest" || die "cannot copy an oracle file" 1 ;;
       L|M)
         # Named only by the runs/<seq>-<kind> pattern, and read only from inside the repository.
         # A red-run log the record names must be there: without it the judge cannot see why the oracle failed.
@@ -209,7 +220,9 @@ find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   ROOT="$root" LROOT="$logical_root" SROOT="$short_root" perl -pi -e '
     BEGIN { my %s; @R = sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
             map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @ENV{qw(ROOT LROOT SROOT)} }
-    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }' "$f" || exit 1
+    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
+    # A .claude directory, as a path component (also JSON-escaped), is sent as .agent.
+    s{(?<![\w.-])\.claude(?=\\?/)}{.agent}g' "$f" || exit 1
 done || die "could not replace the repository path" 1
 
 allow_args=()
