@@ -1,0 +1,29 @@
+# Stall
+
+A slice is stalled when retrying the same design stops paying: K+1 failed attempts in a row (K = 2 by default; the agreement's Q3 can change it) whose failure counts never fall. An attempt is an `after` run that ended `target_failure`; its count is the runner's `tests.failed` when the run took `--test-report` and the report is usable, else the count before it (a runner that failed before any test is no progress), and 1 for the first. Each command is its own sequence (the slice's test, the whole suite, the type check), and a pass of that command starts it over; a new oracle version, and each stall once counted (the redesign boundary), start every sequence over. An `infrastructure_error` never counts (the environment, not the design, failed: principle 8 says `blocked`). `"$VETDD/scripts/stall.sh" <slice>` says so: exit 3 is a stall. In an arena, `arena-layout.sh` exit 5 (no lane green) is a stall of the arena's task.
+
+Run `stall.sh` after each failed attempt. Before the next attempt on a stalled slice, take these steps.
+
+## 1. Write the handover
+
+Write a draft with these headings, each on a line of its own, and record it with `"$VETDD/scripts/handover.sh" <slice> --file <draft>` (it becomes `.vetdd/evidence/<slice>/handover-<n>.md`; in an arena, one per red lane, under that lane's slice):
+
+- `## Unmet requirement`: which agreed criterion (Q1) is still red.
+- `## Expected and actual`: the literal expected value and what came back, from the logs.
+- `## Minimal reproduction`: the smallest command or input that shows it.
+- `## Hypotheses tried`: each one, what was changed for it, and what the run then showed.
+- `## Why it failed`: the cause, not the symptom: why this design cannot reach the expected value.
+- `## Reusable results`: what the next design keeps (tests, helpers, findings), with paths.
+
+Pass/fail alone is not a handover: the next design needs the reasons. A handover is also the record that the slice was redesigned: `check-evidence.sh` rule 11 fails one that lacks a heading, and warns when the record holds more stalls (at the default K) than handovers. A worker (a subagent author, a swarm unit, an arena runner) does not write it: it stops at a stall and reports `stall.sh`'s output, and the parent writes the handover and chooses the exit.
+
+In a swarm or an arena, a stalled worker commits its work in progress (with `VETDD_BYPASS=1`: the evidence hook refuses a commit whose latest after is red, and this branch is never merged) and stops. The parent brings it back (`worktree.sh check <slice>`, then `worktree.sh remove <slice> --keep-branch`), writes the handover under that slice in the main repository, and leaves the slice out of the merge; the redesign is a new unit or lane with a new slice id (`<slice>-r<n>`) whose brief holds the handover. The stalled branch is deleted once noted (`git branch -D vetdd/<slice>`).
+
+## 2. Take one of the two exits
+
+The handover's "Why it failed" decides which.
+
+- **Redesign** when the cause is in the design or the implementation and the agreement still holds. Same oracle, same agreement, so no stop: start a fresh subagent (role author, or new arena lanes when the budget allows) whose brief holds every handover of the slice. It must answer, in its report or design note, which failure cause it avoids and by what change; a retry of the same design is not a redesign. Its attempts count anew. At most 2 redesigns per slice by default (Q3 can change it).
+- **Back to 1a** when the cause is in the agreement: the expected value contradicts the spec, the seam cannot observe the behavior, or two criteria conflict. Stop and ask the human with `AskUserQuestion` (principle 8), the handover attached. A changed oracle is a new version: `oracle-version.sh <slice> --version <new> --change meaning` with the new agreement, then its red before any green.
+
+A stall past the redesign budget (a third one by default) ends the task `blocked`, with every handover and the evidence so far.
