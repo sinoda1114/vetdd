@@ -528,3 +528,21 @@ write_reply_with_token() {
   [[ "$output" != *"args/"* ]] || { echo "$output"; false; }
   ! grep -rqs "$BATS_TEST_TMPDIR" $(cat "$FAKE_SEEN.parentfiles" 2>/dev/null) /dev/null || false
 }
+
+@test "a final judge (no variants.json) is not stopped by origin words in the product; an A/B eval still is" {
+  printf '<Button variant="primary" />\n' > "$CAND/c1/artifact/diff.patch"
+  run judge
+  [ "$status" -eq 4 ]
+  rm "$BATS_TEST_TMPDIR/run/variants.json"
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "--allow-words goes to the blind check" {
+  rm "$BATS_TEST_TMPDIR/run/variants.json"
+  printf 'import OpenAI from "openai";\n' > "$CAND/c1/artifact/diff.patch"
+  run judge
+  [ "$status" -eq 4 ]
+  run judge --allow-words 'c1/artifact/diff.patch:openai'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

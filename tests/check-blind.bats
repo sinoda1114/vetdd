@@ -799,3 +799,28 @@ c1/transcript.jsonl:3: secret: assignment" ]
   [ "$status" -eq 1 ]
   [ "$output" = "c1/artifact/pipe:special: not allowed in a judge input" ]
 }
+
+# --- usage triage: ordinary product words ----------------------------------------------------------
+
+@test "--final drops the origin words (one delivered change has no variant to hide) and keeps model names" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1"
+  printf '<Button variant="primary" />\n.x { align-items: baseline; }\nthe winner\n' > "$BATS_TEST_TMPDIR/f/c1/a.tsx"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf 'written by Claude\n' > "$BATS_TEST_TMPDIR/f/c1/b.md"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"b.md:1: claude"* ]]
+}
+
+@test "--allow-words <glob>:<word>,... drops those words on matching paths only" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1/artifact"
+  printf 'import OpenAI from "openai";\n' > "$BATS_TEST_TMPDIR/f/c1/artifact/diff.patch"
+  printf 'uses openai\n' > "$BATS_TEST_TMPDIR/f/c1/artifact/reply.md"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final --allow-words 'c1/artifact/diff.patch:openai'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"reply.md:1: openai"* ]]
+  [[ "$output" != *"diff.patch"* ]]
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words 'nothing-here'
+  [ "$status" -eq 2 ]
+}

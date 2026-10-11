@@ -249,3 +249,8 @@ draft() {
   grep -q 'VETDD_BYPASS=1 git commit -m "wip: stalled"' "$SCRIPTS/../references/subagent-brief.md"
   grep -q 'VETDD_BYPASS=1' "$SCRIPTS/../references/stall.md"
 }
+
+@test "triage: test mode and the brief pass the agreed K to stall.sh" {
+  grep -q 'stall.sh" <slice> --k <the agreed K>' "$SCRIPTS/../modes/test.md"
+  grep -q 'stall.sh <slice-id> --k <the agreed K>' "$SCRIPTS/../references/subagent-brief.md"
+}

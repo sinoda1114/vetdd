@@ -30,13 +30,14 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 vetdd_require_jq arena-layout.sh
 p() { printf '%s' "$1" | vetdd_printable; }
 
-out=""; base=""; lanes=(); jl_args=(); allow=()
+out=""; base=""; lanes=(); jl_args=(); allow=(); awords=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
     --base) [ $# -ge 2 ] || die "--base needs a git ref"; base="$2"; shift 2 ;;
     --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; allow+=("$2"); jl_args+=(--allow-secrets "$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; jl_args+=(--allow-binary "$2"); shift 2 ;;
+    --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>,..."; jl_args+=(--allow-words "$2"); awords+=("$2"); shift 2 ;;
     -*) die "unknown option: $(p "$1")" ;;
     *) lanes+=("$1"); shift ;;
   esac
@@ -53,7 +54,8 @@ case "$abs/" in
   "$root"/.vetdd/*) ;;
   "$root"/*) die "--out must be outside the repository or under its .vetdd/: the next layout would take the candidates in as new files" ;;
 esac
-git -C "$root" rev-parse -q --verify "$base^{commit}" >/dev/null || die "--base is not a commit: $(p "$base")"
+# Resolved once here: each lane's review worktree would read a relative ref (HEAD) as its own commit.
+base="$(git -C "$root" rev-parse -q --verify "$base^{commit}")" || die "--base is not a commit: $(p "$base")"
 seen=" "
 for l in "${lanes[@]}"; do
   vetdd_is_slice_id "$l" || die "invalid lane id: $(p "$l")"
@@ -147,4 +149,5 @@ printf 'arena-layout.sh: built %s (%d of %d lanes green; the label-to-lane map i
 printf 'next: %q --rubric %q --candidates %q --out <judge.json> --eval-id <id> --run-id <id> --rubric-version 1' \
   "$here/judge.sh" "${here%/scripts}/references/arena-rubric.md" "$out/candidates"
 for a in ${allow[@]+"${allow[@]}"}; do printf ' --allow-secrets %q' "$a"; done
+for a in ${awords[@]+"${awords[@]}"}; do printf ' --allow-words %q' "$a"; done
 printf '\n'

@@ -285,3 +285,12 @@ lane() {
   grep -qx 'lc-0a1b2c: refused by worktree.sh check' "$OUT/gate.txt"
   [ "$(jq -r '[.[]] | sort | join(",")' "$OUT/variants.json")" = "la-a1b2c3,lb-d4e5f6" ]
 }
+
+@test "triage: --base HEAD is resolved once in the main repository, so each lane's diff is against the oracle commit" {
+  lane la-a1b2c3 42
+  lane lb-d4e5f6 42
+  run AL --out "$OUT" --base HEAD la-a1b2c3 lb-d4e5f6
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+42$' "$OUT/candidates/c1/artifact/diff.patch"
+  grep -q '^+42$' "$OUT/candidates/c2/artifact/diff.patch"
+}

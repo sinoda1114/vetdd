@@ -3,6 +3,7 @@
 # Usage: check-blind.sh <dir> [--profile candidate|judge] [--placed <rel>]... [--file <path>]...
 #                       [--extra-words <file>]... [--allow <glob>]...
 #                       [--allow-secrets <glob>[:<kind>[,<kind>]...]]...
+#                       [--final] [--allow-words <glob>:<word>[,<word>]...]...
 # Words: the lists in lib/blind-words.sh, case-insensitive and whole-word ("latest" does not match
 # "test"; "test.ts" and "Tests" do). What is scanned depends on the profile:
 #   --profile candidate (default)  what the eval harness exposes to a candidate, not the ordinary
@@ -36,6 +37,15 @@
 #                         an allow-everything. Without kinds every kind is dropped, so name the kinds
 #                         a human confirmed. Words (in names too), non-text files, and symlinks are
 #                         still checked there.
+#   --final               (judge profile) one delivered change, no variants to hide: the origin words
+#                         (variant, baseline, winner) are not checked, since product code uses them
+#                         (a button variant, a CSS baseline); model names still are
+#   --allow-words <glob>:<word>[,<word>]...
+#                         skip these words (from the lists or --extra-words) for paths matching the
+#                         glob (the --allow rules), in names and contents: for product words a human
+#                         confirmed (an SDK named after a model's maker in an import); every other
+#                         word, and every other path, is still checked. A glob without words, or a
+#                         word not in the lists, is a usage error.
 # In every profile, any symlink below <dir> is a hit: a link can reach outside the copy (one named
 # node_modules or .git too). The candidate profile skips non-text files and the node_modules and
 # .git directories. Files are read byte-wise (LC_ALL=C), so no locale hides a hit.
@@ -61,6 +71,7 @@ done
 
 # allow_secrets[i] is a glob; allow_secret_kinds[i] is "all" or the space-separated kinds it drops.
 dir=""; extra_files=(); allow=(); allow_secrets=(); allow_secret_kinds=(); profile="candidate"; placed=(); files=()
+final=0; allow_words_glob=(); allow_words_list=()
 # add_allow_secrets <value>: parse <glob> or <glob>:<kind>[,<kind>]... into the two arrays.
 add_allow_secrets() {
   local v="$1" err
@@ -78,6 +89,10 @@ while [ $# -gt 0 ]; do
     --profile) [ $# -ge 2 ] || die "--profile needs candidate or judge"; profile="$2"; shift 2 ;;
     --placed) [ $# -ge 2 ] || die "--placed needs a path"; placed+=("$2"); shift 2 ;;
     --file) [ $# -ge 2 ] || die "--file needs a path"; files+=("$2"); shift 2 ;;
+    --final) final=1; shift ;;
+    --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."
+      case "$2" in ?*:?*) ;; *) die "--allow-words takes <glob>:<word>[,<word>]..., got '$2'" ;; esac
+      allow_words_glob+=("${2%:*}"); allow_words_list+=("$(printf '%s' "${2##*:}" | tr ',' ' ')"); shift 2 ;;
     -*) die "unknown option '$1'" ;;
     *) [ -z "$dir" ] || die "only one directory is allowed"; dir="$1"; shift ;;
   esac
@@ -90,7 +105,7 @@ dir="${dir%/}"
 case "$profile" in
   candidate) base_words="$VETDD_FORBIDDEN_WORDS $VETDD_MODEL_WORDS" ;;
   judge)
-    base_words="$VETDD_ORIGIN_WORDS $VETDD_MODEL_WORDS"
+    if [ "$final" -eq 1 ]; then base_words="$VETDD_MODEL_WORDS"; else base_words="$VETDD_ORIGIN_WORDS $VETDD_MODEL_WORDS"; fi
     [ "${#placed[@]}" -eq 0 ] || die "--placed is for the candidate profile; the judge profile scans everything" ;;
   *) die "unknown profile '$profile' (candidate or judge)" ;;
 esac
@@ -115,6 +130,37 @@ done
 # shellcheck disable=SC2086 # the default lists are space-separated words
 vetdd_word_file "$words" $base_words ${extra_words[@]+"${extra_words[@]}"}
 [ -s "$words" ] || die "cannot build the word list (awk, sort, or cut failed)"
+[ "$final" -eq 0 ] || [ "$profile" = judge ] || die "--final goes with --profile judge"
+# One reduced word list per --allow-words: the listed words left out.
+all_words=" $(printf '%s ' $base_words ${extra_words[@]+"${extra_words[@]}"} | tr 'A-Z' 'a-z') "
+i=0
+while [ "$i" -lt "${#allow_words_glob[@]}" ]; do
+  keep=()
+  for w in ${allow_words_list[$i]}; do
+    lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
+    case "$all_words" in *" $lw "*) ;; *) die "--allow-words: '$w' is not a checked word" ;; esac
+  done
+  for w in $base_words ${extra_words[@]+"${extra_words[@]}"}; do
+    lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
+    case " $(printf '%s' "${allow_words_list[$i]}" | tr 'A-Z' 'a-z') " in *" $lw "*) ;; *) keep+=("$w") ;; esac
+  done
+  if [ ${#keep[@]} -gt 0 ]; then
+    vetdd_word_file "$work/words.$i" "${keep[@]}"
+  else
+    : > "$work/words.$i"
+  fi
+  i=$((i + 1))
+done
+# words_for <path>: the word list for a path: the first --allow-words whose glob matches, else all.
+words_for() {
+  local k=0
+  while [ "$k" -lt "${#allow_words_glob[@]}" ]; do
+    # shellcheck disable=SC2254 # the glob is meant to match
+    case "$1" in ${allow_words_glob[$k]}) printf '%s' "$work/words.$k"; return 0 ;; esac
+    k=$((k + 1))
+  done
+  printf '%s' "$words"
+}
 
 # matches_any <path> <glob>...: 0 when the path matches one of the globs ("*" crosses "/").
 matches_any() {
@@ -156,10 +202,10 @@ matched() {
   out="$("$@")" || die "a matcher failed ($1); nothing below $dir was checked"
   report "$out"
 }
-name_words() { printf '%s\n' "$3" | vetdd_find_words "$1" "$2" name; }
-scan_name() { matched name_words "$words" "$1" "$2"; }
+name_words() { [ -s "$1" ] || return 0; printf '%s\n' "$3" | vetdd_find_words "$1" "$2" name; }
+scan_name() { matched name_words "$(words_for "$1")" "$1" "$2"; }
 name_secrets() { printf '%s\n' "$2" | vetdd_find_secrets "$1" name "$3"; }
-text_words() { vetdd_find_words "$1" "$2" "" < "$3"; }
+text_words() { [ -s "$1" ] || return 0; vetdd_find_words "$1" "$2" "" < "$3"; }
 text_secrets() { vetdd_find_secrets "$1" "" "$3" < "$2"; }
 # scan_text <label> <file> <skip>: words, and secrets except the kinds in <skip> (secret_skip; "all"
 # checks none). A file that is not text (vetdd_is_text: a NUL byte anywhere in it, so UTF-16 too) is
@@ -169,7 +215,7 @@ scan_text() {
     [ "$profile" != judge ] || [ ! -s "$2" ] || report "$1:binary: not scanned"
     return 0
   fi
-  matched text_words "$words" "$1" "$2"
+  matched text_words "$(words_for "$1")" "$1" "$2"
   [ "$3" = all ] || matched text_secrets "$1" "$2" "$3"
 }
 
