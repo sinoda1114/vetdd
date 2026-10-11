@@ -9,10 +9,10 @@
 #   not green and stays out, named in <out>/gate.txt; any other failure stops the build); a green lane
 #   gets judge-layout.sh --before-close with its design note as the reply (--allow-secrets and
 #   --allow-binary go to it: write a secret glob as c*/..., since the label changes). The green lanes
-#   go side by side as <out>/candidates/c1..cN in an order drawn from /dev/urandom; inside each, the
-#   lane id becomes a neutral one (cand<k>: directory names, slice_id, check-evidence output, logs),
-#   and <out>/variants.json keeps the map ({"c1": "<lane>", ...}): the judge never sees which lane, or
-#   which runner, a label is. The review worktrees are removed again (also when the build stops); the
+#   go side by side as <out>/candidates/c1..cN in an order drawn from /dev/urandom, sent as recorded;
+#   <out>/variants.json keeps the map ({"c1": "<lane>", ...}). A lane id ends in a random suffix
+#   (<slice>-<6 or more hex digits>, parallel/arena.md step 1): the id the candidate carries says
+#   nothing about the runner or the order they ran in, so nothing inside it is rewritten. The review worktrees are removed again (also when the build stops); the
 #   lanes' branches stay for the merge and the grafts.
 #   <out> must be outside the repository or under its .vetdd/.
 # Exit 0 built (it prints the judge.sh command with references/arena-rubric.md); 1 a local step
@@ -56,6 +56,8 @@ git -C "$root" rev-parse -q --verify "$base^{commit}" >/dev/null || die "--base 
 seen=" "
 for l in "${lanes[@]}"; do
   vetdd_is_slice_id "$l" || die "invalid lane id: $(p "$l")"
+  printf '%s' "$l" | grep -Eq -- '-[0-9a-f]{6,}$' \
+    || die "lane $(p "$l") has no random suffix; name each lane <slice>-\$(od -An -N3 -tx1 /dev/urandom | tr -d ' \\n') (parallel/arena.md), so its id says nothing about its runner"
   case "$seen" in *" $l "*) die "lane $(p "$l") is named twice" ;; esac
   seen="$seen$l "
   git -C "$root" rev-parse -q --verify "refs/heads/vetdd/$l" >/dev/null || die "no branch vetdd/$(p "$l")"
@@ -117,17 +119,15 @@ mkdir -m 700 -- "$out/candidates" || die "cannot create $(p "$out")/candidates" 
 map='{}'; k=0
 while IFS= read -r l; do
   [ -n "$l" ] || continue
-  k=$((k + 1)); tok="cand$k"; c="$out/lanes/$l/c1"
-  # The lane id becomes the neutral one everywhere inside the candidate.
-  mv -- "$c/evidence/$l" "$c/evidence/$tok" || die "cannot rename the evidence of lane $(p "$l")" 1
-  find "$c" -type f -print0 | while IFS= read -r -d '' f; do
-    LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue
-    LANE="$l" TOK="$tok" perl -pi -e 's{(?<![\w.-])\Q$ENV{LANE}\E(?![\w-]|\.\w)}{$ENV{TOK}}g' "$f" || exit 1
-  done || die "cannot hide the lane id of $(p "$l")" 1
+  k=$((k + 1)); c="$out/lanes/$l/c1"
   mv -- "$c" "$out/candidates/c$k" || die "cannot place lane $(p "$l")" 1
   map="$(printf '%s' "$map" | jq --arg k "c$k" --arg l "$l" '. + {($k): $l}')"
-done < <(for l in "${green[@]}"; do printf '%s\t%s\n' "$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')" "$l"; done \
-         | LC_ALL=C sort -n | cut -f2-)
+done < <(for l in "${green[@]}"; do
+           key="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null | tr -d ' \n')"
+           printf '%s' "$key" | grep -Eq '^[0-9]+$' || exit 1
+           printf '%s\t%s\n' "$key" "$l"
+         done | LC_ALL=C sort -n | cut -f2-)
+[ "$k" -eq ${#green[@]} ] || die "cannot draw the order from /dev/urandom" 1
 rm -rf -- "$out/lanes" "$out/errs"
 printf '%s\n' "$map" > "$out/variants.json"
 

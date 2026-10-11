@@ -72,6 +72,14 @@ root="$(cd "$root" && pwd -P)"
 prefix="$(git rev-parse --show-prefix 2>/dev/null)"; prefix="${prefix%/}"
 logical_root="${PWD%/}"; [ -z "$prefix" ] || logical_root="${logical_root%/"$prefix"}"
 case "$root" in /private/*) short_root="${root#/private}" ;; *) short_root="$root" ;; esac
+# Built in a linked worktree (a swarm unit, an arena lane under review): the main repository's path
+# shows in logs too (a linked node_modules, the parent's commands).
+main_root=""; main_short=""
+if gc="$(cd "$root" && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)" \
+   && [ "${gc##*/}" = .git ] && [ "${gc%/.git}" != "$root" ]; then
+  main_root="${gc%/.git}"
+  case "$main_root" in /private/*) main_short="${main_root#/private}" ;; *) main_short="" ;; esac
+fi
 git -C "$root" rev-parse --verify -q "$base^{commit}" >/dev/null || die "--base is not a commit: $(printf '%s' "$base" | vetdd_printable)"
 for s in "${slices[@]}"; do
   vetdd_is_slice_id "$s" || die "invalid slice id"
@@ -211,7 +219,8 @@ for s in "${slices[@]}"; do
 done
 
 # Absolute paths of this machine never go to the judge: each spelling of a swarm worker's worktree
-# (<root>.vetdd-wt/<slice>) and of the repository's path, then of
+# (<root>.vetdd-wt/<slice>) and of the repository's path (and of the main repository's, when built in
+# a linked worktree), then of
 # the user's home directory, only as a whole path (after file:// or a character that is not part of a
 # path; followed by /, the end, a period that ends a sentence, or a character that is not part of a name).
 home_phys="$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P)" || home_phys=""
@@ -231,10 +240,10 @@ find "$out" -depth -type d -name .claude | while IFS= read -r d; do
 done || die "could not rename a .claude directory in the layout" 1
 find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue
-  ROOT="$root" LROOT="$logical_root" SROOT="$short_root" H1="$home_phys" H2="$home_short" H3="$home_log" TOK="$tok" perl -pi -e '
+  ROOT="$root" LROOT="$logical_root" SROOT="$short_root" MROOT="$main_root" MSROOT="$main_short" H1="$home_phys" H2="$home_short" H3="$home_log" TOK="$tok" perl -pi -e '
     BEGIN { sub spell { my %s; sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
                         map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @_ }
-            @R = spell(@ENV{qw(ROOT LROOT SROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
+            @R = spell(@ENV{qw(ROOT LROOT SROOT MROOT MSROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
     # A swarm worker ran in <root>.vetdd-wt/<slice> (worktree.sh): its logs name that path.
     for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?:/|\\/)[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
     for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<worktrees>}g }

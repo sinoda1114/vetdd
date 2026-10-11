@@ -185,7 +185,9 @@ case "$cmd" in
     bad=""
     while IFS= read -r f; do
       [ -n "$f" ] || continue
-      case "/$f" in /.vetdd|/.vetdd/*|*/.gitattributes|*/.gitmodules) bad="$bad$f
+      # Any case: a case-insensitive file system takes .VETDD for .vetdd.
+      lf="$(printf '%s' "$f" | tr 'A-Z' 'a-z')"
+      case "/$lf" in /.vetdd|/.vetdd/*|*/.gitattributes|*/.gitmodules) bad="$bad$f
 " ;; esac
     done <<EOF_NAMES
 $names
@@ -285,19 +287,27 @@ $(p "$dirty")" 1
     slice_arg "$@"; slice="$1"; shift
     [ $# -eq 0 ] || die "$usage"
     pgit rev-parse -q --verify "refs/heads/vetdd/$slice" >/dev/null || die "no branch vetdd/$(p "$slice")"
-    # The evidence and notes come from the main repository, never from the branch.
-    [ -z "$(pgit ls-tree -r --name-only "vetdd/$slice" -- .vetdd)" ] \
+    ! pgit rev-parse -q --verify "refs/tags/vetdd/$slice" >/dev/null \
+      || die "a tag shares the name vetdd/$(p "$slice"); delete or rename it first, so the branch is what is checked out" 1
+    # The evidence and notes come from the main repository, never from the branch (in any case).
+    ! pgit ls-tree -r --name-only "refs/heads/vetdd/$slice" | grep -qi '^\.vetdd/' \
       || die "vetdd/$(p "$slice") tracks files under .vetdd/; a lane never does: leave it out of the arena" 1
+    for d in "$root/.vetdd/evidence/$slice" "$root/.vetdd/notes"; do
+      [ ! -d "$d" ] || [ -z "$(find "$d" -type l -print 2>/dev/null | head -n 1)" ] \
+        || die "$(p "${d#"$root"/}") holds a link; nothing is copied through a link" 1
+    done
     path="$wtroot/$slice"
     [ ! -e "$path" ] && [ ! -L "$path" ] || die "$(p "$path") exists: remove the runner's worktree first (worktree.sh check, then remove --keep-branch)"
     [ -d "$root/.vetdd/evidence/$slice" ] && [ ! -L "$root/.vetdd/evidence/$slice" ] \
       || die "no evidence for $(p "$slice") in the main repository; bring it back with worktree.sh remove $(p "$slice") --keep-branch"
     safe_wtroot
     pgit worktree add -q "$path" "vetdd/$slice" || die "git worktree add failed" 1
+    # Anything that fails from here takes the worktree away again.
+    undo() { pgit worktree remove --force "$path" >/dev/null 2>&1; die "$1" 1; }
     { mkdir -p "$path/.vetdd/evidence" && cp -R -- "$root/.vetdd/evidence/$slice" "$path/.vetdd/evidence/$slice"; } \
-      || die "cannot copy the evidence of $(p "$slice")" 1
+      || undo "cannot copy the evidence of $(p "$slice")"
     if [ -d "$root/.vetdd/notes" ]; then
-      cp -R -- "$root/.vetdd/notes" "$path/.vetdd/notes" || die "cannot copy the notes" 1
+      cp -R -- "$root/.vetdd/notes" "$path/.vetdd/notes" || undo "cannot copy the notes"
     fi
     printf '%s\n' "$path"
     ;;
