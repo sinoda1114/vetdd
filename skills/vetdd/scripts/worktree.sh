@@ -19,6 +19,11 @@
 #          same: nothing is overwritten, and on any difference nothing is copied); then removes the
 #          worktree, and its branch once merged into HEAD (an unmerged branch is kept and named;
 #          --keep-branch keeps a merged one too, until the integrated runs pass)
+#        worktree.sh review <slice>
+#          after `remove <slice> --keep-branch`: checks out vetdd/<slice> again at the same path in a
+#          worktree the parent makes (its own .git, never a runner's), with the main repository's
+#          .vetdd/evidence/<slice>/ and .vetdd/notes/, so the lane can be checked and laid out for the
+#          judge (parallel/arena.md); remove it again with `remove <slice> --keep-branch`
 #        worktree.sh list
 #          prints "<slice>\t<path>\t<branch>" for each worker worktree
 # Exit 0 done; 1 a local step failed or would lose or overwrite work; 2 usage error.
@@ -30,7 +35,7 @@ die() { printf 'worktree.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 
-usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] [--no-evidence] | list"
+usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] [--no-evidence] | review <slice> | list"
 [ $# -ge 1 ] || die "$usage"
 cmd="$1"; shift
 
@@ -274,6 +279,24 @@ $(p "$dirty")" 1
       printf 'removed %s; kept branch vetdd/%s: not merged into HEAD yet\n' "$(p "$path")" "$(p "$slice")"
     fi
     rmdir -- "$wtroot" 2>/dev/null || true
+    ;;
+
+  review)
+    slice_arg "$@"; slice="$1"; shift
+    [ $# -eq 0 ] || die "$usage"
+    pgit rev-parse -q --verify "refs/heads/vetdd/$slice" >/dev/null || die "no branch vetdd/$(p "$slice")"
+    path="$wtroot/$slice"
+    [ ! -e "$path" ] && [ ! -L "$path" ] || die "$(p "$path") exists: remove the runner's worktree first (worktree.sh check, then remove --keep-branch)"
+    [ -d "$root/.vetdd/evidence/$slice" ] && [ ! -L "$root/.vetdd/evidence/$slice" ] \
+      || die "no evidence for $(p "$slice") in the main repository; bring it back with worktree.sh remove $(p "$slice") --keep-branch"
+    safe_wtroot
+    pgit worktree add -q "$path" "vetdd/$slice" || die "git worktree add failed" 1
+    { mkdir -p "$path/.vetdd/evidence" && cp -R -- "$root/.vetdd/evidence/$slice" "$path/.vetdd/evidence/$slice"; } \
+      || die "cannot copy the evidence of $(p "$slice")" 1
+    if [ -d "$root/.vetdd/notes" ]; then
+      cp -R -- "$root/.vetdd/notes" "$path/.vetdd/notes" || die "cannot copy the notes" 1
+    fi
+    printf '%s\n' "$path"
     ;;
 
   list)

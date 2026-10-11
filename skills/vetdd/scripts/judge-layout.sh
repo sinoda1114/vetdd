@@ -2,7 +2,9 @@
 # Build the final judge's directory that references/final-judge-rubric.md "Layout" defines (test and
 # verify modes, Close), so it is never assembled by hand.
 # Usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]...
-#                        [--allow-binary <path>]... <slice-id>...
+#                        [--allow-binary <path>]... [--before-close] <slice-id>...
+#   --before-close: check-evidence.sh runs with it (an arena lane, laid out before its Close: the
+#   mutation audit is not due yet), as arena-layout.sh's gate does
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
 #                                         file not in HEAD (untracked or staged) outside .vetdd/ included
 #                                         through a temporary index (the repository's own index is untouched)
@@ -41,7 +43,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 vetdd_require_jq judge-layout.sh
 
-out=""; reply=""; base=""; slices=(); allow=(); binaries=()
+out=""; reply=""; base=""; slices=(); allow=(); binaries=(); ce_opts=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
@@ -49,6 +51,7 @@ while [ $# -gt 0 ]; do
     --base) [ $# -ge 2 ] || die "--base needs a git ref"; base="$2"; shift 2 ;;
     --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; allow+=("$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
+    --before-close) ce_opts=(--before-close); shift ;;
     -*) die "unknown option: $(printf '%s' "$1" | vetdd_printable)" ;;
     *) slices+=("$1"); shift ;;
   esac
@@ -154,7 +157,7 @@ GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --binary --end-of-opt
 cp -- "$reply" "$C/artifact/reply.md" || die "cannot copy the reply" 1
 
 ce_rc=0
-(cd "$root" && "$here/check-evidence.sh" "${slices[@]}") > "$C/artifact/check-evidence.txt" 2>&1 || ce_rc=$?
+(cd "$root" && "$here/check-evidence.sh" ${ce_opts[@]+"${ce_opts[@]}"} "${slices[@]}") > "$C/artifact/check-evidence.txt" 2>&1 || ce_rc=$?
 printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
 # 126 and 127: check-evidence.sh did not run; the judge would read a FAIL that is not one.
 [ "$ce_rc" -lt 126 ] || die "check-evidence.sh could not run (exit $ce_rc)" 1
