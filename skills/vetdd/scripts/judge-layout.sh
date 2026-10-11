@@ -2,15 +2,21 @@
 # Build the final judge's directory that references/final-judge-rubric.md "Layout" defines (test and
 # verify modes, Close), so it is never assembled by hand.
 # Usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]...
-#                        [--allow-binary <path>]... [--allow-words <glob>:<word>,...]... [--before-close]
-#                        [--lane] <slice-id>...
+#                        [--allow-binary <path>]... [--include-new <path>]... [--allow-words <glob>:<word>,...]...
+#                        [--before-close] [--lane] <slice-id>...
+#   --include-new: an untracked new file (not in the repository's index, not ignored, outside .vetdd/)
+#   leaves the machine in the diff only when named here, by its path from the repository root, or when
+#   it is one of the slices' oracle files; a file staged with git add goes as it is. Any other untracked
+#   file stops the build (exit 2, nothing written) with the flags to name each one, so a scratch file or
+#   a local .env never leaves unseen.
 #   --allow-words: product words a human confirmed (an SDK named after a model's maker), for
 #   check-blind.sh and the printed judge command. The origin words (variant, baseline, winner) are
 #   not checked for one delivered change; --lane (an arena lane, compared with others) keeps them.
 #   --before-close: check-evidence.sh runs with it (an arena lane, laid out before its Close: the
 #   mutation audit is not due yet), as arena-layout.sh's gate does
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
-#                                         file not in HEAD (untracked or staged) outside .vetdd/ included
+#                                         file not in HEAD outside .vetdd/ included (staged, an oracle
+#                                         file, or untracked and named with --include-new)
 #                                         through a temporary index (the repository's own index is untouched)
 #   <dir>/c1/artifact/reply.md            the reply draft (<file>)
 #   <dir>/c1/artifact/check-evidence.txt  check-evidence.sh <slices>, then a last line "exit <code>"
@@ -31,8 +37,9 @@
 # --allow-secrets (paths relative to <dir>, e.g. c1/artifact/tests/*:email, only for test data a human
 # confirmed), which the printed judge.sh command repeats. Run it on the delivered tree.
 # Exit 0 built (it prints the judge.sh command); 1 a local step failed (a record could not be read,
-# check-blind could not run); 2 usage error, or a binary file in the diff not named with --allow-binary
-# (nothing is written; git's base85 text of a binary file passes the blind and secret checks unseen);
+# check-blind could not run); 2 usage error, a binary file in the diff not named with --allow-binary
+# (git's base85 text of a binary file passes the blind and secret checks unseen), or an untracked new
+# file not named with --include-new (nothing is written in each case);
 # 4 the result is not blind
 # (check-blind.sh's hits are printed; <dir> is left to inspect, readable by the user only).
 # Everything written is private to the user (umask 077), and <dir> must be new, under directories only
@@ -47,7 +54,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 vetdd_require_jq judge-layout.sh
 
-out=""; reply=""; base=""; slices=(); allow=(); binaries=(); ce_opts=(); awords=(); lane=0
+out=""; reply=""; base=""; slices=(); allow=(); binaries=(); news=(); ce_opts=(); awords=(); lane=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
@@ -57,6 +64,7 @@ while [ $# -gt 0 ]; do
     --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."
       . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$err"; awords+=("$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
+    --include-new) [ $# -ge 2 ] || die "--include-new needs a repository path"; news+=("$2"); shift 2 ;;
     --before-close) ce_opts=(--before-close); shift ;;
     --lane) lane=1; shift ;;
     -*) die "unknown option: $(printf '%s' "$1" | vetdd_printable)" ;;
@@ -64,7 +72,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$out" ] && [ -n "$reply" ] && [ -n "$base" ] && [ ${#slices[@]} -gt 0 ] \
-  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--allow-words <glob>:<word>,...]... [--before-close] [--lane] <slice-id>..."
+  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--include-new <path>]... [--allow-words <glob>:<word>,...]... [--before-close] [--lane] <slice-id>..."
 [ -f "$reply" ] && [ ! -L "$reply" ] || die "--reply must be a regular file"
 . "$here/lib/secret-patterns.sh"
 for a in ${allow[@]+"${allow[@]}"}; do
@@ -120,6 +128,31 @@ while :; do
 done
 # From here on, only the checked physical path is used.
 out="$abs"
+
+# Untracked new files leave only when named: the slices' oracle files, then --include-new. Each name
+# given must be one of them, so a mistyped path never passes for an allowed one.
+oracles=()
+for s in "${slices[@]}"; do
+  while IFS= read -r -d '' f; do oracles+=("$f"); done \
+    < <(jq -j '[.oracle.files[]? | .path | strings] | .[] | . + "\u0000"' "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)
+done
+untracked=(); unnamed=()
+while IFS= read -r -d '' f; do
+  case "$f" in .vetdd|.vetdd/*) continue ;; esac
+  untracked+=("$f")
+  ok=0
+  for o in ${oracles[@]+"${oracles[@]}"} ${news[@]+"${news[@]}"}; do [ "$o" = "$f" ] && ok=1; done
+  [ "$ok" -eq 1 ] || unnamed+=("$f")
+done < <(git -C "$root" ls-files --others --exclude-standard -z)
+for n in ${news[@]+"${news[@]}"}; do
+  ok=0; for f in ${untracked[@]+"${untracked[@]}"}; do [ "$f" = "$n" ] && ok=1; done
+  [ "$ok" -eq 1 ] || die "--include-new $(printf '%s' "$n" | vetdd_printable): not an untracked new file of this repository (give its path from the repository root, as git status --untracked-files=all shows it)"
+done
+if [ ${#unnamed[@]} -gt 0 ]; then
+  flags=""; for f in "${unnamed[@]}"; do flags="$flags --include-new $(printf '%q' "$f")"; done
+  die "$(printf 'untracked new files would leave the machine in the diff:%s\nname each one a human allowed to leave (or git add it, or delete it):%s' \
+    "$(printf ' %s' "${unnamed[@]}")" "$flags" | vetdd_printable)"
+fi
 
 # The diff, with new files: a temporary index (in a private temporary directory) holds HEAD plus
 # intent-to-add entries for every file not in it: untracked ones listed against that index, and files the
