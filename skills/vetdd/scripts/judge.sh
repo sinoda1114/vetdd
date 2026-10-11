@@ -10,7 +10,11 @@
 # also with "/" as "\/") passes on that copy and on the conditions, the extra layout, the eval id,
 # and the run id. A final verdict (no variants.json) has no label-to-variant map to hide, so no
 # absolute path is refused there. Render references/judge-prompt.md; run `codex exec` read-only with
-# -C set to the copy and schemas/verdict.schema.json; refuse the reply if it holds a secret-shaped
+# -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: CODEX_HOME
+# is a second private temporary directory holding only a link to the user's auth.json (from
+# $CODEX_HOME, else ~/.codex), and exec runs --ephemeral --ignore-user-config --ignore-rules with web
+# search off, so the user's config (MCP servers, tools), AGENTS.md, rules, and sessions never reach
+# the judge; refuse the reply if it holds a secret-shaped
 # string (lib/secret-patterns.sh, every kind: --allow-secrets covers input only); write the reply verbatim to
 # <out>, the judge metadata to <out>.meta.json, and codex's own output to
 # <git root>/.vetdd/judge-logs/<eval-id>-<run-id>.log (the git root of <out>'s directory, else of the
@@ -116,6 +120,16 @@ log="$root/.vetdd/judge-logs/$eval_id-$run_id.log"
 codex="${VETDD_CODEX_BIN:-codex}"
 command -v "$codex" >/dev/null 2>&1 \
   || die "codex CLI not found ($codex); install it (npm install -g @openai/codex) or set VETDD_CODEX_BIN" 3
+# The judge runs with a CODEX_HOME of its own that holds only a link to the user's auth.json: the
+# user's config (MCP servers, tools), instructions (AGENTS.md), rules, and sessions never reach it.
+# Outside the copy's directory, so no relative path from the judge's working directory leads there.
+user_home="${CODEX_HOME:-$HOME/.codex}"
+jhome="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-codex.XXXXXX")" || die "cannot create a temporary directory" 1
+trap 'rm -rf "$jhome"' EXIT
+if [ -f "$user_home/auth.json" ]; then
+  ln -s "$user_home/auth.json" "$jhome/auth.json" || die "cannot link the codex login into $jhome" 1
+fi
+export CODEX_HOME="$jhome"
 login="$("$codex" login status 2>&1)" \
   || die "codex is not logged in ($login); run \`codex login\` first" 3
 
@@ -126,7 +140,7 @@ login="$("$codex" login status 2>&1)" \
 # rests on the relative paths, on nothing in the copy naming the original path (the blind check
 # below refuses those paths), and on the prompt.
 work="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-judge.XXXXXX")" || die "cannot create a temporary directory" 1
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" "$jhome"' EXIT
 jdir="$work/judge"
 mkdir "$jdir" "$work/args" || die "cannot create $jdir" 1
 ! git -C "$jdir" rev-parse --show-toplevel >/dev/null 2>&1 \
@@ -230,6 +244,7 @@ V_eval_id="$eval_id" V_run_id="$run_id" V_extra_layout="$extra_layout" awk '
 invoked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "${log%/*}" || die "cannot create ${log%/*}" 1
 "$codex" exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effort=\"$effort\"" \
+  --ephemeral --ignore-user-config --ignore-rules -c 'web_search="disabled"' \
   --skip-git-repo-check --output-schema "$skill/schemas/verdict.schema.json" -o "$work/reply.json" \
   < "$work/prompt.txt" > "$log" 2>&1
 rc=$?
