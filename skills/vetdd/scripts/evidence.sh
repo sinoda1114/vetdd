@@ -4,6 +4,11 @@
 #                    [--oracle-version <v>] [--oracle-file <path>]... [--test-report jest-json:<path>]
 #                    [--audit undefined-imports | --audit mutation --mutation-report stryker-json:<path>]
 #                    -- <command...>
+#        evidence.sh <slice-id> integrated --rerun [--test-report jest-json:<path>]
+#          runs the unit's command the swarm parent gave `worktree.sh add <slice> -- <command>`
+#          (recorded in the git directory at $GIT_COMMON_DIR/vetdd-swarm/<slice>.cmd, outside any
+#          working tree, never read from a worker's evidence), from the repository root; it prints the command, and needs --test-report when
+#          an accepted after run of the slice recorded a test report (rule 9b compares them)
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
@@ -47,7 +52,7 @@ case "$kind" in
 esac
 
 outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "
-oracle_files=(); report_opt=""; audit_opt=""; mreport_opt=""; mreport_set=0
+oracle_files=(); report_opt=""; audit_opt=""; mreport_opt=""; mreport_set=0; rerun=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --outcome) [ $# -ge 2 ] || die "--outcome needs a value"; outcome_opt="$2"; shift 2 ;;
@@ -69,11 +74,17 @@ while [ $# -gt 0 ]; do
     --mutation-report) [ $# -ge 2 ] || die "--mutation-report needs stryker-json:<path>"
       case "$2" in stryker-json:?*) mreport_opt="${2#stryker-json:}"; mreport_set=1 ;; *) die "--mutation-report takes stryker-json:<path>" ;; esac
       shift 2 ;;
+    --rerun) rerun=1; shift ;;
     --) shift; break ;;
     *) die "unexpected argument '$1' (put the command after --)" ;;
   esac
 done
-[ $# -ge 1 ] || die "no command given after --"
+if [ "$rerun" -eq 1 ]; then
+  [ $# -eq 0 ] || die "--rerun takes no command: it runs the slice's recorded one"
+  [ "$kind" = integrated ] || die "--rerun goes with an integrated run only"
+else
+  [ $# -ge 1 ] || die "no command given after --"
+fi
 [ -z "$audit_opt" ] || [ "$kind" = calibration ] || die "--audit goes with a calibration run only"
 if [ "$audit_opt" = mutation ]; then
   [ "$mreport_set" -eq 1 ] || die "--audit mutation needs --mutation-report stryker-json:<path>"
@@ -89,6 +100,24 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git rep
 root="$(cd "$root" && pwd -P)"
 prefix="$(git rev-parse --show-prefix)"
 cwd_rel="${prefix%/}"; [ -n "$cwd_rel" ] || cwd_rel="."
+
+if [ "$rerun" -eq 1 ]; then
+  gcommon="$(cd "$root" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" || die "--rerun: cannot find the git directory"
+  rfile="$gcommon/vetdd-swarm/$slice.cmd"
+  [ -f "$rfile" ] && [ ! -L "$rfile" ] \
+    || die "--rerun: no command recorded for slice $slice; the swarm parent records it with worktree.sh add $slice -- <command>"
+  [ "$cwd_rel" = "." ] || die "--rerun runs from the repository root, not from $cwd_rel"
+  rcmd=()
+  while IFS= read -r -d '' a; do rcmd+=("$a"); done < "$rfile"
+  [ ${#rcmd[@]} -gt 0 ] || die "--rerun: the command recorded for slice $slice is empty"
+  rmeta="$root/.vetdd/evidence/$slice/meta.json"
+  if [ -z "$report_opt" ] && [ -f "$rmeta" ] \
+     && jq -e '[.runs[]? | select(.accepted != false and .kind == "after" and has("tests"))] | length > 0' "$rmeta" >/dev/null 2>&1; then
+    die "--rerun: the slice's after run recorded a test report; pass --test-report jest-json:<its report path> too (rule 9b compares them)"
+  fi
+  { printf 'evidence.sh: --rerun runs:'; printf ' %q' "${rcmd[@]}"; printf '\n'; } | vetdd_printable >&2
+  set -- "${rcmd[@]}"
+fi
 
 # Resolve oracle files to repo-relative paths before running anything.
 rel_files=()
@@ -129,6 +158,11 @@ if [ -n "$mreport_opt" ]; then
 fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
+# Every directory on the way is the repository's own: a link would send the record (and the parent's
+# writes, in a swarm) somewhere else.
+for d in "$root/.vetdd" "$root/.vetdd/evidence" "$dir" "$dir/runs"; do
+  [ ! -L "$d" ] || die "${d#"$root"/} is a symbolic link; evidence is written only inside the repository"
+done
 mkdir -p "$dir/runs" || die "cannot create $dir"
 if [ ! -f "$meta" ]; then
   jq -n --arg s "$slice" '{slice_id: $s, oracle: {seam: null, version: null, files: []}, runs: []}' > "$meta"

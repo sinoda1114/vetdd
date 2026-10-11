@@ -205,7 +205,8 @@ for s in "${slices[@]}"; do
   done <<< "$list"
 done
 
-# Absolute paths of this machine never go to the judge: each spelling of the repository's path, then of
+# Absolute paths of this machine never go to the judge: each spelling of a swarm worker's worktree
+# (<root>.vetdd-wt/<slice>) and of the repository's path, then of
 # the user's home directory, only as a whole path (after file:// or a character that is not part of a
 # path; followed by /, the end, a period that ends a sentence, or a character that is not part of a name).
 home_phys="$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P)" || home_phys=""
@@ -229,6 +230,9 @@ find "$out" -type f -print0 | while IFS= read -r -d '' f; do
     BEGIN { sub spell { my %s; sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
                         map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @_ }
             @R = spell(@ENV{qw(ROOT LROOT SROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
+    # A swarm worker ran in <root>.vetdd-wt/<slice> (worktree.sh): its logs name that path.
+    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?:/|\\/)[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
+    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<worktrees>}g }
     for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
     for my $r (@H) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<home>}g }
     # A .claude directory, as a path component (also JSON-escaped, and on a removed line of the diff), is

@@ -1,6 +1,6 @@
 # Parallel shape selection
 
-Answer two questions after the oracle is agreed. Write the result in the todo list as `parallel: <shape> because <reason>`.
+Answer two questions, before the agreement of SKILL.md step 2 when you can, so the agreement covers the shape (Q3). Write the result in the todo list as `parallel: <shape> because <reason>`.
 
 - Q1. Does the deliverable have to converge on one design (new types, module boundaries, or data structures are being decided)? Additions that follow an existing shape answer **no**.
 - Q2. Can the task be split into units that touch different files, change no contract another unit depends on, and each own a red test? If any unit fails one of these, answer **no**.
@@ -14,10 +14,10 @@ Answer two questions after the oracle is agreed. Write the result in the todo li
 
 Rules that apply to every shape other than single:
 
-- Hearing first (principle 8): before two or more parties write concurrently, run a hearing on the requirements; ambiguity multiplies by N.
+- Hearing first (principle 8): before two or more parties write concurrently, agree on the shape and the units; ambiguity multiplies by N. When the shape is known at step 2 of SKILL.md, this is part of that agreement (Q3); otherwise stop once and ask before any worker starts.
 - One writer per worktree; readers may share. The parent does not write while workers write unless it was counted in the hearing.
 - Workers never touch the stash, global git config, or shared external services.
 - Before removing a worker's worktree, copy `.vetdd/evidence/<slice>/` into the main repository. If this is skipped, `check-evidence.sh` on the integrated tree fails with `schema: no meta.json for this slice`, and that failure is correct.
 - Completion is judged on the integrated tree with `integrated` evidence, never on a worker's slice.
 
-Until `parallel/arena.md` and `parallel/swarm.md` exist (Phase 6), any shape other than single ends the task in `blocked` with the reason "parallel mode not yet available"; do not improvise a fan-out.
+`parallel/swarm.md` is available. Until `parallel/arena.md` exists, an arena (and arena, then swarm) ends the task in `blocked` with the reason "arena not yet available"; do not improvise a fan-out.
