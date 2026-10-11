@@ -2,7 +2,11 @@
 # Build the final judge's directory that references/final-judge-rubric.md "Layout" defines (test and
 # verify modes, Close), so it is never assembled by hand.
 # Usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]...
-#                        [--allow-binary <path>]... [--allow-words <glob>:<word>,...]... [--before-close] <slice-id>...
+#                        [--allow-binary <path>]... [--allow-words <glob>:<word>,...]... [--before-close]
+#                        [--lane] <slice-id>...
+#   --allow-words: product words a human confirmed (an SDK named after a model's maker), for
+#   check-blind.sh and the printed judge command. The origin words (variant, baseline, winner) are
+#   not checked for one delivered change; --lane (an arena lane, compared with others) keeps them.
 #   --before-close: check-evidence.sh runs with it (an arena lane, laid out before its Close: the
 #   mutation audit is not due yet), as arena-layout.sh's gate does
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
@@ -43,7 +47,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 vetdd_require_jq judge-layout.sh
 
-out=""; reply=""; base=""; slices=(); allow=(); binaries=(); ce_opts=(); awords=()
+out=""; reply=""; base=""; slices=(); allow=(); binaries=(); ce_opts=(); awords=(); lane=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
@@ -53,12 +57,13 @@ while [ $# -gt 0 ]; do
     --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."; awords+=("$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
     --before-close) ce_opts=(--before-close); shift ;;
+    --lane) lane=1; shift ;;
     -*) die "unknown option: $(printf '%s' "$1" | vetdd_printable)" ;;
     *) slices+=("$1"); shift ;;
   esac
 done
 [ -n "$out" ] && [ -n "$reply" ] && [ -n "$base" ] && [ ${#slices[@]} -gt 0 ] \
-  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--before-close] <slice-id>..."
+  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--allow-words <glob>:<word>,...]... [--before-close] [--lane] <slice-id>..."
 [ -f "$reply" ] && [ ! -L "$reply" ] || die "--reply must be a regular file"
 . "$here/lib/secret-patterns.sh"
 for a in ${allow[@]+"${allow[@]}"}; do
@@ -259,8 +264,10 @@ allow_args=()
 for a in ${allow[@]+"${allow[@]}"}; do allow_args+=(--allow-secrets "$a"); done
 for a in ${awords[@]+"${awords[@]}"}; do allow_args+=(--allow-words "$a"); done
 blind_rc=0
-# One delivered change: the origin words are product words here (--final); judge.sh does the same.
-blind="$("$here/check-blind.sh" "$out" --profile judge --final ${allow_args[@]+"${allow_args[@]}"} 2>&1)" || blind_rc=$?
+# One delivered change: the origin words are product words here (--final), as judge.sh treats a
+# final verdict. An arena lane (--lane) is compared with others, so they stay checked, as there.
+[ "$lane" -eq 1 ] || allow_args+=(--final)
+blind="$("$here/check-blind.sh" "$out" --profile judge ${allow_args[@]+"${allow_args[@]}"} 2>&1)" || blind_rc=$?
 if [ "$blind_rc" -eq 1 ]; then
   printf '%s\n' "$blind" | vetdd_printable >&2
   die "the layout is not blind (check-blind.sh above); fix the reply or the logs and build it again in a new directory" 4

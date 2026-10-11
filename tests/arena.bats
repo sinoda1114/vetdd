@@ -294,3 +294,18 @@ lane() {
   grep -q '^+42$' "$OUT/candidates/c1/artifact/diff.patch"
   grep -q '^+42$' "$OUT/candidates/c2/artifact/diff.patch"
 }
+
+@test "triage r1: an arena lane's layout keeps the origin words checked, as the comparison does; allowing one goes through" {
+  WT add la-a1b2c3 -- sh test.sh >/dev/null
+  (cd "$WTROOT/la-a1b2c3" && mkdir -p .vetdd/notes && printf '## Design\nx\n' > .vetdd/notes/la-a1b2c3-design.md \
+    && ev la-a1b2c3 before --seam unit --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1; \
+    printf '42\n' > value.txt && printf '<B variant="x" />\n' > ui.tsx && ev la-a1b2c3 after -- sh test.sh >/dev/null 2>&1; \
+    git add value.txt ui.tsx && git commit -qm lane)
+  WT check la-a1b2c3 >/dev/null && WT remove la-a1b2c3 --keep-branch >/dev/null
+  lane lb-d4e5f6 42
+  run AL --out "$OUT" --base "$BASE" la-a1b2c3 lb-d4e5f6
+  [ "$status" -eq 4 ]
+  run AL --out "$OUT.2" --base "$BASE" --allow-words 'c*/artifact/diff.patch:variant' la-a1b2c3 lb-d4e5f6
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"--allow-words"* ]]
+}

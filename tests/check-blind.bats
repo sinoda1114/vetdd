@@ -824,3 +824,19 @@ c1/transcript.jsonl:3: secret: assignment" ]
   run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words 'nothing-here'
   [ "$status" -eq 2 ]
 }
+
+@test "r1: overlapping --allow-words add up on a path" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1/artifact"
+  printf 'openai anthropic\n' > "$BATS_TEST_TMPDIR/f/c1/artifact/diff.patch"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final --allow-words 'c*/artifact/*:openai' --allow-words 'c1/artifact/diff.patch:anthropic'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "r1: an origin word can be allowed under --final too (nothing to check), and a word with other characters is a usage error" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1"
+  printf 'variant\n' > "$BATS_TEST_TMPDIR/f/c1/a.tsx"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final --allow-words 'c1/*:variant'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words 'c1/*:var*'
+  [ "$status" -eq 2 ]
+}

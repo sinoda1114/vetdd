@@ -95,7 +95,7 @@ for l in "${lanes[@]}"; do
     0)
       printf '%s: green\n' "$l" >> "$out/gate.txt"
       jl_rc=0
-      (cd "$rv" && "$here/judge-layout.sh" --before-close ${jl_args[@]+"${jl_args[@]}"} --out "$out/lanes/$l" \
+      (cd "$rv" && "$here/judge-layout.sh" --before-close --lane ${jl_args[@]+"${jl_args[@]}"} --out "$out/lanes/$l" \
         --reply "$rv/.vetdd/notes/$l-design.md" --base "$base" "$l") >/dev/null 2>"$out/errs/$l.layout" || jl_rc=$?
       if [ "$jl_rc" -ne 0 ]; then
         vetdd_printable < "$out/errs/$l.layout" >&2

@@ -97,7 +97,7 @@ while [ $# -gt 0 ]; do
     *) [ -z "$dir" ] || die "only one directory is allowed"; dir="$1"; shift ;;
   esac
 done
-[ -n "$dir" ] || die "usage: check-blind.sh <dir> [--profile candidate|judge] [--placed <rel>]... [--file <path>]... [--extra-words <file>]... [--allow <glob>]... [--allow-secrets <glob>[:<kind>[,<kind>]...]]..."
+[ -n "$dir" ] || die "usage: check-blind.sh <dir> [--profile candidate|judge] [--placed <rel>]... [--file <path>]... [--extra-words <file>]... [--allow <glob>]... [--allow-secrets <glob>[:<kind>[,<kind>]...]]... [--final] [--allow-words <glob>:<word>[,<word>]...]..."
 [ -d "$dir" ] || die "not a directory: $dir"
 dir="${dir%/}"
 
@@ -131,35 +131,37 @@ done
 vetdd_word_file "$words" $base_words ${extra_words[@]+"${extra_words[@]}"}
 [ -s "$words" ] || die "cannot build the word list (awk, sort, or cut failed)"
 [ "$final" -eq 0 ] || [ "$profile" = judge ] || die "--final goes with --profile judge"
-# One reduced word list per --allow-words: the listed words left out.
-all_words=" $(printf '%s ' $base_words ${extra_words[@]+"${extra_words[@]}"} | tr 'A-Z' 'a-z') "
-i=0
-while [ "$i" -lt "${#allow_words_glob[@]}" ]; do
-  keep=()
-  for w in ${allow_words_list[$i]}; do
+# --allow-words: each word must be one of the lists (the origin words count, also under --final, where
+# there is nothing left to drop), written with letters, digits, and . _ - only.
+all_words=" $(printf '%s ' $VETDD_ORIGIN_WORDS $VETDD_MODEL_WORDS $VETDD_FORBIDDEN_WORDS ${extra_words[@]+"${extra_words[@]}"} | tr 'A-Z' 'a-z') "
+for list in ${allow_words_list[@]+"${allow_words_list[@]}"}; do
+  for w in $list; do
+    printf '%s' "$w" | grep -Eq '^[A-Za-z0-9._-]+$' || die "--allow-words: '$w' is not a word (letters, digits, . _ -)"
     lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
     case "$all_words" in *" $lw "*) ;; *) die "--allow-words: '$w' is not a checked word" ;; esac
   done
-  for w in $base_words ${extra_words[@]+"${extra_words[@]}"}; do
-    lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
-    case " $(printf '%s' "${allow_words_list[$i]}" | tr 'A-Z' 'a-z') " in *" $lw "*) ;; *) keep+=("$w") ;; esac
-  done
-  if [ ${#keep[@]} -gt 0 ]; then
-    vetdd_word_file "$work/words.$i" "${keep[@]}"
-  else
-    : > "$work/words.$i"
-  fi
-  i=$((i + 1))
 done
-# words_for <path>: the word list for a path: the first --allow-words whose glob matches, else all.
+# words_for <path>: the word list for a path: every word, less the words of every --allow-words
+# whose glob matches it (they add up). Each combination is built once.
 words_for() {
-  local k=0
+  local k=0 key="" union="" f w lw
   while [ "$k" -lt "${#allow_words_glob[@]}" ]; do
     # shellcheck disable=SC2254 # the glob is meant to match
-    case "$1" in ${allow_words_glob[$k]}) printf '%s' "$work/words.$k"; return 0 ;; esac
+    case "$1" in ${allow_words_glob[$k]}) key="$key.$k"; union="$union ${allow_words_list[$k]}" ;; esac
     k=$((k + 1))
   done
-  printf '%s' "$words"
+  [ -n "$key" ] || { printf '%s' "$words"; return 0; }
+  f="$work/words$key"
+  if [ ! -e "$f" ]; then
+    union=" $(printf '%s' "$union" | tr 'A-Z' 'a-z') "
+    local keep=()
+    for w in $base_words ${extra_words[@]+"${extra_words[@]}"}; do
+      lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
+      case "$union" in *" $lw "*) ;; *) keep+=("$w") ;; esac
+    done
+    if [ ${#keep[@]} -gt 0 ]; then vetdd_word_file "$f" "${keep[@]}"; else : > "$f"; fi
+  fi
+  printf '%s' "$f"
 }
 
 # matches_any <path> <glob>...: 0 when the path matches one of the globs ("*" crosses "/").
