@@ -72,13 +72,13 @@
 #               of a slice whose final oracle has a JS or TS file (.js .jsx .mjs .cjs .ts .tsx .mts
 #               .cts), and of any other slice with a mutation run or note. A tripwire, not a boundary: it trusts the
 #               report (what Stryker mutated and how it ran), and the ranges are the judge's to check.
-# Stall:    (11) a record that holds stalls (lib/stall.sh, K = 2: three failed attempts in a row whose
-#               failure counts never fall) has at least as many handover files
-#               (.vetdd/evidence/<slice>/handover-<n>.md, handover.sh), and every handover file has
-#               each heading; a slice with no stall is not asked. A tripwire, not a boundary: it
-#               checks that the diagnosis was written down, not that it is right.
+# Stall:    (11) every handover file (.vetdd/evidence/<slice>/handover-<n>.md, handover.sh: the mark of
+#               a redesign) has each heading. A record that holds more stalls (lib/stall.sh with the
+#               default K = 2) than handovers is a WARN, not a FAIL: the agreement can change K, and
+#               a worker reports a stall rather than writing the handover. A tripwire, not a boundary:
+#               it checks that the diagnosis was written down, not that it is right.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
-#         "<slice>: WARN (9c|10c: <reason>)" line per warning (advice for the reply's Attention section;
+#         "<slice>: WARN (9c|10c|11: <reason>)" line per warning (advice for the reply's Attention section;
 #         it holds no recorded text).
 # --before-close (the pre-commit hook; also VETDD_BEFORE_CLOSE=1, which lib/common.sh sets in any
 #         pre-commit hook): a slice whose mutation audit has not run yet gets a 10c WARN, not
@@ -562,13 +562,13 @@ check_stall() {
     [ -f "$f" ] || continue
     if [ -L "$f" ]; then echo "11: ${f##*/} is a link"; continue; fi
     have=$((have + 1)); miss=""
-    while IFS= read -r h; do grep -qxF -- "$h" "$f" || miss="$miss ${h#\#\# };"; done <<EOF_H
+    while IFS= read -r h; do tr -d '\r' < "$f" | grep -qxF -- "$h" || miss="$miss ${h#\#\# };"; done <<EOF_H
 $VETDD_HANDOVER_HEADINGS
 EOF_H
     [ -z "$miss" ] || echo "11: ${f##*/} lacks the heading(s):$miss"
   done
   [ "$n" -le "$have" ] \
-    || echo "11: the record holds $n stalls and $have handover(s); write one per stall with handover.sh before redesigning (references/stall.md)"
+    || echo "11: the record holds $n stalls and $have handover(s); write one per stall with handover.sh before redesigning (references/stall.md)" >> "$warn_file"
 }
 
 # Rule 10c: problems on stdout, the ignored-mutant warning appended to $warn_file. The mutated files

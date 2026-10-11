@@ -94,29 +94,73 @@ draft() {
   [ "$status" -eq 2 ]
 }
 
-@test "rule 11: a slice whose record holds a stall needs a handover before it closes" {
+@test "rule 11: a stall in the record without a handover is a WARN, and a handover clears it" {
   attempts 3
   printf '42\n' > value.txt && ev s1 after -- sh test.sh >/dev/null 2>&1
   run check s1
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"s1: FAIL (11: "*"handover"* ]]
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (11: "*"handover"* ]]
   HO s1 --file "$(draft)" >/dev/null
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
 }
 
-@test "rule 11: two stalls need two handovers; a handover missing a heading fails" {
-  attempts 6
+@test "rule 11: a handover missing a heading fails the slice" {
+  attempts 3
   printf '42\n' > value.txt && ev s1 after -- sh test.sh >/dev/null 2>&1
   HO s1 --file "$(draft)" >/dev/null
+  sed -i.bak '/^## Why it failed$/d' .vetdd/evidence/s1/handover-1.md && rm -f .vetdd/evidence/s1/handover-1.md.bak
   run check s1
-  [[ "$output" == *"FAIL (11: "*"2 stalls"*"1 handover"* ]]
-  HO s1 --file "$(draft)" >/dev/null
-  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL (11: handover-1.md"*"Why it failed"* ]]
+}
+
+@test "r1: attempts of different commands are separate sequences; a pass of one does not reset another" {
+  printf '0\n' > value.txt
+  ev s1 before --seam unit --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1
+  local i; for i in 1 2 3; do
+    ev s1 after -- sh test.sh >/dev/null 2>&1 || true
+    ev s1 after -- sh -c 'true' >/dev/null 2>&1
+  done
+  run ST s1
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+}
+
+@test "r1: an attempt whose count is unknown or zero (no usable report) is no progress" {
+  attempts 3
+  set_failed 3 0 3
+  run ST s1
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+}
+
+@test "r1: --k refuses a leading zero" {
+  attempts 1
+  run ST s1 --k 08
+  [ "$status" -eq 2 ]
+}
+
+@test "r1: stall.sh says how many stalls the record holds (the redesign budget used)" {
+  attempts 6
+  run ST s1
+  [[ "$output" == *"2 stalls so far"* ]]
+}
+
+@test "r1: handover.sh refuses a linked .vetdd or .vetdd/evidence, and takes a draft with CRLF line ends" {
+  attempts 1
+  tr -d '\r' < "$(draft)" | sed 's/$/\r/' > "$BATS_TEST_TMPDIR/crlf.md"
+  run HO s1 --file "$BATS_TEST_TMPDIR/crlf.md"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  sed -i.bak '/^## Why it failed$/d' .vetdd/evidence/s1/handover-2.md && rm -f .vetdd/evidence/s1/handover-2.md.bak
-  run check s1
-  [[ "$output" == *"FAIL (11: "*"handover-2.md"*"Why it failed"* ]]
+  mkdir -p "$BATS_TEST_TMPDIR/outside"
+  mv .vetdd/evidence "$BATS_TEST_TMPDIR/outside/evidence" && ln -s "$BATS_TEST_TMPDIR/outside/evidence" .vetdd/evidence
+  run HO s1 --file "$(draft)"
+  [ "$status" -eq 2 ]
+  [ ! -e "$BATS_TEST_TMPDIR/outside/evidence/s1/handover-2.md" ]
+}
+
+@test "r1: the briefs tell an author to stop and report a stall; SKILL.md names K in Q3" {
+  grep -q 'stall.sh' "$SCRIPTS/../references/subagent-brief.md"
+  grep -q 'stall K' "$SCRIPTS/../SKILL.md"
 }
 
 @test "a slice with no stall in its record is not asked for a handover" {

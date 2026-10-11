@@ -25,14 +25,15 @@ while [ $# -gt 0 ]; do
     *) die "unknown argument: $(printf '%s' "$1" | vetdd_printable)" ;;
   esac
 done
-case "$k" in ''|*[!0-9]*|0) die "--k takes a whole number of 1 or more" ;; esac
+case "$k" in [1-9]|[1-9][0-9]) ;; *) die "--k takes a whole number from 1 to 99, without a leading zero" ;; esac
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
 meta="$root/.vetdd/evidence/$slice/meta.json"
 [ -f "$meta" ] && [ ! -L "$meta" ] || die "no evidence for slice $slice"
 res="$(jq -c --argjson k "$k" "$VETDD_STALL_JQ"' stall_walk($k)' "$meta" 2>/dev/null)" || die "cannot read the evidence of slice $slice"
 counts="$(printf '%s' "$res" | jq -r '.trailing | map(tostring) | join(" ")')"
+n="$(printf '%s' "$res" | jq -r '.stalls')"
 if [ "$(printf '%s' "$res" | jq -r '.stalled')" = true ]; then
-  printf 'stall.sh: %s is stalled: failure counts %s over %s attempts (K=%s); write a handover (handover.sh), then redesign or go back to 1a (references/stall.md)\n' "$slice" "$counts" "$((k + 1))" "$k"
+  printf 'stall.sh: %s is stalled: failure counts %s over %s attempts (K=%s); %s stalls so far; write a handover (handover.sh), then redesign or go back to 1a (references/stall.md)\n' "$slice" "$counts" "$((k + 1))" "$k" "$n"
   exit 3
 fi
-printf 'stall.sh: %s is not stalled: failure counts since the last green: %s\n' "$slice" "${counts:-none}"
+printf 'stall.sh: %s is not stalled: failure counts since the last green: %s; %s stalls so far\n' "$slice" "${counts:-none}" "$n"

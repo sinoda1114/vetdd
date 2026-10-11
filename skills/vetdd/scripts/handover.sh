@@ -21,16 +21,23 @@ slice="$1"; draft="$3"
 vetdd_is_slice_id "$slice" || die "invalid slice id"
 [ -f "$draft" ] && [ ! -L "$draft" ] || die "--file must be a regular file"
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
+root="$(cd "$root" && pwd -P)"
 dir="$root/.vetdd/evidence/$slice"
-[ -f "$dir/meta.json" ] && [ ! -L "$dir" ] && [ ! -L "$dir/meta.json" ] || die "no evidence for slice $slice"
+for d in "$root/.vetdd" "$root/.vetdd/evidence" "$dir"; do
+  [ ! -L "$d" ] || die "${d#"$root"/} is a symbolic link; a handover is written only inside the repository"
+done
+[ -f "$dir/meta.json" ] && [ ! -L "$dir/meta.json" ] || die "no evidence for slice $slice"
 missing=""
 while IFS= read -r h; do
-  grep -qxF -- "$h" "$draft" || missing="$missing ${h#\#\# };"
+  tr -d '\r' < "$draft" | grep -qxF -- "$h" || missing="$missing ${h#\#\# };"
 done <<EOF_H
 $VETDD_HANDOVER_HEADINGS
 EOF_H
 [ -z "$missing" ] || die "the draft lacks the heading(s):$missing each goes on a line of its own"
 n=1
 while [ -e "$dir/handover-$n.md" ] || [ -L "$dir/handover-$n.md" ]; do n=$((n + 1)); done
-cp -- "$draft" "$dir/handover-$n.md" || die "cannot write $dir/handover-$n.md" 1
+# Written beside it first, then moved without overwriting: a name taken in between is never written through.
+tmp="$(mktemp "$dir/.handover.XXXXXX")" || die "cannot write in $dir" 1
+cp -- "$draft" "$tmp" && mv -n -- "$tmp" "$dir/handover-$n.md" && [ ! -e "$tmp" ] \
+  || { rm -f -- "$tmp"; die "cannot write $dir/handover-$n.md (the name was taken)" 1; }
 printf '%s\n' "$dir/handover-$n.md"
