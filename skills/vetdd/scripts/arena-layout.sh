@@ -37,7 +37,9 @@ while [ $# -gt 0 ]; do
     --base) [ $# -ge 2 ] || die "--base needs a git ref"; base="$2"; shift 2 ;;
     --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; allow+=("$2"); jl_args+=(--allow-secrets "$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; jl_args+=(--allow-binary "$2"); shift 2 ;;
-    --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>,..."; jl_args+=(--allow-words "$2"); awords+=("$2"); shift 2 ;;
+    --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>,..."
+      . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$err"
+      jl_args+=(--allow-words "$2"); awords+=("$2"); shift 2 ;;
     -*) die "unknown option: $(p "$1")" ;;
     *) lanes+=("$1"); shift ;;
   esac

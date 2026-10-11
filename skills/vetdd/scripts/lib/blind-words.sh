@@ -117,3 +117,29 @@ vetdd_redact() {
     END { exit changed ? 0 : 3 }
   ' "$1" "$2"
 }
+
+# vetdd_allow_words_error <value> [<extra word>...]: check one --allow-words value,
+# <glob>:<word>[,<word>]... (split at the last ":"): a glob, at least one word, each word letters,
+# digits, and . _ - only and one of the lists here (or an extra word). Print why it is wrong and
+# return 1, or return 0. check-blind.sh, judge-layout.sh, and arena-layout.sh all call it, so a typo
+# is a usage error before anything is written.
+vetdd_allow_words_error() {
+  local v="$1" glob list w lw known
+  shift
+  case "$v" in *:*) ;; *) printf "%s\n" "--allow-words '$v' has no ':<word>' (<glob>:<word>[,<word>]...)"; return 1 ;; esac
+  glob="${v%:*}"; list="${v##*:}"
+  [ -n "$glob" ] || { printf "%s\n" "--allow-words '$v' has no glob before ':'"; return 1; }
+  [ -n "$(printf '%s' "$list" | tr -d ',')" ] || { printf "%s\n" "--allow-words '$v' has no word after ':'"; return 1; }
+  known=" $(printf '%s ' $VETDD_ORIGIN_WORDS $VETDD_MODEL_WORDS $VETDD_FORBIDDEN_WORDS "$@" | tr 'A-Z' 'a-z') "
+  local words=()
+  IFS=, read -r -a words <<EOF_W
+$list
+EOF_W
+  for w in ${words[@]+"${words[@]}"}; do
+    [ -n "$w" ] || continue
+    printf '%s' "$w" | grep -Eq '^[A-Za-z0-9._-]+$' || { printf "%s\n" "--allow-words '$v': '$w' is not a word (letters, digits, . _ -)"; return 1; }
+    lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
+    case "$known" in *" $lw "*) ;; *) printf "%s\n" "--allow-words '$v': '$w' is not a checked word"; return 1 ;; esac
+  done
+  return 0
+}

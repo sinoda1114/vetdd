@@ -190,8 +190,11 @@ for g in ${allow_secrets[@]+"${allow_secrets[@]}"}; do set -- "$@" --allow-secre
 for g in ${allow_words[@]+"${allow_words[@]}"}; do set -- "$@" --allow-words "$g"; done
 # A final verdict (no variants.json) has no variant to hide: product words such as a button variant
 # or a CSS baseline do not stop it; model names still do.
+# Only one label and no variants.json is a final verdict: a hand-made pair (a calibration) keeps the
+# origin words checked.
 jrun="${cand%/*}"; [ -n "$jrun" ] || jrun="/"
-[ -f "$jrun/variants.json" ] || set -- "$@" --final
+nlabels="$(find "$jdir" -mindepth 1 -maxdepth 1 -type d -name 'c[0-9]*' | wc -l | tr -d ' ')"
+[ -f "$jrun/variants.json" ] || [ "$nlabels" != 1 ] || set -- "$@" --final
 blind="$("$here/check-blind.sh" "$@" 2>&1)"
 case $? in
   0) ;;

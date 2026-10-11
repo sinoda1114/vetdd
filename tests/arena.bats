@@ -309,3 +309,10 @@ lane() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"--allow-words"* ]]
 }
+
+@test "triage r2: a malformed --allow-words is a usage error before anything is written" {
+  lane la-a1b2c3 42
+  run AL --out "$OUT" --base "$BASE" --allow-words 'foo' la-a1b2c3
+  [ "$status" -eq 2 ]
+  [ ! -e "$OUT" ]
+}

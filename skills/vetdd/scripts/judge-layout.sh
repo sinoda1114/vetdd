@@ -54,7 +54,8 @@ while [ $# -gt 0 ]; do
     --reply) [ $# -ge 2 ] || die "--reply needs a file"; reply="$2"; shift 2 ;;
     --base) [ $# -ge 2 ] || die "--base needs a git ref"; base="$2"; shift 2 ;;
     --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; allow+=("$2"); shift 2 ;;
-    --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."; awords+=("$2"); shift 2 ;;
+    --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."
+      . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$err"; awords+=("$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
     --before-close) ce_opts=(--before-close); shift ;;
     --lane) lane=1; shift ;;

@@ -71,7 +71,7 @@ done
 
 # allow_secrets[i] is a glob; allow_secret_kinds[i] is "all" or the space-separated kinds it drops.
 dir=""; extra_files=(); allow=(); allow_secrets=(); allow_secret_kinds=(); profile="candidate"; placed=(); files=()
-final=0; allow_words_glob=(); allow_words_list=()
+final=0; allow_words_glob=(); allow_words_list=(); allow_words_raw=()
 # add_allow_secrets <value>: parse <glob> or <glob>:<kind>[,<kind>]... into the two arrays.
 add_allow_secrets() {
   local v="$1" err
@@ -91,8 +91,8 @@ while [ $# -gt 0 ]; do
     --file) [ $# -ge 2 ] || die "--file needs a path"; files+=("$2"); shift 2 ;;
     --final) final=1; shift ;;
     --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."
-      case "$2" in ?*:?*) ;; *) die "--allow-words takes <glob>:<word>[,<word>]..., got '$2'" ;; esac
-      allow_words_glob+=("${2%:*}"); allow_words_list+=("$(printf '%s' "${2##*:}" | tr ',' ' ')"); shift 2 ;;
+      allow_words_raw+=("$2"); allow_words_glob+=("${2%:*}")
+      allow_words_list+=("$(printf '%s' "${2##*:}" | tr ',' ' ' | tr 'A-Z' 'a-z')"); shift 2 ;;
     -*) die "unknown option '$1'" ;;
     *) [ -z "$dir" ] || die "only one directory is allowed"; dir="$1"; shift ;;
   esac
@@ -125,21 +125,20 @@ words="$work/words"
 extra_words=()
 for f in ${extra_files[@]+"${extra_files[@]}"}; do
   [ -f "$f" ] || die "extra words file not found: $f"
-  while IFS= read -r w || [ -n "$w" ]; do extra_words+=("$w"); done < "$f"
+  # Read as vetdd_word_file reads them: CR and surrounding blanks dropped, comments and blank lines out.
+  while IFS= read -r w || [ -n "$w" ]; do
+    w="$(printf '%s' "$w" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    case "$w" in ''|'#'*) continue ;; esac
+    extra_words+=("$w")
+  done < "$f"
 done
 # shellcheck disable=SC2086 # the default lists are space-separated words
 vetdd_word_file "$words" $base_words ${extra_words[@]+"${extra_words[@]}"}
 [ -s "$words" ] || die "cannot build the word list (awk, sort, or cut failed)"
 [ "$final" -eq 0 ] || [ "$profile" = judge ] || die "--final goes with --profile judge"
-# --allow-words: each word must be one of the lists (the origin words count, also under --final, where
-# there is nothing left to drop), written with letters, digits, and . _ - only.
-all_words=" $(printf '%s ' $VETDD_ORIGIN_WORDS $VETDD_MODEL_WORDS $VETDD_FORBIDDEN_WORDS ${extra_words[@]+"${extra_words[@]}"} | tr 'A-Z' 'a-z') "
-for list in ${allow_words_list[@]+"${allow_words_list[@]}"}; do
-  for w in $list; do
-    printf '%s' "$w" | grep -Eq '^[A-Za-z0-9._-]+$' || die "--allow-words: '$w' is not a word (letters, digits, . _ -)"
-    lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
-    case "$all_words" in *" $lw "*) ;; *) die "--allow-words: '$w' is not a checked word" ;; esac
-  done
+# --allow-words: checked as the layout scripts check it, with the extra words known too.
+for v in ${allow_words_raw[@]+"${allow_words_raw[@]}"}; do
+  err="$(vetdd_allow_words_error "$v" ${extra_words[@]+"${extra_words[@]}"})" || die "$err"
 done
 # words_for <path>: the word list for a path: every word, less the words of every --allow-words
 # whose glob matches it (they add up). Each combination is built once.
@@ -152,14 +151,18 @@ words_for() {
   done
   [ -n "$key" ] || { printf '%s' "$words"; return 0; }
   f="$work/words$key"
-  if [ ! -e "$f" ]; then
-    union=" $(printf '%s' "$union" | tr 'A-Z' 'a-z') "
-    local keep=()
-    for w in $base_words ${extra_words[@]+"${extra_words[@]}"}; do
-      lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
-      case "$union" in *" $lw "*) ;; *) keep+=("$w") ;; esac
-    done
-    if [ ${#keep[@]} -gt 0 ]; then vetdd_word_file "$f" "${keep[@]}"; else : > "$f"; fi
+  union=" $union "
+  local keep=()
+  for w in $base_words ${extra_words[@]+"${extra_words[@]}"}; do
+    lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
+    case "$union" in *" $lw "*) ;; *) keep+=("$w") ;; esac
+  done
+  # Every word allowed: "-", the one mark that skips the scan. A list that could not be built is an
+  # error, never read as "no words".
+  [ ${#keep[@]} -gt 0 ] || { printf '%s' -; return 0; }
+  if [ ! -s "$f" ]; then
+    vetdd_word_file "$f" "${keep[@]}"
+    [ -s "$f" ] || { printf '%s' "$work/missing-word-list"; return 1; }
   fi
   printf '%s' "$f"
 }
@@ -204,10 +207,10 @@ matched() {
   out="$("$@")" || die "a matcher failed ($1); nothing below $dir was checked"
   report "$out"
 }
-name_words() { [ -s "$1" ] || return 0; printf '%s\n' "$3" | vetdd_find_words "$1" "$2" name; }
+name_words() { [ "$1" != - ] || return 0; printf '%s\n' "$3" | vetdd_find_words "$1" "$2" name; }
 scan_name() { matched name_words "$(words_for "$1")" "$1" "$2"; }
 name_secrets() { printf '%s\n' "$2" | vetdd_find_secrets "$1" name "$3"; }
-text_words() { [ -s "$1" ] || return 0; vetdd_find_words "$1" "$2" "" < "$3"; }
+text_words() { [ "$1" != - ] || return 0; vetdd_find_words "$1" "$2" "" < "$3"; }
 text_secrets() { vetdd_find_secrets "$1" "" "$3" < "$2"; }
 # scan_text <label> <file> <skip>: words, and secrets except the kinds in <skip> (secret_skip; "all"
 # checks none). A file that is not text (vetdd_is_text: a NUL byte anywhere in it, so UTF-16 too) is

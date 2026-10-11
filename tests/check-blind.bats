@@ -840,3 +840,21 @@ c1/transcript.jsonl:3: secret: assignment" ]
   run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words 'c1/*:var*'
   [ "$status" -eq 2 ]
 }
+
+@test "r2: --allow-words with no word, or a word with glob characters, is a usage error wherever it runs" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1" "$BATS_TEST_TMPDIR/cwd" && printf 'x\n' > "$BATS_TEST_TMPDIR/f/c1/a"
+  : > "$BATS_TEST_TMPDIR/cwd/test"
+  local v; for v in 'a:b:' 'c1/*:,' 'x:t*'; do
+    run sh -c 'cd "$1" && shift && "$@"' _ "$BATS_TEST_TMPDIR/cwd" "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words "$v"
+    [ "$status" -eq 2 ] || { echo "$v: $output"; false; }
+  done
+}
+
+@test "r2: an --extra-words line with CRLF or spaces can be allowed by its plain word" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1" && printf 'feature-x here\n' > "$BATS_TEST_TMPDIR/f/c1/a"
+  printf ' feature-x \r\n# note\r\n' > "$BATS_TEST_TMPDIR/extra.txt"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --extra-words "$BATS_TEST_TMPDIR/extra.txt"
+  [ "$status" -eq 1 ]
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --extra-words "$BATS_TEST_TMPDIR/extra.txt" --allow-words 'c1/*:feature-x'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

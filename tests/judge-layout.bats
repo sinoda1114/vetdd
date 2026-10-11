@@ -536,3 +536,12 @@ setup() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"--allow-words"*"openai"* ]]
 }
+
+@test "r2: a malformed --allow-words is a usage error before anything is written" {
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words 'foo' s1
+  [ "$status" -eq 2 ]
+  [ ! -e "$OUT" ]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words 'c1/*:notaword' s1
+  [ "$status" -eq 2 ]
+  [ ! -e "$OUT" ]
+}
