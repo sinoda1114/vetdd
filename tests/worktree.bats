@@ -339,3 +339,22 @@ unit() {
   awk '/integrated --rerun/{i=NR} /check-evidence.sh" --before-close/{c=NR} END{exit !(i && c && c > i)}' "$sw"
   grep -qi 'same user' "$sw"
 }
+
+# --- PR #39 review threads -------------------------------------------------------------------------
+
+@test "remove brings back evidence a worker recorded under another slice id, and refuses a worktree with no evidence unless told" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa-1 test.sh value.txt 42)
+  git merge -q --no-edit vetdd/sa
+  run WT remove sa
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f .vetdd/evidence/sa-1/meta.json ]
+  [[ "$output" == *"sa-1"* ]]
+  WT add sb >/dev/null
+  run WT remove sb
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no evidence"* ]]
+  [ -d "$WTROOT/sb" ]
+  run WT remove sb --no-evidence
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

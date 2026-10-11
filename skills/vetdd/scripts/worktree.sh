@@ -12,8 +12,9 @@
 #          before the parent merges vetdd/<slice>: refuses (exit 1) a branch that touches .vetdd/,
 #          a .gitattributes or .gitmodules, or a submodule, and a shared git config or hooks that
 #          changed since add (a worker's git config would run in the parent's merge)
-#        worktree.sh remove <slice> [--keep-branch]
-#          refuses while the worktree holds uncommitted work; brings back .vetdd/evidence/<slice>/,
+#        worktree.sh remove <slice> [--keep-branch] [--no-evidence]
+#          refuses while the worktree holds uncommitted work; brings back every .vetdd/evidence/<id>/
+#          (also one recorded under another slice id; with none, it refuses unless --no-evidence),
 #          .vetdd/artifacts/, and .vetdd/notes/ (a file the main repository already has must be the
 #          same: nothing is overwritten, and on any difference nothing is copied); then removes the
 #          worktree, and its branch once merged into HEAD (an unmerged branch is kept and named;
@@ -29,7 +30,7 @@ die() { printf 'worktree.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 
-usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] | list"
+usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] [--no-evidence] | list"
 [ $# -ge 1 ] || die "$usage"
 cmd="$1"; shift
 
@@ -194,9 +195,9 @@ $(p "$bad")" 1
 
   remove)
     slice_arg "$@"; slice="$1"; shift
-    keep=0
+    keep=0; noev=0
     while [ $# -gt 0 ]; do
-      case "$1" in --keep-branch) keep=1; shift ;; *) die "$usage" ;; esac
+      case "$1" in --keep-branch) keep=1; shift ;; --no-evidence) noev=1; shift ;; *) die "$usage" ;; esac
     done
     path="$wtroot/$slice"
     git -C "$root" worktree list --porcelain | grep -qxF "worktree $path" || die "no worker worktree for $(p "$slice") at $(p "$path")"
@@ -224,8 +225,20 @@ $(p "$dirty")" 1
     if [ -d "$path/.vetdd" ] && [ -n "$(find "$path/.vetdd" -type l -print 2>/dev/null | head -n 1)" ]; then
       die "the .vetdd of $(p "$slice")'s worktree holds a link; nothing was copied (a link would send the parent's reads or writes outside)" 1
     fi
-    if [ -e "$dst_ev" ] && [ -d "$src_ev" ] && ! diff -r -q "$src_ev" "$dst_ev" >/dev/null 2>&1; then
-      die "the main repository already has different evidence for $(p "$slice") (.vetdd/evidence/$(p "$slice")); nothing was copied" 1
+    # Every slice the worker recorded comes back, also one under another id: the worktree holds the
+    # only copy of its runs. A worktree with none is removed only with --no-evidence.
+    evs=()
+    for d in "$path/.vetdd/evidence"/*/; do
+      [ -d "$d" ] || continue
+      d="${d%/}"; s="${d##*/}"
+      vetdd_is_slice_id "$s" || die "the worktree of $(p "$slice") holds evidence under a name that is not a slice id: $(p "$s"); nothing was copied" 1
+      evs+=("$s")
+      if [ -e "$root/.vetdd/evidence/$s" ] && ! diff -r -q "$d" "$root/.vetdd/evidence/$s" >/dev/null 2>&1; then
+        die "the main repository already has different evidence for $(p "$s") (.vetdd/evidence/$(p "$s")); nothing was copied" 1
+      fi
+    done
+    if [ ${#evs[@]} -eq 0 ] && [ "$noev" -eq 0 ]; then
+      die "the worktree of $(p "$slice") holds no evidence; remove it with --no-evidence if the worker recorded nothing" 1
     fi
     for d in artifacts notes; do
       while IFS= read -r -d '' f; do
@@ -235,9 +248,12 @@ $(p "$dirty")" 1
         fi
       done < <(files_under "$path/.vetdd/$d")
     done
-    if [ -d "$src_ev" ] && [ ! -e "$dst_ev" ]; then
-      mkdir -p -- "$root/.vetdd/evidence" && cp -R -- "$src_ev" "$dst_ev" || die "cannot copy the evidence of $(p "$slice")" 1
-    fi
+    for s in ${evs[@]+"${evs[@]}"}; do
+      [ -e "$root/.vetdd/evidence/$s" ] && continue
+      mkdir -p -- "$root/.vetdd/evidence" && cp -R -- "$path/.vetdd/evidence/$s" "$root/.vetdd/evidence/$s" \
+        || die "cannot copy the evidence of $(p "$s")" 1
+      [ "$s" = "$slice" ] || printf 'brought back evidence recorded under another slice id: %s\n' "$(p "$s")"
+    done
     for d in artifacts notes; do
       while IFS= read -r -d '' f; do
         f="${f#./}"
