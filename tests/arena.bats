@@ -51,12 +51,12 @@ lane() {
   [ -d "$OUT/candidates/c1" ] && [ -d "$OUT/candidates/c2" ] && [ ! -e "$OUT/candidates/c3" ]
   [ "$(jq -r '[.[]] | sort | join(",")' "$OUT/variants.json")" = "la,lb" ]
   local l; for l in c1 c2; do
-    s="$(jq -r --arg l "$l" '.[$l]' "$OUT/variants.json")"
     grep -q '^+42$' "$OUT/candidates/$l/artifact/diff.patch"
-    [ -f "$OUT/candidates/$l/evidence/$s/meta.json" ]
-    grep -q "lane $s sets value.txt" "$OUT/candidates/$l/artifact/reply.md"
+    # The lane id is replaced with a neutral one inside the candidate.
+    [ -f "$OUT/candidates/$l/evidence/cand${l#c}/meta.json" ]
+    grep -q "lane cand${l#c} sets value.txt" "$OUT/candidates/$l/artifact/reply.md"
   done
-  grep -q 'lc' "$OUT/gate.txt"
+  grep -qx 'lc: not green' "$OUT/gate.txt"
   [[ "$output" == *"arena-rubric.md"* ]]
   # The review worktrees are gone; the lanes' branches stay for the merge and the grafts.
   [ ! -e "$WTROOT/la" ] && [ ! -e "$WTROOT/lc" ]
@@ -76,13 +76,13 @@ lane() {
   lane la 42
   rm .vetdd/notes/la-design.md
   run AL --out "$OUT" --base "$BASE" la
-  [ "$status" -eq 2 ]
+  [ "$status" -eq 2 ] && [[ "$output" == *"design note"* ]]
   WT add lb -- sh test.sh >/dev/null
   run AL --out "$OUT" --base "$BASE" lb
-  [ "$status" -eq 2 ]
+  [ "$status" -eq 2 ] && [[ "$output" == *"still in a worktree"* ]]
   mkdir -p "$OUT"
   run AL --out "$OUT" --base "$BASE" la
-  [ "$status" -eq 2 ]
+  [ "$status" -eq 2 ] && [[ "$output" == *"exists"* ]]
 }
 
 @test "the arena rubric's criteria are what check-verdict reads, and a verdict naming a winner passes it" {
@@ -138,4 +138,88 @@ lane() {
 @test "dogfood: the runner adds no behavior the agreement does not name, and the synthesis note is cited as local and inferred" {
   grep -A3 'arena runner' "$SCRIPTS/../references/subagent-brief.md" | grep -q 'add no behavior the agreement does not name'
   grep -q 'cites it as a local file, labeled inferred' "$SCRIPTS/../parallel/arena.md"
+}
+
+# --- review round 1 ----------------------------------------------------------------------------------
+
+@test "r1: no lane id is left inside the candidates (directory names, slice_id, check-evidence output, logs)" {
+  lane zq-one 42
+  lane zq-two 42
+  run AL --out "$OUT" --base "$BASE" zq-one zq-two
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  if grep -rq 'zq-' "$OUT/candidates"; then grep -rn 'zq-' "$OUT/candidates" | head; false; fi
+  [ -z "$(find "$OUT/candidates" -name '*zq-*')" ]
+  # Each candidate's evidence sits under one neutral slice name, and check-evidence says OK for it.
+  for l in c1 c2; do
+    [ "$(ls "$OUT/candidates/$l/evidence" | wc -l | tr -d ' ')" = 1 ]
+    grep -q ': OK$' "$OUT/candidates/$l/artifact/check-evidence.txt"
+  done
+}
+
+@test "r1: the shuffle draws from /dev/urandom, not a clock-seeded rand()" {
+  grep -q '/dev/urandom' "$SCRIPTS/arena-layout.sh"
+  ! grep -q 'srand' "$SCRIPTS/arena-layout.sh" || false
+}
+
+@test "r1: --allow-binary goes through to each lane's layout" {
+  WT add la -- sh test.sh >/dev/null
+  (cd "$WTROOT/la" && mkdir -p .vetdd/notes && printf '## Design\nx\n' > .vetdd/notes/la-design.md \
+    && ev la before --seam unit --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1; \
+    printf '42\n' > value.txt && printf 'a\0b' > blob.bin && ev la after -- sh test.sh >/dev/null 2>&1; \
+    git add value.txt blob.bin && git commit -qm lane)
+  WT check la >/dev/null && WT remove la --keep-branch >/dev/null
+  run AL --out "$OUT" --base "$BASE" la
+  [ "$status" -ne 0 ]
+  run AL --out "$OUT.2" --base "$BASE" --allow-binary blob.bin la
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"next:"* ]]
+}
+
+@test "r1: --allow-secrets goes to each lane's layout and into the printed judge command" {
+  lane la 42
+  run AL --out "$OUT" --base "$BASE" --allow-secrets 'c*/artifact/tests/*:email' la
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"--allow-secrets"*"email"* ]]
+}
+
+@test "r1: review refuses a branch that tracks files under .vetdd/" {
+  WT add la -- sh test.sh >/dev/null
+  (cd "$WTROOT/la" && mkdir -p .vetdd/evidence/la && printf '{}\n' > .vetdd/evidence/la/meta.json && git add -f .vetdd && git commit -qm sneak \
+    && mkdir -p .vetdd/notes && printf 'x\n' > .vetdd/notes/la-design.md)
+  WT remove la --keep-branch >/dev/null 2>&1 || true
+  mkdir -p .vetdd/evidence/la .vetdd/notes && printf '{}\n' > .vetdd/evidence/la/meta.json && printf 'x\n' > .vetdd/notes/la-design.md
+  run WT review la
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".vetdd"* ]]
+  [ ! -e "$WTROOT/la" ]
+}
+
+@test "r1: a check-evidence that cannot run is a local failure (exit 1), not a stall" {
+  lane la 42
+  local fake="$BATS_TEST_TMPDIR/fakescripts"
+  cp -R "$SCRIPTS" "$fake"
+  printf '#!/bin/sh\nexit 127\n' > "$fake/check-evidence.sh"
+  run "$fake/arena-layout.sh" --out "$OUT" --base "$BASE" la
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ ! -e "$WTROOT/la" ]
+}
+
+@test "r1: --out inside the repository (outside .vetdd) and a lane named twice are usage errors" {
+  lane la 42
+  run AL --out "$REPO/arena-out" --base "$BASE" la
+  [ "$status" -eq 2 ]
+  [ ! -e "$REPO/arena-out" ]
+  run AL --out "$OUT" --base "$BASE" la la
+  [ "$status" -eq 2 ]
+}
+
+@test "r1: arena.md passes --test-report when merging the chosen lane" {
+  grep -q 'integrated --rerun \[--test-report' "$SCRIPTS/../parallel/arena.md"
+}
+
+@test "r1: a layout built with --before-close says so on the first line of check-evidence.txt" {
+  lane la 42
+  run AL --out "$OUT" --base "$BASE" la
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(head -1 "$OUT/candidates/c1/artifact/check-evidence.txt")" = "mode: before-close (the mutation audit is not due yet)" ]
 }

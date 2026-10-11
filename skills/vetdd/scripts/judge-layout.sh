@@ -57,7 +57,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$out" ] && [ -n "$reply" ] && [ -n "$base" ] && [ ${#slices[@]} -gt 0 ] \
-  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... <slice-id>..."
+  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--before-close] <slice-id>..."
 [ -f "$reply" ] && [ ! -L "$reply" ] || die "--reply must be a regular file"
 . "$here/lib/secret-patterns.sh"
 for a in ${allow[@]+"${allow[@]}"}; do
@@ -157,7 +157,9 @@ GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --binary --end-of-opt
 cp -- "$reply" "$C/artifact/reply.md" || die "cannot copy the reply" 1
 
 ce_rc=0
-(cd "$root" && "$here/check-evidence.sh" ${ce_opts[@]+"${ce_opts[@]}"} "${slices[@]}") > "$C/artifact/check-evidence.txt" 2>&1 || ce_rc=$?
+# A layout built before Close says so first: a final judge never reads an OK that skipped the audit.
+[ ${#ce_opts[@]} -eq 0 ] || printf 'mode: before-close (the mutation audit is not due yet)\n' > "$C/artifact/check-evidence.txt"
+(cd "$root" && "$here/check-evidence.sh" ${ce_opts[@]+"${ce_opts[@]}"} "${slices[@]}") >> "$C/artifact/check-evidence.txt" 2>&1 || ce_rc=$?
 printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
 # 126 and 127: check-evidence.sh did not run; the judge would read a FAIL that is not one.
 [ "$ce_rc" -lt 126 ] || die "check-evidence.sh could not run (exit $ce_rc)" 1

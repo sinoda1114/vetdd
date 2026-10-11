@@ -285,6 +285,9 @@ $(p "$dirty")" 1
     slice_arg "$@"; slice="$1"; shift
     [ $# -eq 0 ] || die "$usage"
     pgit rev-parse -q --verify "refs/heads/vetdd/$slice" >/dev/null || die "no branch vetdd/$(p "$slice")"
+    # The evidence and notes come from the main repository, never from the branch.
+    [ -z "$(pgit ls-tree -r --name-only "vetdd/$slice" -- .vetdd)" ] \
+      || die "vetdd/$(p "$slice") tracks files under .vetdd/; a lane never does: leave it out of the arena" 1
     path="$wtroot/$slice"
     [ ! -e "$path" ] && [ ! -L "$path" ] || die "$(p "$path") exists: remove the runner's worktree first (worktree.sh check, then remove --keep-branch)"
     [ -d "$root/.vetdd/evidence/$slice" ] && [ ! -L "$root/.vetdd/evidence/$slice" ] \
