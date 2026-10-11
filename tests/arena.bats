@@ -168,16 +168,18 @@ lane() {
     printf '42\n' > value.txt && printf 'a\0b' > blob.bin && ev la-a1b2c3 after -- sh test.sh >/dev/null 2>&1; \
     git add value.txt blob.bin && git commit -qm lane)
   WT check la-a1b2c3 >/dev/null && WT remove la-a1b2c3 --keep-branch >/dev/null
-  run AL --out "$OUT" --base "$BASE" la-a1b2c3
+  lane lb-d4e5f6 42
+  run AL --out "$OUT" --base "$BASE" la-a1b2c3 lb-d4e5f6
   [ "$status" -ne 0 ]
-  run AL --out "$OUT.2" --base "$BASE" --allow-binary blob.bin la-a1b2c3
+  run AL --out "$OUT.2" --base "$BASE" --allow-binary blob.bin la-a1b2c3 lb-d4e5f6
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"next:"* ]]
 }
 
 @test "r1: --allow-secrets goes to each lane's layout and into the printed judge command" {
   lane la-a1b2c3 42
-  run AL --out "$OUT" --base "$BASE" --allow-secrets 'c*/artifact/tests/*:email' la-a1b2c3
+  lane lb-d4e5f6 42
+  run AL --out "$OUT" --base "$BASE" --allow-secrets 'c*/artifact/tests/*:email' la-a1b2c3 lb-d4e5f6
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"--allow-secrets"*"email"* ]]
 }
@@ -254,4 +256,32 @@ lane() {
     printf 'r\n' > "$BATS_TEST_TMPDIR/r.md"; \
     "$SCRIPTS/judge-layout.sh" --before-close --out "$BATS_TEST_TMPDIR/jl" --reply "$BATS_TEST_TMPDIR/r.md" --base HEAD la-a1b2c3 >/dev/null 2>&1)
   grep -qF 'linked <repo>/node_modules' "$BATS_TEST_TMPDIR/jl/c1/evidence/la-a1b2c3/runs/001-before.log"
+}
+
+# --- PR #41 review threads -------------------------------------------------------------------------
+
+@test "a single green lane is chosen without a comparison (the judge would name no winner)" {
+  lane la-a1b2c3 42
+  lane lb-d4e5f6 7
+  run AL --out "$OUT" --base "$BASE" la-a1b2c3 lb-d4e5f6
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"only one lane is green: la-a1b2c3"* ]]
+  [[ "$output" != *"judge.sh"* ]]
+  [ "$(cat "$OUT/chosen")" = "la-a1b2c3" ]
+  grep -q 'only one lane is green' "$SCRIPTS/../parallel/arena.md"
+}
+
+@test "a lane that worktree.sh check refuses stays out; the other lanes still reach the judge" {
+  lane la-a1b2c3 42
+  lane lb-d4e5f6 42
+  WT add lc-0a1b2c -- sh test.sh >/dev/null
+  (cd "$WTROOT/lc-0a1b2c" && mkdir -p .vetdd/notes && printf 'x\n' > .vetdd/notes/lc-0a1b2c-design.md \
+    && ev lc-0a1b2c before --seam unit --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1; \
+    printf '42\n' > value.txt; ev lc-0a1b2c after -- sh test.sh >/dev/null 2>&1; \
+    printf '* filter=x\n' > .gitattributes && git add value.txt .gitattributes && git commit -qm lane)
+  WT remove lc-0a1b2c --keep-branch >/dev/null
+  run AL --out "$OUT" --base "$BASE" la-a1b2c3 lb-d4e5f6 lc-0a1b2c
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'lc-0a1b2c: refused by worktree.sh check' "$OUT/gate.txt"
+  [ "$(jq -r '[.[]] | sort | join(",")' "$OUT/variants.json")" = "la-a1b2c3,lb-d4e5f6" ]
 }

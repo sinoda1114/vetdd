@@ -15,7 +15,8 @@
 #   nothing about the runner or the order they ran in, so nothing inside it is rewritten. The review worktrees are removed again (also when the build stops); the
 #   lanes' branches stay for the merge and the grafts.
 #   <out> must be outside the repository or under its .vetdd/.
-# Exit 0 built (it prints the judge.sh command with references/arena-rubric.md); 1 a local step
+# Exit 0 built (it prints the judge.sh command with references/arena-rubric.md), or exactly one lane
+# is green (it is chosen without a comparison, named in <out>/chosen; no judge command is printed); 1 a local step
 # failed; 2 usage error (nothing is written); 4 a lane's layout is not blind; 5 no lane is green
 # (a stall: no candidates are written).
 set -u
@@ -77,8 +78,12 @@ trap 'if [ -n "$cur" ]; then "$here/worktree.sh" remove "$cur" --keep-branch >/d
 : > "$out/gate.txt"
 green=()
 for l in "${lanes[@]}"; do
-  "$here/worktree.sh" check "$l" >/dev/null 2>"$out/errs/$l.check" \
-    || { vetdd_printable < "$out/errs/$l.check" >&2; die "worktree.sh check refused lane $(p "$l") (above)" 1; }
+  # A lane check refuses stays out, as in step 3; the others go on.
+  if ! "$here/worktree.sh" check "$l" >/dev/null 2>"$out/errs/$l.check"; then
+    printf '%s: refused by worktree.sh check\n' "$l" >> "$out/gate.txt"
+    vetdd_printable < "$out/errs/$l.check" | sed 's/^/  /' >> "$out/gate.txt"
+    continue
+  fi
   rv="$("$here/worktree.sh" review "$l" 2>"$out/errs/$l.review")" \
     || { vetdd_printable < "$out/errs/$l.review" >&2; die "cannot make a review worktree for $(p "$l")" 1; }
   cur="$l"
@@ -113,6 +118,7 @@ if [ ${#green[@]} -eq 0 ]; then
   exit 5
 fi
 
+
 # An order drawn from /dev/urandom: the label says nothing about the lane, the runner, or the order
 # they ran in.
 mkdir -m 700 -- "$out/candidates" || die "cannot create $(p "$out")/candidates" 1
@@ -131,6 +137,12 @@ done < <(for l in "${green[@]}"; do
 rm -rf -- "$out/lanes" "$out/errs"
 printf '%s\n' "$map" > "$out/variants.json"
 
+# One green lane is chosen without a comparison: the judge names no winner for a single label.
+if [ ${#green[@]} -eq 1 ]; then
+  printf '%s\n' "${green[0]}" > "$out/chosen"
+  printf 'arena-layout.sh: only one lane is green: %s is chosen without a comparison (gate: %s)\n' "$(p "${green[0]}")" "$(p "$out/gate.txt")"
+  exit 0
+fi
 printf 'arena-layout.sh: built %s (%d of %d lanes green; the label-to-lane map is variants.json)\n' "$(p "$out/candidates")" "${#green[@]}" "${#lanes[@]}"
 printf 'next: %q --rubric %q --candidates %q --out <judge.json> --eval-id <id> --run-id <id> --rubric-version 1' \
   "$here/judge.sh" "${here%/scripts}/references/arena-rubric.md" "$out/candidates"
