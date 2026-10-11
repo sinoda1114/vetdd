@@ -244,3 +244,8 @@ draft() {
   grep -q 'commit your work in progress' "$SCRIPTS/../references/subagent-brief.md"
   grep -q -- '-r<n>' "$SCRIPTS/../references/stall.md"
 }
+
+@test "PR #43: a stalled worker's WIP commit skips the evidence hook (VETDD_BYPASS=1), since its latest after is red" {
+  grep -q 'VETDD_BYPASS=1 git commit -m "wip: stalled"' "$SCRIPTS/../references/subagent-brief.md"
+  grep -q 'VETDD_BYPASS=1' "$SCRIPTS/../references/stall.md"
+}
