@@ -1,6 +1,6 @@
 # Parallel shape selection
 
-Answer two questions after the oracle is agreed. Write the result in the todo list as `parallel: <shape> because <reason>`.
+Answer two questions, before the agreement of SKILL.md step 2 when you can, so the agreement covers the shape (Q3). Write the result in the todo list as `parallel: <shape> because <reason>`.
 
 - Q1. Does the deliverable have to converge on one design (new types, module boundaries, or data structures are being decided)? Additions that follow an existing shape answer **no**.
 - Q2. Can the task be split into units that touch different files, change no contract another unit depends on, and each own a red test? If any unit fails one of these, answer **no**.

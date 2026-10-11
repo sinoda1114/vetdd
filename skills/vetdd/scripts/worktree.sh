@@ -2,9 +2,11 @@
 # One worker per unit in a swarm (parallel/swarm.md): each in its own git worktree outside the repository,
 # so tools that walk the tree (the test runner, Stryker, check-evidence's tree hash) never see another
 # worker's copy. Run it from the main repository.
-# Usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]...
+# Usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <the unit's test command>]
 #          makes ../<repo>.vetdd-wt/<slice> on a new branch vetdd/<slice> at <ref> (default HEAD) and
-#          prints its path; --link links an ignored path of the main repository into it (node_modules)
+#          prints its path; --link links an ignored path of the main repository into it (node_modules);
+#          the command, run from the repository root, is recorded in the main repository
+#          (.vetdd/swarm/<slice>.cmd) for `evidence.sh <slice> integrated --rerun`
 #        worktree.sh remove <slice> [--keep-branch]
 #          refuses while the worktree holds uncommitted work; brings back .vetdd/evidence/<slice>/,
 #          .vetdd/artifacts/, and .vetdd/notes/ (a file the main repository already has must be the
@@ -22,7 +24,7 @@ die() { printf 'worktree.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 
-usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... | remove <slice> [--keep-branch] | list"
+usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | remove <slice> [--keep-branch] | list"
 [ $# -ge 1 ] || die "$usage"
 cmd="$1"; shift
 
@@ -39,17 +41,50 @@ slice_arg() {
   vetdd_is_slice_id "$1" || die "invalid slice id: $(p "$1")"
 }
 
+# safe_wtroot: <repo>.vetdd-wt is the user's own private directory (not a link, not writable by group or
+# others), so no other user can put a worktree, or a .git, in place of a worker's.
+safe_wtroot() {
+  if [ -e "$wtroot" ] || [ -L "$wtroot" ]; then
+    [ ! -L "$wtroot" ] && [ -d "$wtroot" ] \
+      && [ -n "$(find "$wtroot" -maxdepth 0 -user "$(id -u)" ! -perm -020 ! -perm -002 -print 2>/dev/null)" ] \
+      || die "$(p "$wtroot") is a link, not a directory, not yours, or writable by others; remove it or fix its permissions" 1
+  else
+    mkdir -m 700 -- "$wtroot" || die "cannot create $(p "$wtroot")" 1
+  fi
+}
+
+# admin_dir <path>: the git directory git keeps for the worktree at <path> ($common/worktrees/<name>),
+# found from the main repository's side and checked against the worktree's .git file. The parent never
+# lets a worker's .git choose which git directory (and so which config, hooks, or fsmonitor) runs.
+admin_dir() {
+  local a found=""
+  for a in "$common"/worktrees/*/; do
+    a="${a%/}"
+    [ -f "$a/gitdir" ] && [ "$(cat "$a/gitdir")" = "$1/.git" ] && { found="$a"; break; }
+  done
+  [ -n "$found" ] || return 1
+  [ -f "$1/.git" ] && [ ! -L "$1/.git" ] && [ "$(cat "$1/.git")" = "gitdir: $found" ] || return 1
+  printf '%s' "$found"
+}
+# wgit_run <admin dir> <path> <git args...>: git on a worker's tree with the parent's git directory and
+# no fsmonitor or hooks.
+wgit_run() {
+  local a="$1" w="$2"; shift 2
+  git --git-dir="$a" --work-tree="$w" -c core.fsmonitor= -c core.hooksPath=/dev/null -C "$w" "$@"
+}
+
 # files_under <dir>: each regular file below <dir>, relative to it, NUL-separated.
 files_under() { [ -d "$1" ] || return 0; (cd "$1" && find . -type f -print0); }
 
 case "$cmd" in
   add)
     slice_arg "$@"; slice="$1"; shift
-    base=HEAD; links=()
+    base=HEAD; links=(); ucmd=()
     while [ $# -gt 0 ]; do
       case "$1" in
         --base) [ $# -ge 2 ] || die "--base needs a ref"; base="$2"; shift 2 ;;
         --link) [ $# -ge 2 ] || die "--link needs a path"; links+=("$2"); shift 2 ;;
+        --) shift; [ $# -ge 1 ] || die "-- needs the unit's test command"; ucmd=("$@"); break ;;
         *) die "unknown argument: $(p "$1")" ;;
       esac
     done
@@ -60,19 +95,29 @@ case "$cmd" in
       norm+=("$l")
     done
     links=(${norm[@]+"${norm[@]}"})
+    # The same path twice, or one inside another, would link into the main repository's own directory.
+    for a in ${links[@]+"${links[@]}"}; do
+      seen=0
+      for b in ${links[@]+"${links[@]}"}; do
+        [ "$a" = "$b" ] && { seen=$((seen + 1)); continue; }
+        case "$b/" in "$a"/*) die "--link $(p "$b") is inside --link $(p "$a"); name one of them" ;; esac
+      done
+      [ "$seen" -le 1 ] || die "--link $(p "$a") is named twice"
+    done
     for l in ${links[@]+"${links[@]}"}; do
       case "/$l/" in //*|*/../*|*/./*) die "--link takes a relative path without . or ..: $(p "$l")" ;; esac
       [ -e "$root/$l" ] || die "--link $(p "$l") does not exist in the main repository"
+      case "${l##*/}" in .env*) die "--link $(p "$l"): a file that may hold secrets is never shared with a worker" ;; esac
       git -C "$root" ls-files --error-unmatch -- "$l" >/dev/null 2>&1 && die "--link $(p "$l") is tracked; only an ignored path can be linked"
       git -C "$root" check-ignore -q -- "$l" || die "--link $(p "$l") is not ignored; only an ignored path can be linked"
     done
     path="$wtroot/$slice"
     [ ! -e "$path" ] && [ ! -L "$path" ] || die "$(p "$path") exists"
     git -C "$root" rev-parse -q --verify "refs/heads/vetdd/$slice" >/dev/null && die "branch vetdd/$(p "$slice") exists"
-    mkdir -p -- "$wtroot" || die "cannot create $(p "$wtroot")" 1
+    safe_wtroot
     git -C "$root" worktree add -q -b "vetdd/$slice" "$path" "$base" || die "git worktree add failed" 1
     # The worktree's own git directory: the worker cannot write there through the tree.
-    wgit="$(git -C "$path" rev-parse --absolute-git-dir)" || die "cannot find the git directory of $(p "$path")" 1
+    wgit="$(admin_dir "$path")" || die "cannot find the git directory of $(p "$path")" 1
     for l in ${links[@]+"${links[@]}"}; do
       if ! { mkdir -p -- "$path/$(dirname -- "$l")" && ln -s "$root/$l" "$path/$l"; }; then
         git -C "$root" worktree remove --force "$path" >/dev/null 2>&1
@@ -81,11 +126,19 @@ case "$cmd" in
       fi
       # Named so remove can tell a link it made from work left behind.
       printf '%s\n' "$l" >> "$wgit/vetdd-links"
-      # A link is not a directory: a rule such as node_modules/ does not ignore it.
-      if ! git -C "$path" check-ignore -q -- "$l"; then
-        mkdir -p "$common/info" && printf '/%s\n' "$l" >> "$common/info/exclude"
+      # A link is not a directory: a rule such as node_modules/ does not ignore it. The rule added is
+      # anchored, escaped, added once, and harmless to keep (the path is ignored anyway).
+      if ! wgit_run "$wgit" "$path" check-ignore -q -- "$l"; then
+        rule="/$(printf '%s' "$l" | sed 's/[][*?\\!#]/\\&/g')"
+        { mkdir -p "$common/info" && { grep -qxF -- "$rule" "$common/info/exclude" 2>/dev/null \
+            || printf '%s\n' "$rule" >> "$common/info/exclude"; }; } \
+          || die "cannot add $(p "$rule") to $(p "$common/info/exclude")" 1
       fi
     done
+    if [ ${#ucmd[@]} -gt 0 ]; then
+      { mkdir -p "$root/.vetdd/swarm" && printf '%s\0' "${ucmd[@]}" > "$root/.vetdd/swarm/$slice.cmd"; } \
+        || die "cannot record the command of $(p "$slice")" 1
+    fi
     printf '%s\n' "$path"
     ;;
 
@@ -98,20 +151,29 @@ case "$cmd" in
     path="$wtroot/$slice"
     git -C "$root" worktree list --porcelain | grep -qxF "worktree $path" || die "no worker worktree for $(p "$slice") at $(p "$path")"
     excl=(':(exclude).vetdd')
-    wgit="$(git -C "$path" rev-parse --absolute-git-dir)" || die "cannot find the git directory of $(p "$path")" 1
+    safe_wtroot
+    wgit="$(admin_dir "$path")" \
+      || die "the .git of $(p "$path") does not point at its own git directory; it was changed, so nothing was run there" 1
     if [ -f "$wgit/vetdd-links" ]; then
       while IFS= read -r l; do
         # Only a link add made that is still that link: anything else is work to account for.
-        [ -n "$l" ] && [ -L "$path/$l" ] && [ "$(readlink "$path/$l")" = "$root/$l" ] && excl+=(":(exclude)$l")
+        [ -n "$l" ] && [ -L "$path/$l" ] && [ "$(readlink "$path/$l")" = "$root/$l" ] && excl+=(":(exclude,literal)$l")
       done < "$wgit/vetdd-links"
     fi
-    dirty="$(git -C "$path" status --porcelain --untracked-files=all -- . "${excl[@]}")" \
+    head="$(wgit_run "$wgit" "$path" symbolic-ref -q HEAD)" || head="(detached)"
+    [ "$head" = "refs/heads/vetdd/$slice" ] \
+      || die "the worktree of $(p "$slice") is on $(p "$head"), not vetdd/$(p "$slice"); put its commits on that branch first, or they would be lost" 1
+    dirty="$(wgit_run "$wgit" "$path" status --porcelain --untracked-files=all -- . "${excl[@]}")" \
       || die "cannot read the status of $(p "$path")" 1
     [ -z "$dirty" ] || die "the worktree of $(p "$slice") has uncommitted work; commit it (or discard it) first:
 $(p "$dirty")" 1
 
     # Check everything before copying anything: on a difference, the main repository is left as it was.
     src_ev="$path/.vetdd/evidence/$slice"; dst_ev="$root/.vetdd/evidence/$slice"
+    [ ! -L "$path/.vetdd" ] || die "the .vetdd of $(p "$slice")'s worktree is a link; nothing was copied" 1
+    if [ -d "$path/.vetdd" ] && [ -n "$(find "$path/.vetdd" -type l -print 2>/dev/null | head -n 1)" ]; then
+      die "the .vetdd of $(p "$slice")'s worktree holds a link; nothing was copied (a link would send the parent's reads or writes outside)" 1
+    fi
     if [ -e "$dst_ev" ] && [ -d "$src_ev" ] && ! diff -r -q "$src_ev" "$dst_ev" >/dev/null 2>&1; then
       die "the main repository already has different evidence for $(p "$slice") (.vetdd/evidence/$(p "$slice")); nothing was copied" 1
     fi

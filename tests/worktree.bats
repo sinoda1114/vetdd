@@ -138,57 +138,11 @@ unit() {
   grep -q 'parallel shape' "$SCRIPTS/../SKILL.md"
 }
 
-@test "evidence.sh integrated --rerun runs the command of the slice's last after run, from the same directory" {
-  unit sa test.sh value.txt 42
-  # A coverage oracle recorded as integrated in between is not what --rerun runs.
-  ev sa integrated -- sh -c 'true' >/dev/null 2>&1
-  run ev sa integrated --rerun
-  [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .cmd | join(" ")')" = "sh test.sh" ]
-  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .outcome')" = pass ]
-  # Not with a command, not for another kind, not from another directory, not without a green run.
-  run ev sa integrated --rerun -- sh test.sh
-  [ "$status" -eq 2 ]
-  run ev sa before --rerun
-  [ "$status" -eq 2 ]
-  (cd sub && run ev sa integrated --rerun; [ "$status" -eq 2 ])
-  run ev nogreen integrated --rerun
-  [ "$status" -eq 2 ]
-}
-
 @test "swarm.md integrates each unit with evidence.sh integrated --rerun" {
   grep -q 'integrated --rerun' "$SCRIPTS/../parallel/swarm.md"
 }
 
 # --- review round 1 ----------------------------------------------------------------------------------
-
-@test "r1: --rerun runs the command that went red then green, not a coverage oracle recorded as after" {
-  unit sa test.sh value.txt 42
-  ev sa after -- sh -c 'true' >/dev/null 2>&1
-  run ev sa integrated --rerun
-  [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .cmd | join(" ")')" = "sh test.sh" ]
-  [[ "$output" == *"sh test.sh"* ]]
-}
-
-@test "r1: --rerun of a slice whose green run recorded a test report needs --test-report (rule 9b keeps working)" {
-  unit sa test.sh value.txt 42
-  tamper sa '(.runs[] | select(.kind == "after")) += {tests: {format: "jest-json", status: "ok", passed: 1, failed: 0, skipped: 0, todo: 0, other: 0, total: 1, sha256: "x"}}'
-  run ev sa integrated --rerun
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"--test-report"* ]]
-  mkdir -p .vetdd/reports
-  run ev sa integrated --rerun --test-report jest-json:.vetdd/reports/sa.json
-  [[ "$output" != *"--test-report"*"needs"* ]]
-  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .cmd | join(" ")')" = "sh test.sh" ]
-}
-
-@test "r1: --rerun refuses a recorded command with an element that is not a string" {
-  unit sa test.sh value.txt 42
-  tamper sa '(.runs[] | select(.kind == "after" or .kind == "before")).cmd += [3]'
-  run ev sa integrated --rerun
-  [ "$status" -eq 2 ]
-}
 
 @test "r1: remove --keep-branch keeps a merged branch, so a unit that goes red after its merge can be found again" {
   WT add sa >/dev/null
@@ -213,9 +167,134 @@ unit() {
 @test "r1: a worker cannot hide uncommitted work by writing the list of links" {
   mkdir -p ignored
   WT add sa --link ignored >/dev/null
-  mkdir -p "$WTROOT/sa/.vetdd" && printf 'value.txt\n' >> "$WTROOT/sa/.vetdd/worktree-links"
+  # The list lives in the worktree's git directory; an entry that is not a link add made counts as work.
+  printf 'value.txt\n' >> "$(git -C "$WTROOT/sa" rev-parse --absolute-git-dir)/vetdd-links"
   printf 'wip\n' > "$WTROOT/sa/value.txt"
   run WT remove sa
   [ "$status" -eq 1 ]
   [[ "$output" == *"uncommitted"* ]]
+}
+
+# --- review round 2 ----------------------------------------------------------------------------------
+
+@test "r2: --rerun runs the command the parent gave worktree.sh add, never the one the worker recorded" {
+  WT add sa -- sh test.sh >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  git merge -q --no-edit vetdd/sa && WT remove sa --keep-branch >/dev/null
+  tamper sa '(.runs[]).cmd = ["sh", "-c", "touch pwned"]'
+  run ev sa integrated --rerun
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"sh test.sh"* ]]
+  [ ! -e pwned ]
+  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .cmd | join(" ")')" = "sh test.sh" ]
+}
+
+@test "r2: --rerun without a command recorded by worktree.sh add is a usage error" {
+  unit sa test.sh value.txt 42
+  run ev sa integrated --rerun
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"worktree.sh add"* ]]
+  run ev sa integrated --rerun -- sh test.sh
+  [ "$status" -eq 2 ]
+  run ev sa before --rerun
+  [ "$status" -eq 2 ]
+}
+
+@test "r2: --rerun of a unit whose green run recorded a test report needs --test-report (rule 9b keeps working)" {
+  WT add sa -- sh test.sh >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  git merge -q --no-edit vetdd/sa && WT remove sa --keep-branch >/dev/null
+  tamper sa '(.runs[] | select(.kind == "after")) += {tests: {format: "jest-json", status: "ok", passed: 1, failed: 0, skipped: 0, todo: 0, other: 0, total: 1, sha256: "x"}}'
+  run ev sa integrated --rerun
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--test-report"* ]]
+  mkdir -p .vetdd/reports
+  run ev sa integrated --rerun --test-report jest-json:.vetdd/reports/sa.json
+  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .cmd | join(" ")')" = "sh test.sh" ]
+}
+
+@test "r2: --link refuses the same path twice, or one inside another" {
+  mkdir -p ignored/inner
+  run WT add sa --link ignored --link ignored
+  [ "$status" -eq 2 ]
+  run WT add sa --link ignored --link ignored/inner
+  [ "$status" -eq 2 ]
+  [ ! -e ignored/inner/inner ] && [ ! -L ignored/inner ]
+  [ ! -e "$WTROOT/sa" ]
+}
+
+@test "r2: the exclude rule for a link is added once and with its special characters escaped" {
+  mkdir -p 'ignored'
+  WT add sa --link ignored >/dev/null
+  WT add sb --link ignored >/dev/null
+  [ "$(grep -cx '/ignored' .git/info/exclude)" -le 1 ]
+}
+
+@test "r2: remove refuses a worktree whose HEAD left vetdd/<slice>, so commits off the branch are not lost" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && git checkout -q --detach && printf 'x\n' > value.txt && git commit -qam off-branch)
+  run WT remove sa
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"vetdd/sa"* ]]
+  [ -d "$WTROOT/sa" ]
+}
+
+@test "r2: remove refuses evidence, artifacts, or notes in the worktree that are links" {
+  WT add sa >/dev/null
+  mkdir -p "$BATS_TEST_TMPDIR/elsewhere" "$WTROOT/sa/.vetdd/evidence"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$WTROOT/sa/.vetdd/evidence/sa"
+  run WT remove sa
+  [ "$status" -eq 1 ]
+  [ ! -L .vetdd/evidence/sa ]
+}
+
+@test "r2: docs: add takes the unit's command, Close passes --test-report, the link is shared, and select.md runs before step 2" {
+  local sw="$SCRIPTS/../parallel/swarm.md"
+  grep -q 'worktree.sh" add <slice> \[--link node_modules\] -- <' "$sw"
+  grep -q -- '--rerun \[--test-report' "$sw"
+  grep -qi 'cache' "$sw"
+  grep -q 'artifacts' "$sw"
+  ! grep -q 'Answer two questions after the oracle is agreed' "$SCRIPTS/../parallel/select.md" || false
+}
+
+@test "r2 security: remove refuses a worktree whose .git no longer points at its own git directory, and runs no git there" {
+  WT add sa >/dev/null
+  mkdir -p "$BATS_TEST_TMPDIR/fakegit"
+  printf 'gitdir: %s\n' "$BATS_TEST_TMPDIR/fakegit" > "$WTROOT/sa/.git"
+  run WT remove sa
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".git"* ]]
+  [ -d "$WTROOT/sa" ]
+}
+
+@test "r2 security: the parent never runs git or check-evidence inside a worker's worktree (swarm.md)" {
+  ! grep -q 'cd <worktree> && "\$VETDD/scripts/check-evidence.sh"' "$SCRIPTS/../parallel/swarm.md" || false
+}
+
+@test "r2 security: any link under the worktree's .vetdd stops remove; evidence.sh refuses a linked runs directory" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  mkdir -p "$BATS_TEST_TMPDIR/elsewhere"
+  rm -rf "$WTROOT/sa/.vetdd/evidence/sa/runs" && ln -s "$BATS_TEST_TMPDIR/elsewhere" "$WTROOT/sa/.vetdd/evidence/sa/runs"
+  run WT remove sa
+  [ "$status" -eq 1 ]
+  [ ! -e .vetdd/evidence/sa ]
+  mkdir -p .vetdd/evidence/sb && ln -s "$BATS_TEST_TMPDIR/elsewhere" .vetdd/evidence/sb/runs
+  run ev sb before -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ -z "$(ls "$BATS_TEST_TMPDIR/elsewhere")" ]
+}
+
+@test "r2 security: add refuses a <repo>.vetdd-wt that is a link or that others can write, and makes it private" {
+  mkdir -p "$BATS_TEST_TMPDIR/other"
+  ln -s "$BATS_TEST_TMPDIR/other" "$WTROOT"
+  run WT add sa
+  [ "$status" -eq 1 ]
+  rm "$WTROOT" && mkdir -m 777 "$WTROOT" && chmod 777 "$WTROOT"
+  run WT add sa
+  [ "$status" -eq 1 ]
+  rmdir "$WTROOT"
+  run WT add sa
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(ls -ld "$WTROOT" | cut -c1-10)" = "drwx------" ]
 }

@@ -5,10 +5,10 @@
 #                    [--audit undefined-imports | --audit mutation --mutation-report stryker-json:<path>]
 #                    -- <command...>
 #        evidence.sh <slice-id> integrated --rerun [--test-report jest-json:<path>]
-#          runs again the slice's own test command: that of its last accepted `after` run whose command
-#          also went red (a before, or a calibration that is not an audit), run from the current
-#          directory (a swarm parent integrating units it did not type); it prints the command, and
-#          needs --test-report when that `after` run recorded a test report
+#          runs the unit's command the swarm parent gave `worktree.sh add <slice> -- <command>`
+#          (recorded in the main repository at .vetdd/swarm/<slice>.cmd, never read from a worker's
+#          evidence), from the repository root; it prints the command, and needs --test-report when
+#          an accepted after run of the slice recorded a test report (rule 9b compares them)
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
@@ -102,23 +102,18 @@ prefix="$(git rev-parse --show-prefix)"
 cwd_rel="${prefix%/}"; [ -n "$cwd_rel" ] || cwd_rel="."
 
 if [ "$rerun" -eq 1 ]; then
+  rfile="$root/.vetdd/swarm/$slice.cmd"
+  [ -f "$rfile" ] && [ ! -L "$rfile" ] \
+    || die "--rerun: no command recorded for slice $slice; the swarm parent records it with worktree.sh add $slice -- <command>"
+  [ "$cwd_rel" = "." ] || die "--rerun runs from the repository root, not from $cwd_rel"
+  rcmd=()
+  while IFS= read -r -d '' a; do rcmd+=("$a"); done < "$rfile"
+  [ ${#rcmd[@]} -gt 0 ] || die "--rerun: the command recorded for slice $slice is empty"
   rmeta="$root/.vetdd/evidence/$slice/meta.json"
-  [ -f "$rmeta" ] && [ ! -L "$rmeta" ] || die "--rerun: no evidence for slice $slice"
-  last="$(jq -c '
-    [.runs[]? | select(.accepted != false)] as $acc
-    | [$acc[] | select((.kind == "before" or (.kind == "calibration" and .audit == null)) and .outcome == "target_failure") | .cmd] as $reds
-    | [$acc[] | select(.kind == "after" and .outcome == "pass") | select(.cmd as $c | any($reds[]; . == $c))] | last // empty' "$rmeta" 2>/dev/null)" \
-    || die "--rerun: cannot read the evidence of slice $slice"
-  [ -n "$last" ] || die "--rerun: slice $slice has no accepted after run of a command that also went red"
-  printf '%s' "$last" | jq -e '(.cmd | type) == "array" and (.cmd | length) > 0 and (.cmd | all(type == "string"))' >/dev/null 2>&1 \
-    || die "--rerun: the slice's recorded command is not a list of strings"
-  rcwd="$(printf '%s' "$last" | jq -r '.conditions.cwd // "?"')"
-  [ "$rcwd" = "$cwd_rel" ] || die "--rerun: the slice's green run ran from $(printf '%s' "$rcwd" | vetdd_printable), not from $cwd_rel"
-  if [ -z "$report_opt" ] && printf '%s' "$last" | jq -e 'has("tests")' >/dev/null 2>&1; then
+  if [ -z "$report_opt" ] && [ -f "$rmeta" ] \
+     && jq -e '[.runs[]? | select(.accepted != false and .kind == "after" and has("tests"))] | length > 0' "$rmeta" >/dev/null 2>&1; then
     die "--rerun: the slice's after run recorded a test report; pass --test-report jest-json:<its report path> too (rule 9b compares them)"
   fi
-  rcmd=()
-  while IFS= read -r -d '' a; do rcmd+=("$a"); done < <(printf '%s' "$last" | jq -j '.cmd[] | ., "\u0000"')
   { printf 'evidence.sh: --rerun runs:'; printf ' %q' "${rcmd[@]}"; printf '\n'; } | vetdd_printable >&2
   set -- "${rcmd[@]}"
 fi
@@ -162,6 +157,11 @@ if [ -n "$mreport_opt" ]; then
 fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
+# Every directory on the way is the repository's own: a link would send the record (and the parent's
+# writes, in a swarm) somewhere else.
+for d in "$root/.vetdd" "$root/.vetdd/evidence" "$dir" "$dir/runs"; do
+  [ ! -L "$d" ] || die "${d#"$root"/} is a symbolic link; evidence is written only inside the repository"
+done
 mkdir -p "$dir/runs" || die "cannot create $dir"
 if [ ! -f "$meta" ]; then
   jq -n --arg s "$slice" '{slice_id: $s, oracle: {seam: null, version: null, files: []}, runs: []}' > "$meta"
