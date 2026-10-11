@@ -6,8 +6,8 @@
 #                    -- <command...>
 #        evidence.sh <slice-id> integrated --rerun [--test-report jest-json:<path>]
 #          runs the unit's command the swarm parent gave `worktree.sh add <slice> -- <command>`
-#          (recorded in the main repository at .vetdd/swarm/<slice>.cmd, never read from a worker's
-#          evidence), from the repository root; it prints the command, and needs --test-report when
+#          (recorded in the git directory at $GIT_COMMON_DIR/vetdd-swarm/<slice>.cmd, outside any
+#          working tree, never read from a worker's evidence), from the repository root; it prints the command, and needs --test-report when
 #          an accepted after run of the slice recorded a test report (rule 9b compares them)
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
@@ -102,7 +102,8 @@ prefix="$(git rev-parse --show-prefix)"
 cwd_rel="${prefix%/}"; [ -n "$cwd_rel" ] || cwd_rel="."
 
 if [ "$rerun" -eq 1 ]; then
-  rfile="$root/.vetdd/swarm/$slice.cmd"
+  gcommon="$(cd "$root" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" || die "--rerun: cannot find the git directory"
+  rfile="$gcommon/vetdd-swarm/$slice.cmd"
   [ -f "$rfile" ] && [ ! -L "$rfile" ] \
     || die "--rerun: no command recorded for slice $slice; the swarm parent records it with worktree.sh add $slice -- <command>"
   [ "$cwd_rel" = "." ] || die "--rerun runs from the repository root, not from $cwd_rel"

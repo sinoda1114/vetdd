@@ -5,8 +5,13 @@
 # Usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <the unit's test command>]
 #          makes ../<repo>.vetdd-wt/<slice> on a new branch vetdd/<slice> at <ref> (default HEAD) and
 #          prints its path; --link links an ignored path of the main repository into it (node_modules);
-#          the command, run from the repository root, is recorded in the main repository
-#          (.vetdd/swarm/<slice>.cmd) for `evidence.sh <slice> integrated --rerun`
+#          the command, run from the repository root, is recorded in the git directory, outside any
+#          working tree ($GIT_COMMON_DIR/vetdd-swarm/<slice>.cmd), for `evidence.sh <slice> integrated
+#          --rerun`, with a checksum of the shared git config and hooks for `check`
+#        worktree.sh check <slice>
+#          before the parent merges vetdd/<slice>: refuses (exit 1) a branch that touches .vetdd/,
+#          a .gitattributes or .gitmodules, or a submodule, and a shared git config or hooks that
+#          changed since add (a worker's git config would run in the parent's merge)
 #        worktree.sh remove <slice> [--keep-branch]
 #          refuses while the worktree holds uncommitted work; brings back .vetdd/evidence/<slice>/,
 #          .vetdd/artifacts/, and .vetdd/notes/ (a file the main repository already has must be the
@@ -24,7 +29,7 @@ die() { printf 'worktree.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 
-usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | remove <slice> [--keep-branch] | list"
+usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] | list"
 [ $# -ge 1 ] || die "$usage"
 cmd="$1"; shift
 
@@ -71,6 +76,24 @@ admin_dir() {
 wgit_run() {
   local a="$1" w="$2"; shift 2
   git --git-dir="$a" --work-tree="$w" -c core.fsmonitor= -c core.hooksPath=/dev/null -C "$w" "$@"
+}
+
+# The parent's own git, with no hooks or fsmonitor a worker could have set.
+pgit() { git -c core.hooksPath=/dev/null -c core.fsmonitor= -C "$root" "$@"; }
+swarmdir="$common/vetdd-swarm"
+# shared_sum: a checksum of what every worktree's git reads and a worker could change: the shared
+# config, the hooks, and info/attributes.
+shared_sum() {
+  {
+    for f in "$common/config" "$common/info/attributes"; do
+      printf '%s ' "$f"; [ -f "$f" ] && pgit hash-object --no-filters -- "$f" || echo none
+    done
+    if [ -d "$common/hooks" ]; then
+      find "$common/hooks" -type f -print | LC_ALL=C sort | while IFS= read -r f; do
+        printf '%s %s\n' "$f" "$(pgit hash-object --no-filters -- "$f")"
+      done
+    fi
+  } | pgit hash-object --stdin
 }
 
 # files_under <dir>: each regular file below <dir>, relative to it, NUL-separated.
@@ -135,11 +158,38 @@ case "$cmd" in
           || die "cannot add $(p "$rule") to $(p "$common/info/exclude")" 1
       fi
     done
+    { [ -d "$swarmdir" ] || mkdir -m 700 -- "$swarmdir"; } && [ ! -L "$swarmdir" ] || die "cannot use $(p "$swarmdir")" 1
+    rm -f -- "$swarmdir/$slice.cmd"
     if [ ${#ucmd[@]} -gt 0 ]; then
-      { mkdir -p "$root/.vetdd/swarm" && printf '%s\0' "${ucmd[@]}" > "$root/.vetdd/swarm/$slice.cmd"; } \
-        || die "cannot record the command of $(p "$slice")" 1
+      printf '%s\0' "${ucmd[@]}" > "$swarmdir/$slice.cmd" || die "cannot record the command of $(p "$slice")" 1
     fi
+    shared_sum > "$swarmdir/$slice.sum" || die "cannot record the shared git config of $(p "$slice")" 1
     printf '%s\n' "$path"
+    ;;
+
+  check)
+    slice_arg "$@"; slice="$1"; shift
+    [ $# -eq 0 ] || die "$usage"
+    pgit rev-parse -q --verify "refs/heads/vetdd/$slice" >/dev/null || die "no branch vetdd/$(p "$slice")" 1
+    [ -f "$swarmdir/$slice.sum" ] || die "no record of worktree.sh add for $(p "$slice")" 1
+    [ "$(shared_sum)" = "$(cat "$swarmdir/$slice.sum")" ] \
+      || die "the shared git config, hooks, or info/attributes changed since worktree.sh add $(p "$slice"); a worker's git settings would run in your merge: look at $(p "$common/config") and $(p "$common/hooks") before merging anything" 1
+    names="$(pgit diff --name-only --no-renames --no-ext-diff -z HEAD...vetdd/"$slice" | tr '\0' '\n')" \
+      || die "cannot read the changes of vetdd/$(p "$slice")" 1
+    bad=""
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "/$f" in /.vetdd|/.vetdd/*|*/.gitattributes|*/.gitmodules) bad="$bad$f
+" ;; esac
+    done <<EOF_NAMES
+$names
+EOF_NAMES
+    # A submodule (gitlink, mode 160000) on either side.
+    links="$(pgit diff --raw --no-renames --no-ext-diff HEAD...vetdd/"$slice" | awk '$1 == ":160000" || $2 == "160000" { sub(/^[^\t]*\t/, ""); print }')"
+    bad="$bad$links"
+    [ -z "$bad" ] || die "vetdd/$(p "$slice") touches what a unit never changes (.vetdd/, .gitattributes, .gitmodules, a submodule); do not merge it:
+$(p "$bad")" 1
+    printf 'vetdd/%s can be merged\n' "$(p "$slice")"
     ;;
 
   remove)

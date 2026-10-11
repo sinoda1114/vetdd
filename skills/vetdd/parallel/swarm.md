@@ -2,6 +2,8 @@
 
 One writer per unit, each in its own worktree, each recording its own red and green; the parent integrates the units in series and closes on the integrated tree. Use it when `parallel/select.md` answers Q1 no and Q2 yes.
 
+**What it protects.** Workers run as the same user as the parent: a worktree separates their work, not their privileges, and a worker that misbehaves could write anywhere that user can. What swarm guards is the parent's own steps: it never runs a command or git setting a worker chose, never takes in a link, a `.vetdd/` file, or git metadata from a worker's branch, and checks the shared git config and hooks before each merge. A worker's code still runs in the parent's integrated runs, as any product code does; the judge and the human review it.
+
 ## Before any worker starts
 
 - **Agreement.** The shape and the units are part of the step 2 agreement (SKILL.md, Q3 "parallel shape"): name each unit, its slice id, its oracle file, and the files it may change, and say the units touch no file in common and change no contract another depends on. That agreement is the hearing principle 8 asks for before concurrent writes. When the shape is decided only after step 2, stop once and ask it with `AskUserQuestion` before any worker starts.
@@ -16,9 +18,11 @@ One writer per unit, each in its own worktree, each recording its own red and gr
 2. **Start the workers.** One subagent per unit, all in one message with `run_in_background`, each with a brief built from `references/subagent-brief.md` in the role `swarm author`, its workspace the unit's worktree, and a model from `scripts/models.sh author`. Each records `before` (target_failure), makes the smallest change, records `after` (pass), runs the undefined-imports audit of test mode "Audits" (or records why it does not apply), and commits on its branch.
 3. **Read each result.** When all have reported, read each worker's report. Never run git or a vetdd script inside a worker's worktree: its `.git` and `.vetdd` are the worker's and could run code as you (`worktree.sh` reaches a worktree only through the git directory the main repository keeps for it). A unit whose report shows no red, no green, or no commit goes back to a new worker in the same worktree; it does not block the others.
 4. **Integrate in series.** In the main repository, for each unit in the agreed order:
-   1. `git merge --no-ff --no-edit vetdd/<slice>`.
-   2. `"$VETDD/scripts/worktree.sh" remove <slice> --keep-branch`: it brings back the unit's evidence, verify artifacts, and notes (refusing any link among them), and removes the worktree; the branch stays until the unit's integrated runs pass. Then check the unit's evidence in the main repository: `"$VETDD/scripts/check-evidence.sh" --before-close <slice>` (the mutation audit waits for Close).
-   3. Record `integrated` for every unit merged so far, from the repository root: `"$VETDD/scripts/evidence.sh" <slice> integrated --rerun [--test-report jest-json:<the unit's report path>]` runs the command recorded in step 1, so none is typed again (`--test-report` when the unit's runs recorded one; `--rerun` stops without it).
+   1. `"$VETDD/scripts/worktree.sh" check <slice>`: it refuses a branch that touches `.vetdd/`, a `.gitattributes` or `.gitmodules`, or a submodule, and a shared git config or hooks that changed since `add`. Do not merge a branch it refuses; treat the unit as a conflict.
+   2. `git -c core.hooksPath=/dev/null -c core.fsmonitor= merge --no-ff --no-edit --no-overwrite-ignore vetdd/<slice>`.
+   3. `"$VETDD/scripts/worktree.sh" remove <slice> --keep-branch`: it brings back the unit's evidence, verify artifacts, and notes (refusing any link among them), and removes the worktree; the branch stays until the unit's integrated runs pass.
+   4. Record `integrated` for every unit merged so far, from the repository root: `"$VETDD/scripts/evidence.sh" <slice> integrated --rerun [--test-report jest-json:<the unit's report path>]` runs the command recorded in step 1, so none is typed again (`--test-report` when the unit's runs recorded one; `--rerun` stops without it).
+   5. Then check every unit merged so far: `"$VETDD/scripts/check-evidence.sh" --before-close <slice>...` (after the integrated runs, so each slice's latest green is on the merged tree; the mutation audit waits for Close).
    When every unit is in and green, delete the merged branches: `git branch -d vetdd/<slice>`.
    If `remove` stops on a file of the same name with different content (two units wrote the same artifact or note), undo the merge (`git reset --hard ORIG_HEAD`) and treat the unit as a conflict.
    If the merge conflicts (`git merge --abort`, then `worktree.sh remove <slice> --keep-branch` to take its evidence back) or an `integrated` run of any unit is red (`git reset --hard ORIG_HEAD`, which leaves `.vetdd/` alone, then record `integrated` again for the units merged before it), do not fix it by hand: the split was wrong for that unit (`parallel/select.md` Q2). Note it in the reply's Attention; its branch is kept and holds its commits (delete it with `git branch -D vetdd/<slice>` once noted). After the other units are in, run it again as a new unit with a new slice id (`<slice>-2`) from the integrated tree, through steps 1–4. Leave the abandoned slice id out of Close.
@@ -27,7 +31,7 @@ One writer per unit, each in its own worktree, each recording its own red and gr
 ## Rules for workers
 
 - Work only inside the unit's worktree and change only the unit's files.
-- Commit on the unit's branch; never push, merge, rebase, or switch branches.
+- Commit on the unit's branch; never push, merge, rebase, or switch branches, never run `git config`, and never add a file under `.vetdd/` to git.
 - Never touch the stash, global git config, or shared external services (a fixed port, a shared database): a unit that needs one is not independent of the others.
 - Record every run through `evidence.sh` in the worktree; never edit `.vetdd/`.
 

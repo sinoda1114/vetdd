@@ -298,3 +298,44 @@ unit() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(ls -ld "$WTROOT" | cut -c1-10)" = "drwx------" ]
 }
+
+# --- review round 3 ----------------------------------------------------------------------------------
+
+@test "r3: the unit's command lives in the git directory, so a .vetdd/swarm file a worker commits and merges is never run" {
+  WT add sa -- sh test.sh >/dev/null
+  [ -f "$(git rev-parse --git-common-dir)/vetdd-swarm/sa.cmd" ]
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42 \
+    && mkdir -p .vetdd/swarm && printf 'sh\0-c\0touch pwned\0' > .vetdd/swarm/sa.cmd && git add -f .vetdd/swarm/sa.cmd && git commit -qm sneak)
+  run WT check sa
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".vetdd"* ]]
+}
+
+@test "r3: check refuses a branch touching .gitattributes, .gitmodules, or a submodule" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && printf '* filter=x\n' > .gitattributes && git add .gitattributes && git commit -qm attrs)
+  run WT check sa
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".gitattributes"* ]]
+}
+
+@test "r3: check refuses when the shared git config or hooks changed while the worker ran" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  run WT check sa
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  git -C "$WTROOT/sa" config core.hooksPath "$WTROOT/sa/hooks"
+  run WT check sa
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"config"* ]]
+}
+
+@test "r3: swarm.md checks each branch before merging it, merges without hooks, and checks evidence after integrated; it states the threat model" {
+  local sw="$SCRIPTS/../parallel/swarm.md"
+  grep -q 'worktree.sh" check <slice>' "$sw"
+  grep -q 'core.hooksPath=/dev/null' "$sw"
+  grep -q -- '--no-overwrite-ignore' "$sw"
+  # check-evidence comes after the integrated runs in step 4.
+  awk '/integrated --rerun/{i=NR} /check-evidence.sh" --before-close/{c=NR} END{exit !(i && c && c > i)}' "$sw"
+  grep -qi 'same user' "$sw"
+}
