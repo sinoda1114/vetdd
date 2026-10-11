@@ -5,11 +5,12 @@
 # Usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]...
 #          makes ../<repo>.vetdd-wt/<slice> on a new branch vetdd/<slice> at <ref> (default HEAD) and
 #          prints its path; --link links an ignored path of the main repository into it (node_modules)
-#        worktree.sh remove <slice>
+#        worktree.sh remove <slice> [--keep-branch]
 #          refuses while the worktree holds uncommitted work; brings back .vetdd/evidence/<slice>/,
 #          .vetdd/artifacts/, and .vetdd/notes/ (a file the main repository already has must be the
 #          same: nothing is overwritten, and on any difference nothing is copied); then removes the
-#          worktree, and its branch once merged into HEAD (an unmerged branch is kept and named)
+#          worktree, and its branch once merged into HEAD (an unmerged branch is kept and named;
+#          --keep-branch keeps a merged one too, until the integrated runs pass)
 #        worktree.sh list
 #          prints "<slice>\t<path>\t<branch>" for each worker worktree
 # Exit 0 done; 1 a local step failed or would lose or overwrite work; 2 usage error.
@@ -21,7 +22,7 @@ die() { printf 'worktree.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 
-usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... | remove <slice> | list"
+usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... | remove <slice> [--keep-branch] | list"
 [ $# -ge 1 ] || die "$usage"
 cmd="$1"; shift
 
@@ -53,6 +54,12 @@ case "$cmd" in
       esac
     done
     git -C "$root" rev-parse -q --verify "$base^{commit}" >/dev/null || die "--base is not a commit: $(p "$base")"
+    norm=()
+    for l in ${links[@]+"${links[@]}"}; do
+      while [ "${l%/}" != "$l" ]; do l="${l%/}"; done
+      norm+=("$l")
+    done
+    links=(${norm[@]+"${norm[@]}"})
     for l in ${links[@]+"${links[@]}"}; do
       case "/$l/" in //*|*/../*|*/./*) die "--link takes a relative path without . or ..: $(p "$l")" ;; esac
       [ -e "$root/$l" ] || die "--link $(p "$l") does not exist in the main repository"
@@ -64,22 +71,39 @@ case "$cmd" in
     git -C "$root" rev-parse -q --verify "refs/heads/vetdd/$slice" >/dev/null && die "branch vetdd/$(p "$slice") exists"
     mkdir -p -- "$wtroot" || die "cannot create $(p "$wtroot")" 1
     git -C "$root" worktree add -q -b "vetdd/$slice" "$path" "$base" || die "git worktree add failed" 1
+    # The worktree's own git directory: the worker cannot write there through the tree.
+    wgit="$(git -C "$path" rev-parse --absolute-git-dir)" || die "cannot find the git directory of $(p "$path")" 1
     for l in ${links[@]+"${links[@]}"}; do
-      mkdir -p -- "$path/$(dirname -- "$l")" && ln -s "$root/$l" "$path/$l" || die "cannot link $(p "$l")" 1
+      if ! { mkdir -p -- "$path/$(dirname -- "$l")" && ln -s "$root/$l" "$path/$l"; }; then
+        git -C "$root" worktree remove --force "$path" >/dev/null 2>&1
+        git -C "$root" branch -q -D "vetdd/$slice" >/dev/null 2>&1
+        die "cannot link $(p "$l"); the worktree and its branch were removed again" 1
+      fi
       # Named so remove can tell a link it made from work left behind.
-      mkdir -p "$path/.vetdd" && printf '%s\n' "$l" >> "$path/.vetdd/worktree-links"
+      printf '%s\n' "$l" >> "$wgit/vetdd-links"
+      # A link is not a directory: a rule such as node_modules/ does not ignore it.
+      if ! git -C "$path" check-ignore -q -- "$l"; then
+        mkdir -p "$common/info" && printf '/%s\n' "$l" >> "$common/info/exclude"
+      fi
     done
     printf '%s\n' "$path"
     ;;
 
   remove)
     slice_arg "$@"; slice="$1"; shift
-    [ $# -eq 0 ] || die "$usage"
+    keep=0
+    while [ $# -gt 0 ]; do
+      case "$1" in --keep-branch) keep=1; shift ;; *) die "$usage" ;; esac
+    done
     path="$wtroot/$slice"
     git -C "$root" worktree list --porcelain | grep -qxF "worktree $path" || die "no worker worktree for $(p "$slice") at $(p "$path")"
     excl=(':(exclude).vetdd')
-    if [ -f "$path/.vetdd/worktree-links" ]; then
-      while IFS= read -r l; do [ -z "$l" ] || excl+=(":(exclude)$l"); done < "$path/.vetdd/worktree-links"
+    wgit="$(git -C "$path" rev-parse --absolute-git-dir)" || die "cannot find the git directory of $(p "$path")" 1
+    if [ -f "$wgit/vetdd-links" ]; then
+      while IFS= read -r l; do
+        # Only a link add made that is still that link: anything else is work to account for.
+        [ -n "$l" ] && [ -L "$path/$l" ] && [ "$(readlink "$path/$l")" = "$root/$l" ] && excl+=(":(exclude)$l")
+      done < "$wgit/vetdd-links"
     fi
     dirty="$(git -C "$path" status --porcelain --untracked-files=all -- . "${excl[@]}")" \
       || die "cannot read the status of $(p "$path")" 1
@@ -113,7 +137,9 @@ $(p "$dirty")" 1
 
     # Its own .vetdd and the links it made are all that is left untracked, and they are copied or not ours.
     git -C "$root" worktree remove --force "$path" || die "git worktree remove failed" 1
-    if git -C "$root" merge-base --is-ancestor "vetdd/$slice" HEAD 2>/dev/null; then
+    if [ "$keep" -eq 1 ]; then
+      printf 'removed %s; kept branch vetdd/%s (--keep-branch)\n' "$(p "$path")" "$(p "$slice")"
+    elif git -C "$root" merge-base --is-ancestor "vetdd/$slice" HEAD 2>/dev/null; then
       git -C "$root" branch -q -D "vetdd/$slice" || die "cannot delete branch vetdd/$(p "$slice")" 1
       printf 'removed %s and its merged branch vetdd/%s\n' "$(p "$path")" "$(p "$slice")"
     else

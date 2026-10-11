@@ -4,10 +4,11 @@
 #                    [--oracle-version <v>] [--oracle-file <path>]... [--test-report jest-json:<path>]
 #                    [--audit undefined-imports | --audit mutation --mutation-report stryker-json:<path>]
 #                    -- <command...>
-#        evidence.sh <slice-id> integrated --rerun
-#          runs again the command of the slice's last accepted `after` run (its own test command, not a
-#          coverage oracle recorded later), which must have run from the current directory (a swarm
-#          parent integrating units it did not type)
+#        evidence.sh <slice-id> integrated --rerun [--test-report jest-json:<path>]
+#          runs again the slice's own test command: that of its last accepted `after` run whose command
+#          also went red (a before, or a calibration that is not an audit), run from the current
+#          directory (a swarm parent integrating units it did not type); it prints the command, and
+#          needs --test-report when that `after` run recorded a test report
 # kind: calibration | before | after | integrated
 # outcome: pass | target_failure | infrastructure_error | inconclusive
 #   default: exit 0 -> pass, 126/127 (not runnable) -> infrastructure_error, else target_failure
@@ -103,14 +104,22 @@ cwd_rel="${prefix%/}"; [ -n "$cwd_rel" ] || cwd_rel="."
 if [ "$rerun" -eq 1 ]; then
   rmeta="$root/.vetdd/evidence/$slice/meta.json"
   [ -f "$rmeta" ] && [ ! -L "$rmeta" ] || die "--rerun: no evidence for slice $slice"
-  last="$(jq -c '[.runs[]? | select(.accepted != false and .kind == "after" and .outcome == "pass")] | last // empty' "$rmeta" 2>/dev/null)" \
+  last="$(jq -c '
+    [.runs[]? | select(.accepted != false)] as $acc
+    | [$acc[] | select((.kind == "before" or (.kind == "calibration" and .audit == null)) and .outcome == "target_failure") | .cmd] as $reds
+    | [$acc[] | select(.kind == "after" and .outcome == "pass") | select(.cmd as $c | any($reds[]; . == $c))] | last // empty' "$rmeta" 2>/dev/null)" \
     || die "--rerun: cannot read the evidence of slice $slice"
-  [ -n "$last" ] || die "--rerun: slice $slice has no accepted after run to rerun"
-  [ "$(printf '%s' "$last" | jq -r '.conditions.cwd // empty')" = "$cwd_rel" ] \
-    || die "--rerun: the slice's last green run ran from $(printf '%s' "$last" | jq -r '.conditions.cwd // "?"'), not from $cwd_rel"
+  [ -n "$last" ] || die "--rerun: slice $slice has no accepted after run of a command that also went red"
+  printf '%s' "$last" | jq -e '(.cmd | type) == "array" and (.cmd | length) > 0 and (.cmd | all(type == "string"))' >/dev/null 2>&1 \
+    || die "--rerun: the slice's recorded command is not a list of strings"
+  rcwd="$(printf '%s' "$last" | jq -r '.conditions.cwd // "?"')"
+  [ "$rcwd" = "$cwd_rel" ] || die "--rerun: the slice's green run ran from $(printf '%s' "$rcwd" | vetdd_printable), not from $cwd_rel"
+  if [ -z "$report_opt" ] && printf '%s' "$last" | jq -e 'has("tests")' >/dev/null 2>&1; then
+    die "--rerun: the slice's after run recorded a test report; pass --test-report jest-json:<its report path> too (rule 9b compares them)"
+  fi
   rcmd=()
-  while IFS= read -r -d '' a; do rcmd+=("$a"); done < <(printf '%s' "$last" | jq -j '.cmd[]? | strings | ., "\u0000"')
-  [ ${#rcmd[@]} -gt 0 ] || die "--rerun: the slice's last green run has no command"
+  while IFS= read -r -d '' a; do rcmd+=("$a"); done < <(printf '%s' "$last" | jq -j '.cmd[] | ., "\u0000"')
+  { printf 'evidence.sh: --rerun runs:'; printf ' %q' "${rcmd[@]}"; printf '\n'; } | vetdd_printable >&2
   set -- "${rcmd[@]}"
 fi
 

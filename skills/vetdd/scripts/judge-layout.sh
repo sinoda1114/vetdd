@@ -231,7 +231,8 @@ find "$out" -type f -print0 | while IFS= read -r -d '' f; do
                         map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @_ }
             @R = spell(@ENV{qw(ROOT LROOT SROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
     # A swarm worker ran in <root>.vetdd-wt/<slice> (worktree.sh): its logs name that path.
-    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?:/|\\/)[A-Za-z0-9][A-Za-z0-9._-]*(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
+    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?:/|\\/)[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
+    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<worktrees>}g }
     for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
     for my $r (@H) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<home>}g }
     # A .claude directory, as a path component (also JSON-escaped, and on a removed line of the diff), is

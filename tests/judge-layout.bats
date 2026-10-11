@@ -514,3 +514,11 @@ setup() {
   grep -qx 'at <repo>/src/x.ts:3' "$OUT/c1/evidence/s1/runs/001-before.log"
   if grep -rqF "vetdd-wt" "$OUT"; then grep -rnF vetdd-wt "$OUT"; false; fi
 }
+
+@test "a worktree path ending a sentence keeps its period, and the bare <repo>.vetdd-wt is replaced too" {
+  printf 'ran in %s.vetdd-wt/s1.\ncd %s.vetdd-wt\n' "$REPO" "$REPO" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'ran in <repo>.' "$OUT/c1/evidence/s1/runs/001-before.log"
+  if grep -rqF "vetdd-wt" "$OUT"; then grep -rnF vetdd-wt "$OUT"; false; fi
+}

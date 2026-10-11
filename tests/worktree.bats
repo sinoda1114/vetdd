@@ -159,3 +159,63 @@ unit() {
 @test "swarm.md integrates each unit with evidence.sh integrated --rerun" {
   grep -q 'integrated --rerun' "$SCRIPTS/../parallel/swarm.md"
 }
+
+# --- review round 1 ----------------------------------------------------------------------------------
+
+@test "r1: --rerun runs the command that went red then green, not a coverage oracle recorded as after" {
+  unit sa test.sh value.txt 42
+  ev sa after -- sh -c 'true' >/dev/null 2>&1
+  run ev sa integrated --rerun
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .cmd | join(" ")')" = "sh test.sh" ]
+  [[ "$output" == *"sh test.sh"* ]]
+}
+
+@test "r1: --rerun of a slice whose green run recorded a test report needs --test-report (rule 9b keeps working)" {
+  unit sa test.sh value.txt 42
+  tamper sa '(.runs[] | select(.kind == "after")) += {tests: {format: "jest-json", status: "ok", passed: 1, failed: 0, skipped: 0, todo: 0, other: 0, total: 1, sha256: "x"}}'
+  run ev sa integrated --rerun
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--test-report"* ]]
+  mkdir -p .vetdd/reports
+  run ev sa integrated --rerun --test-report jest-json:.vetdd/reports/sa.json
+  [[ "$output" != *"--test-report"*"needs"* ]]
+  [ "$(mq sa '[.runs[] | select(.kind == "integrated")] | last | .cmd | join(" ")')" = "sh test.sh" ]
+}
+
+@test "r1: --rerun refuses a recorded command with an element that is not a string" {
+  unit sa test.sh value.txt 42
+  tamper sa '(.runs[] | select(.kind == "after" or .kind == "before")).cmd += [3]'
+  run ev sa integrated --rerun
+  [ "$status" -eq 2 ]
+}
+
+@test "r1: remove --keep-branch keeps a merged branch, so a unit that goes red after its merge can be found again" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  git merge -q --no-edit vetdd/sa
+  run WT remove sa --keep-branch
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  git rev-parse -q --verify refs/heads/vetdd/sa >/dev/null
+  [ -f .vetdd/evidence/sa/meta.json ]
+  grep -q 'remove <slice> --keep-branch' "$SCRIPTS/../parallel/swarm.md"
+  grep -q 'git branch -d vetdd/<slice>' "$SCRIPTS/../parallel/swarm.md"
+}
+
+@test "r1: --link takes a trailing slash, and the link is never shown as untracked even with a directory-only ignore rule" {
+  mkdir -p ignored/dep
+  run WT add sa --link ignored/
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -L "$WTROOT/sa/ignored" ]
+  [ -z "$(git -C "$WTROOT/sa" status --porcelain)" ]
+}
+
+@test "r1: a worker cannot hide uncommitted work by writing the list of links" {
+  mkdir -p ignored
+  WT add sa --link ignored >/dev/null
+  mkdir -p "$WTROOT/sa/.vetdd" && printf 'value.txt\n' >> "$WTROOT/sa/.vetdd/worktree-links"
+  printf 'wip\n' > "$WTROOT/sa/value.txt"
+  run WT remove sa
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"uncommitted"* ]]
+}
