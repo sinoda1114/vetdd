@@ -33,7 +33,7 @@ Before any product code, present the agreement through `AskUserQuestion`: exactl
 |---|---|
 | Q1 acceptance | the behavior as an exact assertion, with its expected value and that value's source (a hand-worked example, the spec, a known-good output) |
 | Q2 seam | where the oracle sits, in the format of `references/seam-proposal.md` |
-| Q3 scope and run | which existing oracles must stay green (name the command); out of scope and known blind spots; target environment and the run conditions that can change the result; budget (number of subagents, retry cap default 3, wall-clock limit if any); the parallel shape when it is not `single` (step 3: the shape, each unit's slice id, oracle file, and files, at most 3 concurrent workers by default), which is the hearing principle 8 asks for before concurrent writes |
+| Q3 scope and run | which existing oracles must stay green (name the command); out of scope and known blind spots; target environment and the run conditions that can change the result; budget (number of subagents, retry cap default 3, wall-clock limit if any, redesigns after a stall default 2: `references/stall.md`); the parallel shape when it is not `single` (step 3: the shape, each unit's slice id, oracle file, and files, at most 3 concurrent workers by default), which is the hearing principle 8 asks for before concurrent writes |
 | Q4 what leaves the machine | external actions authorized in advance, naming what is sent and where (default: what `references/final-judge-rubric.md` "Layout" lists, to the judge's provider: the diff, the reply draft, the `check-evidence.sh` output, the oracle files, each slice's `meta.json` and red-run log, and, for a slice with a mutation audit, the copy of its judged mutation report, which holds the full source of each mutated product file and the test command run against each mutant; all other run logs stay local). `meta.json` records each command's arguments, so a secret passed on a command line would leave with it: pass secrets through the environment, never as arguments |
 
 Q3 carries one recommended default for all four of its parts when the change is small and reversible; break it out into a second call only when the human rejects the default. Record the answers in the reply's Oracle section.
@@ -57,7 +57,7 @@ Read the mode file chosen in step 1 and follow it. Every oracle run goes through
 1. Record every slice as `integrated` on the final tree and run the audits the mode file puts after it (test mode: the mutation audit), then run `"$VETDD/scripts/check-evidence.sh" <slice-ids>` on that tree. Quote its output. If it fails, you are not done: fix the cause, never the evidence.
 2. Obtain the separate judge's verdict when the mode calls for one (test mode: on the integrated diff; verify mode: on the evidence; eval mode: always).
 3. Write the reply in the format of `references/reply-format.md`. Every claim is labeled Measured, inferred, or guess.
-4. If progress became impossible (judge unavailable, environment unreachable, oracle `inconclusive` past the retry cap), end in `blocked` or `inconclusive` with the evidence so far. Never report done without evidence.
+4. If progress became impossible (judge unavailable, environment unreachable, oracle `inconclusive` past the retry cap, a stall past the redesign budget of `references/stall.md`), end in `blocked` or `inconclusive` with the evidence so far. Never report done without evidence.
 
 ## Non-negotiables (a checklist to reread before replying)
 

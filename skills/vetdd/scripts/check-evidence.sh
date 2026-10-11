@@ -72,6 +72,11 @@
 #               of a slice whose final oracle has a JS or TS file (.js .jsx .mjs .cjs .ts .tsx .mts
 #               .cts), and of any other slice with a mutation run or note. A tripwire, not a boundary: it trusts the
 #               report (what Stryker mutated and how it ran), and the ranges are the judge's to check.
+# Stall:    (11) a record that holds stalls (lib/stall.sh, K = 2: three failed attempts in a row whose
+#               failure counts never fall) has at least as many handover files
+#               (.vetdd/evidence/<slice>/handover-<n>.md, handover.sh), and every handover file has
+#               each heading; a slice with no stall is not asked. A tripwire, not a boundary: it
+#               checks that the diagnosis was written down, not that it is right.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
 #         "<slice>: WARN (9c|10c: <reason>)" line per warning (advice for the reply's Attention section;
 #         it holds no recorded text).
@@ -86,6 +91,7 @@ die() { printf 'check-evidence.sh: %s\n' "$1" >&2; exit 2; }
 . "${BASH_SOURCE[0]%/*}/lib/common.sh"
 vetdd_require_jq check-evidence.sh
 . "${BASH_SOURCE[0]%/*}/lib/tree-hash.sh"
+. "${BASH_SOURCE[0]%/*}/lib/stall.sh"
 
 repo="."
 slices=()
@@ -544,6 +550,25 @@ check_slice() {
   # Rule 10: a filter that fails prints nothing; that must fail the slice, never read as OK.
   jq -r --arg slice "$slice" "$AUDIT_RULES" "$meta" 2>/dev/null || echo "10: could not evaluate the undefined-imports audit (a run's audit record or the audits log is malformed)"
   check_mutation "$slice" "$meta"
+  check_stall "$slice" "$meta"
+}
+
+# Rule 11: one handover per stall in the record, each with every heading.
+check_stall() {
+  local slice="$1" meta="$2" dir="$evidence_dir/$1" n have=0 f h miss
+  n="$(jq -r "$VETDD_STALL_JQ"' stall_walk(2) | .stalls' "$meta" 2>/dev/null)" \
+    || { echo "11: could not evaluate the stall record (a run record is malformed)"; return; }
+  for f in "$dir"/handover-*.md; do
+    [ -f "$f" ] || continue
+    if [ -L "$f" ]; then echo "11: ${f##*/} is a link"; continue; fi
+    have=$((have + 1)); miss=""
+    while IFS= read -r h; do grep -qxF -- "$h" "$f" || miss="$miss ${h#\#\# };"; done <<EOF_H
+$VETDD_HANDOVER_HEADINGS
+EOF_H
+    [ -z "$miss" ] || echo "11: ${f##*/} lacks the heading(s):$miss"
+  done
+  [ "$n" -le "$have" ] \
+    || echo "11: the record holds $n stalls and $have handover(s); write one per stall with handover.sh before redesigning (references/stall.md)"
 }
 
 # Rule 10c: problems on stdout, the ignored-mutant warning appended to $warn_file. The mutated files

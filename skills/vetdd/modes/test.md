@@ -36,7 +36,7 @@ Work in vertical slices: one test → the smallest change that passes it → nex
 
 4. **Make it green with the smallest change.** No speculative generality, no second behavior, no cleanup yet. Do not weaken or edit the test to match the implementation.
 
-5. **Record `after`** with the same command. It must end `pass`.
+5. **Record `after`** with the same command. It must end `pass`. An `after` that fails is an attempt: run `"$VETDD/scripts/stall.sh" <slice>` after each one, and when it exits 3 the slice is stalled: follow `references/stall.md` (a handover, then a redesign or back to 1a) before the next attempt.
 
    Then run the undefined-imports audit ("Audits" below). The mutation audit waits for Close: it must come after the last green run.
 
