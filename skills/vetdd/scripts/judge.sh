@@ -12,7 +12,8 @@
 # absolute path is refused there. Render references/judge-prompt.md; run `codex exec` read-only with
 # -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: CODEX_HOME
 # is a second private temporary directory holding only a link to the user's auth.json (from
-# $CODEX_HOME, else ~/.codex), and exec runs --ephemeral --ignore-user-config --ignore-rules with web
+# $CODEX_HOME, else ~/.codex; a refreshed token is written back; a keyring login stops with exit 3),
+# and exec runs --ephemeral --ignore-user-config --ignore-rules with web
 # search off, so the user's config (MCP servers, tools), AGENTS.md, rules, and sessions never reach
 # the judge; refuse the reply if it holds a secret-shaped
 # string (lib/secret-patterns.sh, every kind: --allow-secrets covers input only); write the reply verbatim to
@@ -122,13 +123,32 @@ command -v "$codex" >/dev/null 2>&1 \
   || die "codex CLI not found ($codex); install it (npm install -g @openai/codex) or set VETDD_CODEX_BIN" 3
 # The judge runs with a CODEX_HOME of its own that holds only a link to the user's auth.json: the
 # user's config (MCP servers, tools), instructions (AGENTS.md), rules, and sessions never reach it.
-# Outside the copy's directory, so no relative path from the judge's working directory leads there.
-user_home="${CODEX_HOME:-$HOME/.codex}"
+# It keeps no secret from the judge: the read-only sandbox reads the whole disk, the link included, as
+# it could read the user's auth.json before; the reply's secret check covers what the judge quotes.
+# A login kept in the OS keyring is filed under the user's CODEX_HOME and cannot be lent this way.
+# The flags (codex 0.159 and later) are checked first, so an older codex stops here, not in exec.
+help="$("$codex" exec --help 2>/dev/null)"; missing=""
+for f in --ephemeral --ignore-user-config --ignore-rules; do
+  printf '%s\n' "$help" | grep -qe "$f" || missing="$missing $f"
+done
+[ -z "$missing" ] \
+  || die "codex ($codex) has no exec$missing, which the judge's isolation needs; update it (npm install -g @openai/codex)" 3
+user_home="${CODEX_HOME:-}"
+[ -n "$user_home" ] || { [ -n "${HOME:-}" ] || die "neither CODEX_HOME nor HOME is set; cannot find the codex login" 3; user_home="$HOME/.codex"; }
+case "$user_home" in /*) ;; *) user_home="$PWD/$user_home" ;; esac
+[ -f "$user_home/auth.json" ] \
+  || die "the judge needs codex's file login, and $user_home/auth.json is missing (a keyring login cannot reach the judge's private CODEX_HOME); set cli_auth_credentials_store = \"file\" in $user_home/config.toml and run \`codex login\`" 3
 jhome="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-codex.XXXXXX")" || die "cannot create a temporary directory" 1
-trap 'rm -rf "$jhome"' EXIT
-if [ -f "$user_home/auth.json" ]; then
-  ln -s "$user_home/auth.json" "$jhome/auth.json" || die "cannot link the codex login into $jhome" 1
-fi
+# A token codex refreshes may come back as a file in place of the link (written aside, then renamed):
+# copy it back through the user's path (links followed), or the user's login keeps the spent token.
+keep_login() {
+  if [ -f "$jhome/auth.json" ] && [ ! -L "$jhome/auth.json" ]; then
+    cat "$jhome/auth.json" > "$user_home/auth.json" \
+      || printf 'judge.sh: codex refreshed its login, and it could not be written back to %s; run `codex login` again\n' "$user_home/auth.json" >&2
+  fi
+}
+trap 'keep_login; rm -rf "$jhome"' EXIT
+ln -s "$user_home/auth.json" "$jhome/auth.json" || die "cannot link the codex login into $jhome" 1
 export CODEX_HOME="$jhome"
 login="$("$codex" login status 2>&1)" \
   || die "codex is not logged in ($login); run \`codex login\` first" 3
@@ -140,7 +160,7 @@ login="$("$codex" login status 2>&1)" \
 # rests on the relative paths, on nothing in the copy naming the original path (the blind check
 # below refuses those paths), and on the prompt.
 work="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-judge.XXXXXX")" || die "cannot create a temporary directory" 1
-trap 'rm -rf "$work" "$jhome"' EXIT
+trap 'keep_login; rm -rf "$work" "$jhome"' EXIT
 jdir="$work/judge"
 mkdir "$jdir" "$work/args" || die "cannot create $jdir" 1
 ! git -C "$jdir" rev-parse --show-toplevel >/dev/null 2>&1 \

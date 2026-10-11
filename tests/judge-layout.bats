@@ -611,3 +611,28 @@ setup() {
   [ "$status" -eq 2 ] || { echo "$output"; false; }
   [[ "$output" != *$'\033'* ]]
 }
+
+@test "#28 r1: an intent-to-add file (git add -N) is not staged content: it needs --include-new" {
+  printf 'secret\n' > notes.txt && git add -N notes.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"--include-new notes.txt"* ]]
+  [ ! -e "$OUT" ]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new notes.txt s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/notes.txt$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#28 r1: a file of HEAD only removed from the index (git rm --cached) is not a new file" {
+  git rm -q --cached sub/keep.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#28 r1: --include-new refuses a .env file, which may hold secrets" {
+  printf 'K=v\n' > .env.local
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new .env.local s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env.local"* ]]
+  [ ! -e "$OUT" ]
+}

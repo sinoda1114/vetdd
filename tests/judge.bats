@@ -31,9 +31,14 @@ setup() {
   cat > "$BATS_TEST_TMPDIR/fake/codex" <<'FAKE'
 #!/bin/sh
 # Fake codex: `login status` honours FAKE_LOGGED_OUT; `exec` records argv and stdin, then writes FAKE_REPLY to -o.
+# `exec --help` lists the isolation flags unless FAKE_OLD_CODEX is set.
+if [ "$1" = exec ] && [ "${2:-}" = --help ]; then
+  [ -n "${FAKE_OLD_CODEX:-}" ] || printf '      --ephemeral\n      --ignore-user-config\n      --ignore-rules\n'
+  exit 0
+fi
 # Which CODEX_HOME each call ran with, and what it held.
 printf '%s %s\n' "$1" "${CODEX_HOME:-unset}" >> "$FAKE_SEEN.homes"
-[ -z "${CODEX_HOME:-}" ] || ls -A "$CODEX_HOME" > "$FAKE_SEEN.home.$1" 2>/dev/null
+[ -z "${CODEX_HOME:-}" ] || { ls -A "$CODEX_HOME"; [ ! -e "$CODEX_HOME/auth.json" ] && [ ! -L "$CODEX_HOME/auth.json" ] || [ -r "$CODEX_HOME/auth.json" ] || echo unreadable-auth; } > "$FAKE_SEEN.home.$1" 2>/dev/null
 if [ "$1" = login ] && [ "$2" = status ]; then
   if [ -n "${FAKE_LOGGED_OUT:-}" ]; then echo "Not logged in"; exit 1; fi
   echo "Logged in using ChatGPT"; exit 0
@@ -56,11 +61,15 @@ ls -Ap "${TMPDIR:-/nonexistent}" > "$FAKE_SEEN.tmpdir" 2>/dev/null
 echo "fake codex transcript line"
 echo "fake codex progress" >&2
 [ -z "${FAKE_EXEC_FAIL:-}" ] || { printf 'fake codex: simulated \033[31mfailure\033[0m\n' >&2; exit 1; }
+# A token refresh that writes a new auth.json in place of the link (temporary file, then rename).
+[ -z "${FAKE_REFRESH:-}" ] || { printf 'refreshed\n' > "$CODEX_HOME/auth.json.tmp" && mv -f "$CODEX_HOME/auth.json.tmp" "$CODEX_HOME/auth.json"; }
 cp "$FAKE_REPLY" "$out"
 FAKE
   chmod +x "$BATS_TEST_TMPDIR/fake/codex"
   export VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/fake/codex"
-  unset VETDD_MODEL_JUDGE VETDD_MODEL_JUDGE_EFFORT
+  unset VETDD_MODEL_JUDGE VETDD_MODEL_JUDGE_EFFORT CODEX_HOME
+  # The user's file login (isolate_git set HOME to a private directory).
+  mkdir -p "$HOME/.codex" && printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
 }
 
 judge() {
@@ -601,4 +610,43 @@ user_codex_home() {
   grep -qx -- '--ignore-user-config' "$FAKE_ARGS"
   grep -qx -- '--ignore-rules' "$FAKE_ARGS"
   grep -qx 'web_search="disabled"' "$FAKE_ARGS"
+}
+
+@test "#2 r1: without a file login (keyring storage) the judge stops with exit 3 and says how to log in" {
+  rm "$HOME/.codex/auth.json"
+  run judge
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" == *auth.json* ]]
+  [[ "$output" == *'cli_auth_credentials_store = "file"'* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "#2 r1: a codex without the isolation flags stops with exit 3 before exec" {
+  export FAKE_OLD_CODEX=1
+  run judge
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" == *--ignore-rules* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "#2 r1: a token codex refreshed during the run is written back to the user's auth.json" {
+  run env FAKE_REFRESH=1 "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" \
+    --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat "$HOME/.codex/auth.json")" = refreshed ]
+}
+
+@test "#2 r1: a relative CODEX_HOME is taken from the current directory" {
+  user_codex_home
+  cd "$BATS_TEST_TMPDIR"
+  CODEX_HOME=user-codex run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat "$FAKE_SEEN.home.exec")" = "auth.json" ]
+}
+
+@test "#2 r1: with neither CODEX_HOME nor HOME set, the judge stops with exit 3, not an unbound variable" {
+  run env -u HOME -u CODEX_HOME "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" \
+    --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" != *unbound* ]]
 }

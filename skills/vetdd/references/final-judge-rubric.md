@@ -8,8 +8,9 @@ The caller builds this directory on the delivered tree with `$VETDD/scripts/judg
 
 ```
 candidates/c1/
-  artifact/diff.patch            git diff --no-ext-diff --binary <base> on the delivered tree, after
-                                 `git add --intent-to-add` of new product files so they appear
+  artifact/diff.patch            git diff --no-ext-diff --binary <base> on the delivered tree, new
+                                 files included: staged ones, the slices' oracle files, and untracked
+                                 ones named with `--include-new <path>`
   artifact/reply.md              the reply draft: Oracle, Evidence, Requirements -> evidence sections
   artifact/check-evidence.txt    output of `check-evidence.sh <every slice id>` on the delivered tree,
                                  followed by a last line `exit <code>`

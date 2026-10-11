@@ -129,34 +129,25 @@ done
 # From here on, only the checked physical path is used.
 out="$abs"
 
-# Untracked new files leave only when named: the slices' oracle files, then --include-new. Each name
-# given must be one of them, so a mistyped path never passes for an allowed one.
+# The diff, with new files: a temporary index (in a private temporary directory) holds HEAD plus
+# intent-to-add entries for every new file: those not in HEAD, listed against that index, and files the
+# repository's own index added (git add -f of an ignored file included). The same list decides what may
+# go: a file staged with content, a slice's oracle file, or one named with --include-new; any other
+# stops the build before anything is written. Each name given must be one of the new files, so a
+# mistyped path never passes for an allowed one.
+for n in ${news[@]+"${news[@]}"}; do
+  case "${n##*/}" in .env*) die "--include-new $(printf '%s' "$n" | vetdd_printable): a file that may hold secrets never goes to the judge" ;; esac
+done
 oracles=()
 for s in "${slices[@]}"; do
   while IFS= read -r -d '' f; do oracles+=("$f"); done \
     < <(jq -j '[.oracle.files[]? | .path | strings] | .[] | . + "\u0000"' "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)
 done
-untracked=(); unnamed=()
-while IFS= read -r -d '' f; do
-  case "$f" in .vetdd|.vetdd/*) continue ;; esac
-  untracked+=("$f")
-  ok=0
-  for o in ${oracles[@]+"${oracles[@]}"} ${news[@]+"${news[@]}"}; do [ "$o" = "$f" ] && ok=1; done
-  [ "$ok" -eq 1 ] || unnamed+=("$f")
-done < <(git -C "$root" ls-files --others --exclude-standard -z)
-for n in ${news[@]+"${news[@]}"}; do
-  ok=0; for f in ${untracked[@]+"${untracked[@]}"}; do [ "$f" = "$n" ] && ok=1; done
-  [ "$ok" -eq 1 ] || die "--include-new $(printf '%s' "$n" | vetdd_printable): not an untracked new file of this repository (give its path from the repository root, as git status --untracked-files=all shows it)"
-done
-if [ ${#unnamed[@]} -gt 0 ]; then
-  flags=""; for f in "${unnamed[@]}"; do flags="$flags --include-new $(printf '%q' "$f")"; done
-  die "$(printf 'untracked new files would leave the machine in the diff:%s\nname each one a human allowed to leave (or git add it, or delete it):%s' \
-    "$(printf ' %s' "${unnamed[@]}")" "$flags" | vetdd_printable)"
-fi
-
-# The diff, with new files: a temporary index (in a private temporary directory) holds HEAD plus
-# intent-to-add entries for every file not in it: untracked ones listed against that index, and files the
-# repository's own index added (git add -f of an ignored file included).
+# Staged with content against HEAD (or against nothing, before the first commit); an intent-to-add
+# entry (git add -N) has none, so it is not here.
+staged=()
+while IFS= read -r -d '' f; do staged+=("$f"); done \
+  < <(git -C "$root" diff --cached --no-renames --name-only --diff-filter=A -z)
 tmpd="$(mktemp -d "${TMPDIR:-/tmp}/judge-layout.XXXXXX")" || die "cannot create a temporary directory" 1
 trap 'rm -rf "$tmpd"' EXIT
 idx="$tmpd/index"
@@ -165,17 +156,33 @@ if git -C "$root" rev-parse --verify -q HEAD >/dev/null; then
 else
   GIT_INDEX_FILE="$idx" git -C "$root" read-tree --empty || die "could not make a temporary index" 1
 fi
+newfiles=(); unnamed=()
 while IFS= read -r -d '' f; do
   case "$f" in .vetdd|.vetdd/*) continue ;; esac
   # A file staged and then removed is not in the delivered tree.
   [ -e "$root/$f" ] || [ -L "$root/$f" ] || continue
+  newfiles+=("$f")
+  ok=0
+  for o in ${staged[@]+"${staged[@]}"} ${oracles[@]+"${oracles[@]}"} ${news[@]+"${news[@]}"}; do [ "$o" = "$f" ] && ok=1; done
+  [ "$ok" -eq 1 ] || unnamed+=("$f")
+done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
+           [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"; } | LC_ALL=C sort -zu)
+for n in ${news[@]+"${news[@]}"}; do
+  ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$n" ] && ok=1; done
+  [ "$ok" -eq 1 ] || die "--include-new $(printf '%s' "$n" | vetdd_printable): not a new file of this repository (give its path from the repository root, as git status --untracked-files=all shows it)"
+done
+if [ ${#unnamed[@]} -gt 0 ]; then
+  flags=""; for f in "${unnamed[@]}"; do flags="$flags --include-new $(printf '%q' "$f")"; done
+  die "$(printf 'untracked new files would leave the machine in the diff:%s\nname each one a human allowed to leave (or git add it, or delete it):%s' \
+    "$(printf ' %s' "${unnamed[@]}")" "$flags" | vetdd_printable)"
+fi
+for f in ${newfiles[@]+"${newfiles[@]}"}; do
   # -f: a file the repository's index added with git add -f is ignored; the untracked list has no ignored file.
   GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" add -f --intent-to-add -- "$f" \
     || die "could not add $(printf '%s' "$f" | vetdd_printable) to the temporary index" 1
   # Every new file leaves the machine in the diff: name each one, so the caller can see what goes out.
   printf 'judge-layout.sh: new file in the diff: %s\n' "$f" | vetdd_printable >&2
-done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
-             git -C "$root" diff --cached --no-renames --name-only --diff-filter=A -z HEAD 2>/dev/null; } | LC_ALL=C sort -zu)
+done
 # Plumbing-stable output: no color, no textconv, the a/ b/ prefixes whatever the user's config says.
 diffopts=(--no-ext-diff --no-color --no-textconv --src-prefix=a/ --dst-prefix=b/)
 # A binary change would go out as base85 text, which neither check-blind nor the secret check reads.
