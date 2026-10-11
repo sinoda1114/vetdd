@@ -799,3 +799,62 @@ c1/transcript.jsonl:3: secret: assignment" ]
   [ "$status" -eq 1 ]
   [ "$output" = "c1/artifact/pipe:special: not allowed in a judge input" ]
 }
+
+# --- usage triage: ordinary product words ----------------------------------------------------------
+
+@test "--final drops the origin words (one delivered change has no variant to hide) and keeps model names" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1"
+  printf '<Button variant="primary" />\n.x { align-items: baseline; }\nthe winner\n' > "$BATS_TEST_TMPDIR/f/c1/a.tsx"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf 'written by Claude\n' > "$BATS_TEST_TMPDIR/f/c1/b.md"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"b.md:1: claude"* ]]
+}
+
+@test "--allow-words <glob>:<word>,... drops those words on matching paths only" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1/artifact"
+  printf 'import OpenAI from "openai";\n' > "$BATS_TEST_TMPDIR/f/c1/artifact/diff.patch"
+  printf 'uses openai\n' > "$BATS_TEST_TMPDIR/f/c1/artifact/reply.md"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final --allow-words 'c1/artifact/diff.patch:openai'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"reply.md:1: openai"* ]]
+  [[ "$output" != *"diff.patch"* ]]
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words 'nothing-here'
+  [ "$status" -eq 2 ]
+}
+
+@test "r1: overlapping --allow-words add up on a path" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1/artifact"
+  printf 'openai anthropic\n' > "$BATS_TEST_TMPDIR/f/c1/artifact/diff.patch"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final --allow-words 'c*/artifact/*:openai' --allow-words 'c1/artifact/diff.patch:anthropic'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "r1: an origin word can be allowed under --final too (nothing to check), and a word with other characters is a usage error" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1"
+  printf 'variant\n' > "$BATS_TEST_TMPDIR/f/c1/a.tsx"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final --allow-words 'c1/*:variant'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words 'c1/*:var*'
+  [ "$status" -eq 2 ]
+}
+
+@test "r2: --allow-words with no word, or a word with glob characters, is a usage error wherever it runs" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1" "$BATS_TEST_TMPDIR/cwd" && printf 'x\n' > "$BATS_TEST_TMPDIR/f/c1/a"
+  : > "$BATS_TEST_TMPDIR/cwd/test"
+  local v; for v in 'a:b:' 'c1/*:,' 'x:t*'; do
+    run sh -c 'cd "$1" && shift && "$@"' _ "$BATS_TEST_TMPDIR/cwd" "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words "$v"
+    [ "$status" -eq 2 ] || { echo "$v: $output"; false; }
+  done
+}
+
+@test "r2: an --extra-words line with CRLF or spaces can be allowed by its plain word" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1" && printf 'feature-x here\n' > "$BATS_TEST_TMPDIR/f/c1/a"
+  printf ' feature-x \r\n# note\r\n' > "$BATS_TEST_TMPDIR/extra.txt"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --extra-words "$BATS_TEST_TMPDIR/extra.txt"
+  [ "$status" -eq 1 ]
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --extra-words "$BATS_TEST_TMPDIR/extra.txt" --allow-words 'c1/*:feature-x'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

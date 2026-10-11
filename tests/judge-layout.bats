@@ -522,3 +522,26 @@ setup() {
   grep -qx 'ran in <repo>.' "$OUT/c1/evidence/s1/runs/001-before.log"
   if grep -rqF "vetdd-wt" "$OUT"; then grep -rnF vetdd-wt "$OUT"; false; fi
 }
+
+# --- usage triage ----------------------------------------------------------------------------------
+
+@test "a product diff with variant or baseline builds; a model word needs --allow-words, which the printed command repeats" {
+  printf '<Button variant="primary" />\n.x { align-items: baseline; }\n' > ui.tsx
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf 'import OpenAI from "openai";\n' > llm.ts
+  run JL --out "$OUT.2" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 4 ]
+  run JL --out "$OUT.3" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words 'c1/artifact/diff.patch:openai' s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"--allow-words"*"openai"* ]]
+}
+
+@test "r2: a malformed --allow-words is a usage error before anything is written" {
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words 'foo' s1
+  [ "$status" -eq 2 ]
+  [ ! -e "$OUT" ]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words 'c1/*:notaword' s1
+  [ "$status" -eq 2 ]
+  [ ! -e "$OUT" ]
+}

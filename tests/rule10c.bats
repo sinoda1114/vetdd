@@ -761,3 +761,8 @@ jsts_slice() {
   [ "$status" -eq 1 ] || { echo "$output"; false; }
   [[ "$output" == *"s1: FAIL (10c: mutation run"*"survived"* ]]
 }
+
+@test "triage: a package below the repository root writes its mutation report to the root's .vetdd/reports; a prebuilt CLI is rebuilt per mutant" {
+  grep -q 'below the repository root' "$SCRIPTS/../modes/test.md"
+  grep -q 'rebuild' "$SCRIPTS/../modes/verify.md"
+}

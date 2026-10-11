@@ -22,6 +22,10 @@
 # reply's secret check, which covers every kind.
 # Use it only for test data a human confirmed, naming only the kinds confirmed; the values are
 # recorded in <out>.meta.json (allowed_secrets).
+# --allow-words <glob>:<word>[,<word>]... is passed to check-blind.sh: product words a human confirmed
+# (an SDK named after a model's maker), recorded in <out>.meta.json (allowed_words). A final verdict
+# (no variants.json) also passes --final: the origin words (variant, baseline, winner) are product
+# words there.
 # Defaults: --model `models.sh judge`, --effort `models.sh judge-effort`; both are validated by
 # models.sh. VETDD_CODEX_BIN overrides the codex binary (tests use a fake).
 # Exit: 0 verdict written and checked; 1 a local step failed (temporary directory, copy, write);
@@ -41,7 +45,7 @@ skill="${here%/*}"
 vetdd_require_jq judge.sh
 
 rubric=""; cand=""; out=""; eval_id=""; run_id=""; version=""; conditions=""; model=""; effort=""
-extra_layout=""; extra_words=""; allow_secrets=()
+extra_layout=""; extra_words=""; allow_secrets=(); allow_words=()
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || die "$1 needs a value"
   case "$1" in
@@ -57,6 +61,7 @@ while [ $# -gt 0 ]; do
     --extra-layout) extra_layout="$2" ;;
     --extra-words) extra_words="$2" ;;
     --allow-secrets) allow_secrets+=("$2") ;;
+    --allow-words) allow_words+=("$2") ;;
     *) die "unexpected argument '$1'" ;;
   esac
   shift 2
@@ -182,6 +187,14 @@ set -- "$jdir" --profile judge \
 [ -z "$conditions" ] || set -- "$@" --file "$conditions"
 [ -z "$extra_words" ] || set -- "$@" --extra-words "$extra_words"
 for g in ${allow_secrets[@]+"${allow_secrets[@]}"}; do set -- "$@" --allow-secrets "$g"; done
+for g in ${allow_words[@]+"${allow_words[@]}"}; do set -- "$@" --allow-words "$g"; done
+# A final verdict (no variants.json) has no variant to hide: product words such as a button variant
+# or a CSS baseline do not stop it; model names still do.
+# Only one label and no variants.json is a final verdict: a hand-made pair (a calibration) keeps the
+# origin words checked.
+jrun="${cand%/*}"; [ -n "$jrun" ] || jrun="/"
+nlabels="$(find "$jdir" -mindepth 1 -maxdepth 1 -type d -name 'c[0-9]*' | wc -l | tr -d ' ')"
+[ -f "$jrun/variants.json" ] || [ "$nlabels" != 1 ] || set -- "$@" --final
 blind="$("$here/check-blind.sh" "$@" 2>&1)"
 case $? in
   0) ;;
@@ -246,10 +259,14 @@ allowed='[]'
 for g in ${allow_secrets[@]+"${allow_secrets[@]}"}; do
   allowed="$(jq -c --arg g "$g" '. + [$g]' <<< "$allowed")" || die "cannot record --allow-secrets" 1
 done
+awords='[]'
+for g in ${allow_words[@]+"${allow_words[@]}"}; do
+  awords="$(jq -c --arg g "$g" '. + [$g]' <<< "$awords")" || die "cannot record --allow-words" 1
+done
 jq -n --arg model "$model" --arg effort "$effort" --arg invoked_at "$invoked_at" --arg log "$log" \
-  --argjson allowed "$allowed" \
+  --argjson allowed "$allowed" --argjson awords "$awords" \
   '{model: $model, effort: $effort, invoked_at: $invoked_at, family: "codex", log: $log,
-    allowed_secrets: $allowed}' > "$out.meta.json" \
+    allowed_secrets: $allowed, allowed_words: $awords}' > "$out.meta.json" \
   || die "cannot write $out.meta.json" 1
 
 "$here/check-verdict.sh" "$out" --rubric "$jdir/rubric.md" --labels "$labels" \

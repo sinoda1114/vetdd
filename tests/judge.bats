@@ -528,3 +528,37 @@ write_reply_with_token() {
   [[ "$output" != *"args/"* ]] || { echo "$output"; false; }
   ! grep -rqs "$BATS_TEST_TMPDIR" $(cat "$FAKE_SEEN.parentfiles" 2>/dev/null) /dev/null || false
 }
+
+# single_label: one candidate (c1) and a reply that names only it, as a final verdict has.
+single_label() {
+  rm -rf "$CAND/c2"
+  jq '.labels = ["c1"] | .winner = "none" | .criteria |= map(.scores |= map(select(.label == "c1")))
+      | .verdicts |= map(select(.label == "c1"))' "$REPLY" > "$REPLY.tmp" && mv "$REPLY.tmp" "$REPLY"
+}
+
+@test "a final judge (no variants.json) is not stopped by origin words in the product; an A/B eval still is" {
+  printf '<Button variant="primary" />\n' > "$CAND/c1/artifact/diff.patch"
+  run judge
+  [ "$status" -eq 4 ]
+  rm "$BATS_TEST_TMPDIR/run/variants.json"
+  single_label
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "--allow-words goes to the blind check" {
+  rm "$BATS_TEST_TMPDIR/run/variants.json"
+  single_label
+  printf 'import OpenAI from "openai";\n' > "$CAND/c1/artifact/diff.patch"
+  run judge
+  [ "$status" -eq 4 ]
+  run judge --allow-words 'c1/artifact/diff.patch:openai'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "r2: two labels without variants.json still have the origin words checked (a hand-made calibration pair)" {
+  rm "$BATS_TEST_TMPDIR/run/variants.json"
+  printf 'the winner\n' > "$CAND/c1/artifact/diff.patch"
+  run judge
+  [ "$status" -eq 4 ]
+}
