@@ -4,11 +4,12 @@
 # Usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]...
 #                        [--allow-binary <path>]... [--include-new <path>]... [--allow-words <glob>:<word>,...]...
 #                        [--before-close] [--lane] <slice-id>...
-#   --include-new: an untracked new file (not in the repository's index, not ignored, outside .vetdd/)
-#   leaves the machine in the diff only when named here, by its path from the repository root, or when
-#   it is one of the slices' oracle files; a file staged with git add goes as it is. Any other untracked
-#   file stops the build (exit 2, nothing written) with the flags to name each one, so a scratch file or
-#   a local .env never leaves unseen.
+#   --include-new: a new file (not in HEAD, not ignored, outside .vetdd/) that is not staged with content
+#   (untracked, or only intent-to-add with git add -N) leaves the machine in the diff only when named
+#   here, by its path from the repository root, or when it is one of the slices' oracle files; a file
+#   staged with git add goes as it is. Any other stops the build (exit 2, nothing written) with the
+#   flags to name each one (the first 20), so a scratch file never leaves unseen. A .env file (any case;
+#   .env.example, .env.sample, and .env.template excepted) stops it however it became new.
 #   --allow-words: product words a human confirmed (an SDK named after a model's maker), for
 #   check-blind.sh and the printed judge command. The origin words (variant, baseline, winner) are
 #   not checked for one delivered change; --lane (an arena lane, compared with others) keeps them.
@@ -135,9 +136,15 @@ out="$abs"
 # go: a file staged with content, a slice's oracle file, or one named with --include-new; any other
 # stops the build before anything is written. Each name given must be one of the new files, so a
 # mistyped path never passes for an allowed one.
-for n in ${news[@]+"${news[@]}"}; do
-  case "${n##*/}" in .env*) die "--include-new $(printf '%s' "$n" | vetdd_printable): a file that may hold secrets never goes to the judge" ;; esac
-done
+# A .env file (any case) may hold secrets and never goes, however it became new: staged (git add -f
+# included), an oracle file, or named. Its examples are product files.
+is_env() {
+  case "$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]')" in
+    .env.example|.env.sample|.env.template) return 1 ;;
+    .env|.env.*) return 0 ;;
+  esac
+  return 1
+}
 oracles=()
 for s in "${slices[@]}"; do
   while IFS= read -r -d '' f; do oracles+=("$f"); done \
@@ -156,25 +163,35 @@ if git -C "$root" rev-parse --verify -q HEAD >/dev/null; then
 else
   GIT_INDEX_FILE="$idx" git -C "$root" read-tree --empty || die "could not make a temporary index" 1
 fi
-newfiles=(); unnamed=()
+newfiles=(); unnamed=(); envs=()
 while IFS= read -r -d '' f; do
   case "$f" in .vetdd|.vetdd/*) continue ;; esac
   # A file staged and then removed is not in the delivered tree.
   [ -e "$root/$f" ] || [ -L "$root/$f" ] || continue
+  if is_env "$f"; then envs+=("$f"); continue; fi
   newfiles+=("$f")
   ok=0
   for o in ${staged[@]+"${staged[@]}"} ${oracles[@]+"${oracles[@]}"} ${news[@]+"${news[@]}"}; do [ "$o" = "$f" ] && ok=1; done
   [ "$ok" -eq 1 ] || unnamed+=("$f")
 done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
            [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"; } | LC_ALL=C sort -zu)
+[ ${#envs[@]} -eq 0 ] \
+  || die "$(printf 'a .env file may hold secrets and never goes to the judge:%s\nunstage it (git rm --cached <path>), or move it out of the repository or into .gitignore' \
+    "$(printf ' %s' "${envs[@]}")" | vetdd_printable)"
 for n in ${news[@]+"${news[@]}"}; do
   ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$n" ] && ok=1; done
   [ "$ok" -eq 1 ] || die "--include-new $(printf '%s' "$n" | vetdd_printable): not a new file of this repository (give its path from the repository root, as git status --untracked-files=all shows it)"
 done
+# The flags for the first 20; more than that is usually build output that belongs in .gitignore.
 if [ ${#unnamed[@]} -gt 0 ]; then
-  flags=""; for f in "${unnamed[@]}"; do flags="$flags --include-new $(printf '%q' "$f")"; done
-  die "$(printf 'untracked new files would leave the machine in the diff:%s\nname each one a human allowed to leave (or git add it, or delete it):%s' \
-    "$(printf ' %s' "${unnamed[@]}")" "$flags" | vetdd_printable)"
+  flags=""; i=0
+  for f in "${unnamed[@]}"; do
+    [ "$i" -lt 20 ] || break
+    flags="$flags --include-new $(printf '%q' "$f")"; i=$((i + 1))
+  done
+  more=""; [ ${#unnamed[@]} -le 20 ] || more="$(printf '\n... and %s more; put build output and scratch directories in .gitignore' "$((${#unnamed[@]} - 20))")"
+  die "$(printf 'untracked new files would leave the machine in the diff; name each one a human allowed to leave with these flags, and delete the others:\n%s%s' \
+    "$flags" "$more" | vetdd_printable)"
 fi
 for f in ${newfiles[@]+"${newfiles[@]}"}; do
   # -f: a file the repository's index added with git add -f is ignored; the untracked list has no ignored file.

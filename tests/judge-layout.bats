@@ -636,3 +636,36 @@ setup() {
   [[ "$output" == *".env.local"* ]]
   [ ! -e "$OUT" ]
 }
+
+@test "#28 r2: a .env file never goes, staged (even with git add -f) or not, whatever its case; nothing written" {
+  printf 'DB_PASSWORD=x\n' > .env && git add -f .env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env"* ]]
+  [ ! -e "$OUT" ]
+  git rm -q --cached .env && rm .env
+  printf 'K=v\n' > .ENV.local
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" != *"--include-new .ENV.local"* ]]
+  [[ "$output" != *"git add it"* ]]
+  [ ! -e "$OUT" ]
+}
+
+@test "#28 r2: an example env file (.env.example, .env.sample, .env.template) goes like any product file" {
+  printf 'K=\n' > .env.example && git add .env.example
+  printf 'K=\n' > .env.sample
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new .env.sample s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/.env.example$' "$OUT/c1/artifact/diff.patch"
+  grep -q '^+++ b/.env.sample$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#28 r2: many untracked files are listed up to 20, with the count of the rest and a hint to ignore them" {
+  mkdir -p build && for i in $(seq 1 30); do printf 'x\n' > "build/f$i.txt"; done
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ "$(printf '%s' "$output" | grep -o -- '--include-new' | wc -l | tr -d ' ')" -eq 20 ]
+  [[ "$output" == *"10 more"* ]]
+  [[ "$output" == *".gitignore"* ]]
+}

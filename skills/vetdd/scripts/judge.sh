@@ -13,9 +13,9 @@
 # -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: CODEX_HOME
 # is a second private temporary directory holding only a link to the user's auth.json (from
 # $CODEX_HOME, else ~/.codex; a refreshed token is written back; a keyring login stops with exit 3),
-# and exec runs --ephemeral --ignore-user-config --ignore-rules with web
-# search off, so the user's config (MCP servers, tools), AGENTS.md, rules, and sessions never reach
-# the judge; refuse the reply if it holds a secret-shaped
+# also its HOME, and exec runs --ephemeral --ignore-user-config --ignore-rules with web search off and
+# the core environment only, so the user's config (MCP servers, tools, a model provider of their own),
+# AGENTS.md, personal skills, rules, and sessions never reach the judge; refuse the reply if it holds a secret-shaped
 # string (lib/secret-patterns.sh, every kind: --allow-secrets covers input only); write the reply verbatim to
 # <out>, the judge metadata to <out>.meta.json, and codex's own output to
 # <git root>/.vetdd/judge-logs/<eval-id>-<run-id>.log (the git root of <out>'s directory, else of the
@@ -138,14 +138,23 @@ user_home="${CODEX_HOME:-}"
 case "$user_home" in /*) ;; *) user_home="$PWD/$user_home" ;; esac
 [ -f "$user_home/auth.json" ] \
   || die "the judge needs codex's file login, and $user_home/auth.json is missing (a keyring login cannot reach the judge's private CODEX_HOME); set cli_auth_credentials_store = \"file\" in $user_home/config.toml and run \`codex login\`" 3
+auth_sum="$(cksum < "$user_home/auth.json")"
 jhome="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-codex.XXXXXX")" || die "cannot create a temporary directory" 1
 # A token codex refreshes may come back as a file in place of the link (written aside, then renamed):
-# copy it back through the user's path (links followed), or the user's login keeps the spent token.
+# write it back, or the user's login keeps the spent token. Only a JSON object, only when the user's
+# file is as it was at the start (their own codex may have refreshed it meanwhile), and atomically: a
+# private file beside the link's target, renamed over it, so a link the user keeps stays a link.
+login_note() { printf 'judge.sh: codex refreshed its login during the judge run; %s. If codex then says you are logged out, run `codex login`\n' "$1" >&2; }
 keep_login() {
-  if [ -f "$jhome/auth.json" ] && [ ! -L "$jhome/auth.json" ]; then
-    cat "$jhome/auth.json" > "$user_home/auth.json" \
-      || printf 'judge.sh: codex refreshed its login, and it could not be written back to %s; run `codex login` again\n' "$user_home/auth.json" >&2
-  fi
+  [ -f "$jhome/auth.json" ] && [ ! -L "$jhome/auth.json" ] || return 0
+  local t="$user_home/auth.json" l n=0
+  jq -e 'type == "object"' "$jhome/auth.json" >/dev/null 2>&1 || { login_note "it is not a JSON object, so it was not written back"; return 0; }
+  [ "$(cksum < "$t" 2>/dev/null)" = "$auth_sum" ] || { login_note "your auth.json changed meanwhile, so yours was kept"; return 0; }
+  while [ -L "$t" ] && [ "$n" -lt 20 ]; do
+    l="$(readlink "$t")"; case "$l" in /*) t="$l" ;; *) t="${t%/*}/$l" ;; esac; n=$((n + 1))
+  done
+  { (umask 077 && cp "$jhome/auth.json" "$t.vetdd.$$") && mv -f "$t.vetdd.$$" "$t"; } \
+    || { rm -f "$t.vetdd.$$"; login_note "it could not be written back to $t"; }
 }
 trap 'keep_login; rm -rf "$jhome"' EXIT
 ln -s "$user_home/auth.json" "$jhome/auth.json" || die "cannot link the codex login into $jhome" 1
@@ -263,8 +272,11 @@ V_eval_id="$eval_id" V_run_id="$run_id" V_extra_layout="$extra_layout" awk '
 
 invoked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "${log%/*}" || die "cannot create ${log%/*}" 1
-"$codex" exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effort=\"$effort\"" \
-  --ephemeral --ignore-user-config --ignore-rules -c 'web_search="disabled"' \
+# HOME is the private home too: codex finds personal skills under ~/.agents/skills. The judge's shell
+# gets the core variables only (HOME, PATH, USER, ...): CODEX_HOME and the caller's own stay out.
+# Both -c keys are read, not ignored: codex 0.159.1 refuses an unknown value of either (measured).
+HOME="$jhome" "$codex" exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effort=\"$effort\"" \
+  --ephemeral --ignore-user-config --ignore-rules -c 'web_search="disabled"' -c 'shell_environment_policy.inherit="core"' \
   --skip-git-repo-check --output-schema "$skill/schemas/verdict.schema.json" -o "$work/reply.json" \
   < "$work/prompt.txt" > "$log" 2>&1
 rc=$?
