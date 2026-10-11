@@ -2,7 +2,9 @@
 # Build the final judge's directory that references/final-judge-rubric.md "Layout" defines (test and
 # verify modes, Close), so it is never assembled by hand.
 # Usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]...
-#                        [--allow-binary <path>]... <slice-id>...
+#                        [--allow-binary <path>]... [--before-close] <slice-id>...
+#   --before-close: check-evidence.sh runs with it (an arena lane, laid out before its Close: the
+#   mutation audit is not due yet), as arena-layout.sh's gate does
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
 #                                         file not in HEAD (untracked or staged) outside .vetdd/ included
 #                                         through a temporary index (the repository's own index is untouched)
@@ -41,7 +43,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 vetdd_require_jq judge-layout.sh
 
-out=""; reply=""; base=""; slices=(); allow=(); binaries=()
+out=""; reply=""; base=""; slices=(); allow=(); binaries=(); ce_opts=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
@@ -49,12 +51,13 @@ while [ $# -gt 0 ]; do
     --base) [ $# -ge 2 ] || die "--base needs a git ref"; base="$2"; shift 2 ;;
     --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; allow+=("$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
+    --before-close) ce_opts=(--before-close); shift ;;
     -*) die "unknown option: $(printf '%s' "$1" | vetdd_printable)" ;;
     *) slices+=("$1"); shift ;;
   esac
 done
 [ -n "$out" ] && [ -n "$reply" ] && [ -n "$base" ] && [ ${#slices[@]} -gt 0 ] \
-  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... <slice-id>..."
+  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--before-close] <slice-id>..."
 [ -f "$reply" ] && [ ! -L "$reply" ] || die "--reply must be a regular file"
 . "$here/lib/secret-patterns.sh"
 for a in ${allow[@]+"${allow[@]}"}; do
@@ -69,6 +72,14 @@ root="$(cd "$root" && pwd -P)"
 prefix="$(git rev-parse --show-prefix 2>/dev/null)"; prefix="${prefix%/}"
 logical_root="${PWD%/}"; [ -z "$prefix" ] || logical_root="${logical_root%/"$prefix"}"
 case "$root" in /private/*) short_root="${root#/private}" ;; *) short_root="$root" ;; esac
+# Built in a linked worktree (a swarm unit, an arena lane under review): the main repository's path
+# shows in logs too (a linked node_modules, the parent's commands).
+main_root=""; main_short=""
+if gc="$(cd "$root" && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)" \
+   && [ "${gc##*/}" = .git ] && [ "${gc%/.git}" != "$root" ]; then
+  main_root="${gc%/.git}"
+  case "$main_root" in /private/*) main_short="${main_root#/private}" ;; *) main_short="" ;; esac
+fi
 git -C "$root" rev-parse --verify -q "$base^{commit}" >/dev/null || die "--base is not a commit: $(printf '%s' "$base" | vetdd_printable)"
 for s in "${slices[@]}"; do
   vetdd_is_slice_id "$s" || die "invalid slice id"
@@ -154,7 +165,9 @@ GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --binary --end-of-opt
 cp -- "$reply" "$C/artifact/reply.md" || die "cannot copy the reply" 1
 
 ce_rc=0
-(cd "$root" && "$here/check-evidence.sh" "${slices[@]}") > "$C/artifact/check-evidence.txt" 2>&1 || ce_rc=$?
+# A layout built before Close says so first: a final judge never reads an OK that skipped the audit.
+[ ${#ce_opts[@]} -eq 0 ] || printf 'mode: before-close (the mutation audit is not due yet)\n' > "$C/artifact/check-evidence.txt"
+(cd "$root" && "$here/check-evidence.sh" ${ce_opts[@]+"${ce_opts[@]}"} "${slices[@]}") >> "$C/artifact/check-evidence.txt" 2>&1 || ce_rc=$?
 printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
 # 126 and 127: check-evidence.sh did not run; the judge would read a FAIL that is not one.
 [ "$ce_rc" -lt 126 ] || die "check-evidence.sh could not run (exit $ce_rc)" 1
@@ -206,7 +219,8 @@ for s in "${slices[@]}"; do
 done
 
 # Absolute paths of this machine never go to the judge: each spelling of a swarm worker's worktree
-# (<root>.vetdd-wt/<slice>) and of the repository's path, then of
+# (<root>.vetdd-wt/<slice>) and of the repository's path (and of the main repository's, when built in
+# a linked worktree), then of
 # the user's home directory, only as a whole path (after file:// or a character that is not part of a
 # path; followed by /, the end, a period that ends a sentence, or a character that is not part of a name).
 home_phys="$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P)" || home_phys=""
@@ -226,10 +240,10 @@ find "$out" -depth -type d -name .claude | while IFS= read -r d; do
 done || die "could not rename a .claude directory in the layout" 1
 find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue
-  ROOT="$root" LROOT="$logical_root" SROOT="$short_root" H1="$home_phys" H2="$home_short" H3="$home_log" TOK="$tok" perl -pi -e '
+  ROOT="$root" LROOT="$logical_root" SROOT="$short_root" MROOT="$main_root" MSROOT="$main_short" H1="$home_phys" H2="$home_short" H3="$home_log" TOK="$tok" perl -pi -e '
     BEGIN { sub spell { my %s; sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
                         map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @_ }
-            @R = spell(@ENV{qw(ROOT LROOT SROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
+            @R = spell(@ENV{qw(ROOT LROOT SROOT MROOT MSROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
     # A swarm worker ran in <root>.vetdd-wt/<slice> (worktree.sh): its logs name that path.
     for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?:/|\\/)[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
     for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<worktrees>}g }

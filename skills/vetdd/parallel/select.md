@@ -20,4 +20,4 @@ Rules that apply to every shape other than single:
 - Before removing a worker's worktree, copy `.vetdd/evidence/<slice>/` into the main repository. If this is skipped, `check-evidence.sh` on the integrated tree fails with `schema: no meta.json for this slice`, and that failure is correct.
 - Completion is judged on the integrated tree with `integrated` evidence, never on a worker's slice.
 
-`parallel/swarm.md` is available. Until `parallel/arena.md` exists, an arena (and arena, then swarm) ends the task in `blocked` with the reason "arena not yet available"; do not improvise a fan-out.
+Both shapes are available: `parallel/arena.md` and `parallel/swarm.md`. Do not improvise a fan-out outside them.
