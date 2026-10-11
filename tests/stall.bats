@@ -119,12 +119,17 @@ draft() {
 @test "r1: attempts of different commands are separate sequences; a pass of one does not reset another" {
   printf '0\n' > value.txt
   ev s1 before --seam unit --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1
-  local i; for i in 1 2 3; do
+  local i; for i in 1 2; do
     ev s1 after -- sh test.sh >/dev/null 2>&1 || true
     ev s1 after -- sh -c 'true' >/dev/null 2>&1
   done
+  ev s1 after -- sh test.sh >/dev/null 2>&1 || true
+  # Checked right after the attempt, as test mode step 5 says.
   run ST s1
   [ "$status" -eq 3 ] || { echo "$output"; false; }
+  ev s1 after -- sh -c 'true' >/dev/null 2>&1
+  run ST s1
+  [[ "$output" == *"1 stalls so far"* ]]
 }
 
 @test "r1: an attempt whose count is unknown or zero (no usable report) is no progress" {
@@ -179,4 +184,63 @@ draft() {
   grep -q 'references/stall.md' "$SCRIPTS/../modes/test.md"
   grep -q 'references/stall.md' "$SCRIPTS/../SKILL.md"
   grep -q 'stall' "$SCRIPTS/../parallel/arena.md"
+}
+
+# --- review round 2 ----------------------------------------------------------------------------------
+
+@test "r2: a new oracle version clears a stall of the old one, even when another command fails next" {
+  attempts 3
+  printf '# v2\n' >> test.sh && git add test.sh && git commit -qm v2
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason 'stronger test' >/dev/null
+  ev s1 before --oracle-version v2 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1
+  ev s1 after -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  run ST s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "r2: after a stall every command starts over: one failure of another command is not a second stall" {
+  printf '0\n' > value.txt
+  ev s1 before --seam unit --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1
+  ev s1 after -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  ev s1 after -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  local i; for i in 1 2 3; do ev s1 after -- sh test.sh >/dev/null 2>&1 || true; done
+  ev s1 after -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  run ST s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"1 stalls so far"* ]]
+}
+
+@test "r2: stall.sh prints nothing a record could inject: a count that is not a number is ignored" {
+  attempts 3
+  local f="$REPO/.vetdd/evidence/s1/meta.json"
+  jq '(.runs[] | select(.kind == "after")) += {tests: {format: "jest-json", status: "ok", passed: 0, failed: "\u001b[31mx", skipped: 0, todo: 0, other: 0, total: 1, sha256: "x"}}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  run ST s1
+  [ "$status" -eq 3 ]
+  if printf '%s' "$output" | LC_ALL=C grep -q "$(printf '\033')"; then false; fi
+}
+
+@test "r2: when not stalled, the counts shown are those of the command that ran last" {
+  printf '0\n' > value.txt
+  ev s1 before --seam unit --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1
+  ev s1 after -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  ev s1 after -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  ev s1 after -- sh test.sh >/dev/null 2>&1 || true
+  run ST s1
+  [[ "$output" == *"since the last green: 1;"* ]]
+}
+
+@test "r2: a handover link that points nowhere fails rule 11; handover files are readable (0644)" {
+  attempts 3
+  HO s1 --file "$(draft)" >/dev/null
+  [ "$(ls -l .vetdd/evidence/s1/handover-1.md | cut -c1-10)" = "-rw-r--r--" ]
+  ln -s "$BATS_TEST_TMPDIR/nowhere" .vetdd/evidence/s1/handover-2.md
+  printf '42\n' > value.txt && ev s1 after -- sh test.sh >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"handover-2.md is a link"* ]]
+}
+
+@test "r2: a stalled worker commits its work in progress and stops; the redesign is a new slice id" {
+  grep -q 'commit your work in progress' "$SCRIPTS/../references/subagent-brief.md"
+  grep -q -- '-r<n>' "$SCRIPTS/../references/stall.md"
 }

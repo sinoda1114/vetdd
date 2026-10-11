@@ -33,7 +33,7 @@ res="$(jq -c --argjson k "$k" "$VETDD_STALL_JQ"' stall_walk($k)' "$meta" 2>/dev/
 counts="$(printf '%s' "$res" | jq -r '.trailing | map(tostring) | join(" ")')"
 n="$(printf '%s' "$res" | jq -r '.stalls')"
 if [ "$(printf '%s' "$res" | jq -r '.stalled')" = true ]; then
-  printf 'stall.sh: %s is stalled: failure counts %s over %s attempts (K=%s); %s stalls so far; write a handover (handover.sh), then redesign or go back to 1a (references/stall.md)\n' "$slice" "$counts" "$((k + 1))" "$k" "$n"
+  printf 'stall.sh: %s is stalled: failure counts %s over %s attempts (K=%s); %s stalls so far; write a handover (handover.sh), then redesign or go back to 1a (references/stall.md)\n' "$slice" "$counts" "$((k + 1))" "$k" "$n" | vetdd_printable
   exit 3
 fi
-printf 'stall.sh: %s is not stalled: failure counts since the last green: %s; %s stalls so far\n' "$slice" "${counts:-none}" "$n"
+printf 'stall.sh: %s is not stalled: failure counts since the last green: %s; %s stalls so far\n' "$slice" "${counts:-none}" "$n" | vetdd_printable

@@ -38,6 +38,6 @@ n=1
 while [ -e "$dir/handover-$n.md" ] || [ -L "$dir/handover-$n.md" ]; do n=$((n + 1)); done
 # Written beside it first, then moved without overwriting: a name taken in between is never written through.
 tmp="$(mktemp "$dir/.handover.XXXXXX")" || die "cannot write in $dir" 1
-cp -- "$draft" "$tmp" && mv -n -- "$tmp" "$dir/handover-$n.md" && [ ! -e "$tmp" ] \
+cp -- "$draft" "$tmp" && chmod 644 "$tmp" && mv -n -- "$tmp" "$dir/handover-$n.md" && [ ! -e "$tmp" ] \
   || { rm -f -- "$tmp"; die "cannot write $dir/handover-$n.md (the name was taken)" 1; }
 printf '%s\n' "$dir/handover-$n.md"

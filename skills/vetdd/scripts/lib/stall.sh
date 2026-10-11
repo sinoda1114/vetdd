@@ -13,31 +13,29 @@ VETDD_HANDOVER_HEADINGS="## Unmet requirement
 ## Reusable results"
 
 # jq: stall_walk($k) over a meta.json -> {stalls, stalled, trailing}. Each command (.cmd) is its own
-# sequence of attempts: a pass of that command, or an attempt on another oracle version, starts it over.
-# A count that cannot be read (no report, a report that is not ok, or failed 0: the runner failed
-# before any test) is no progress: it repeats the last count.
+# sequence of attempts, and a pass of that command starts it over. A counted stall is the redesign
+# boundary: every sequence starts over, and so does a new oracle version. "stalled" holds only while
+# the attempt that completed a stall is the latest one. A count that cannot be read (no usable report,
+# a count that is not a number, failed 0: the runner failed before any test) repeats the last one.
 VETDD_STALL_JQ='
-def usable_count: if (.tests | type) == "object" and .tests.status == "ok" and ((.tests.failed // 0) > 0)
-  then .tests.failed else null end;
+def usable_count: if (.tests | type) == "object" and .tests.status == "ok"
+    and (.tests.failed | type) == "number" and .tests.failed > 0 then .tests.failed else null end;
 def stall_walk($k):
-  reduce ((.runs // []) | sort_by(.seq)[]) as $r ({stalls: 0, seq: {}, ver: {}, now: {}, at: {}};
+  reduce ((.runs // []) | sort_by(.seq)[]) as $r ({stalls: 0, seq: {}, ver: null, stalled: false, at: [], last: null};
     (($r.cmd // []) | tojson) as $c
     | if ($r.kind == "after" or $r.kind == "integrated") and $r.outcome == "pass" then
-        .seq[$c] = [] | .now[$c] = false
+        .seq[$c] = [] | .stalled = false | .last = $c
       elif $r.kind == "after" and $r.outcome == "target_failure" then
         ($r.oracle.version? // null) as $v
-        | (if .ver[$c] != $v then .seq[$c] = [] else . end) | .ver[$c] = $v
+        | (if .ver != $v then .seq = {} else . end) | .ver = $v
         | (.seq[$c] // []) as $t
         | (($r | usable_count) // ($t | last) // 1) as $n
         | .seq[$c] = (if ($t | length) > 0 and $n < ($t | last) then [$n] else $t + [$n] end)
-        | .now[$c] = false
+        | .stalled = false | .last = $c
         | if (.seq[$c] | length) >= ($k + 1) then
-            .stalls += 1 | .now[$c] = true | .at[$c] = .seq[$c] | .seq[$c] = []
+            .stalls += 1 | .stalled = true | .at = .seq[$c] | .seq = {}
           else . end
       else . end)
-  | . as $s
-  | ([$s.now | to_entries[] | select(.value) | .key]) as $stuck
-  | {stalls: $s.stalls, stalled: ($stuck | length > 0),
-     trailing: (if ($stuck | length) > 0 then $s.at[$stuck[0]]
-                else ([$s.seq[]] | max_by(length) // []) end)};
+  | {stalls, stalled,
+     trailing: (if .stalled then .at elif .last == null then [] else (.seq[.last] // []) end)};
 '

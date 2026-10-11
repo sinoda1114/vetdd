@@ -559,8 +559,8 @@ check_stall() {
   n="$(jq -r "$VETDD_STALL_JQ"' stall_walk(2) | .stalls' "$meta" 2>/dev/null)" \
     || { echo "11: could not evaluate the stall record (a run record is malformed)"; return; }
   for f in "$dir"/handover-*.md; do
-    [ -f "$f" ] || continue
     if [ -L "$f" ]; then echo "11: ${f##*/} is a link"; continue; fi
+    [ -f "$f" ] || continue
     have=$((have + 1)); miss=""
     while IFS= read -r h; do tr -d '\r' < "$f" | grep -qxF -- "$h" || miss="$miss ${h#\#\# };"; done <<EOF_H
 $VETDD_HANDOVER_HEADINGS
