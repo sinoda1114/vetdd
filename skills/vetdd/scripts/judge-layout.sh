@@ -2,15 +2,23 @@
 # Build the final judge's directory that references/final-judge-rubric.md "Layout" defines (test and
 # verify modes, Close), so it is never assembled by hand.
 # Usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]...
-#                        [--allow-binary <path>]... [--allow-words <glob>:<word>,...]... [--before-close]
-#                        [--lane] <slice-id>...
+#                        [--allow-binary <path>]... [--include-new <path>]... [--allow-words <glob>:<word>,...]...
+#                        [--before-close] [--lane] <slice-id>...
+#   --include-new: a new file (not in HEAD, not ignored, outside .vetdd/) that is not staged with content
+#   (untracked, or only intent-to-add with git add -N) leaves the machine in the diff only when named
+#   here, by its path from the repository root, or when it is one of the slices' oracle files; a file
+#   staged with git add goes as it is. Any other stops the build (exit 2, nothing written) with the
+#   flags to name each one (the first 20), so a scratch file never leaves unseen. A .env file (any case;
+#   .env.example, .env.sample, and .env.template excepted) stops it wherever it would go: a new file of
+#   any kind, an oracle file (ignored or not), or a path the diff from --base changes.
 #   --allow-words: product words a human confirmed (an SDK named after a model's maker), for
 #   check-blind.sh and the printed judge command. The origin words (variant, baseline, winner) are
 #   not checked for one delivered change; --lane (an arena lane, compared with others) keeps them.
 #   --before-close: check-evidence.sh runs with it (an arena lane, laid out before its Close: the
 #   mutation audit is not due yet), as arena-layout.sh's gate does
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
-#                                         file not in HEAD (untracked or staged) outside .vetdd/ included
+#                                         file not in HEAD outside .vetdd/ included (staged, an oracle
+#                                         file, or untracked and named with --include-new)
 #                                         through a temporary index (the repository's own index is untouched)
 #   <dir>/c1/artifact/reply.md            the reply draft (<file>)
 #   <dir>/c1/artifact/check-evidence.txt  check-evidence.sh <slices>, then a last line "exit <code>"
@@ -31,8 +39,9 @@
 # --allow-secrets (paths relative to <dir>, e.g. c1/artifact/tests/*:email, only for test data a human
 # confirmed), which the printed judge.sh command repeats. Run it on the delivered tree.
 # Exit 0 built (it prints the judge.sh command); 1 a local step failed (a record could not be read,
-# check-blind could not run); 2 usage error, or a binary file in the diff not named with --allow-binary
-# (nothing is written; git's base85 text of a binary file passes the blind and secret checks unseen);
+# check-blind could not run); 2 usage error, a binary file in the diff not named with --allow-binary
+# (git's base85 text of a binary file passes the blind and secret checks unseen), or an untracked new
+# file not named with --include-new (nothing is written in each case);
 # 4 the result is not blind
 # (check-blind.sh's hits are printed; <dir> is left to inspect, readable by the user only).
 # Everything written is private to the user (umask 077), and <dir> must be new, under directories only
@@ -47,7 +56,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 vetdd_require_jq judge-layout.sh
 
-out=""; reply=""; base=""; slices=(); allow=(); binaries=(); ce_opts=(); awords=(); lane=0
+out=""; reply=""; base=""; slices=(); allow=(); binaries=(); news=(); ce_opts=(); awords=(); lane=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
@@ -57,6 +66,7 @@ while [ $# -gt 0 ]; do
     --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."
       . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$err"; awords+=("$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
+    --include-new) [ $# -ge 2 ] || die "--include-new needs a repository path"; news+=("$2"); shift 2 ;;
     --before-close) ce_opts=(--before-close); shift ;;
     --lane) lane=1; shift ;;
     -*) die "unknown option: $(printf '%s' "$1" | vetdd_printable)" ;;
@@ -64,7 +74,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$out" ] && [ -n "$reply" ] && [ -n "$base" ] && [ ${#slices[@]} -gt 0 ] \
-  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--allow-words <glob>:<word>,...]... [--before-close] [--lane] <slice-id>..."
+  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--include-new <path>]... [--allow-words <glob>:<word>,...]... [--before-close] [--lane] <slice-id>..."
 [ -f "$reply" ] && [ ! -L "$reply" ] || die "--reply must be a regular file"
 . "$here/lib/secret-patterns.sh"
 for a in ${allow[@]+"${allow[@]}"}; do
@@ -122,8 +132,30 @@ done
 out="$abs"
 
 # The diff, with new files: a temporary index (in a private temporary directory) holds HEAD plus
-# intent-to-add entries for every file not in it: untracked ones listed against that index, and files the
-# repository's own index added (git add -f of an ignored file included).
+# intent-to-add entries for every new file: those not in HEAD, listed against that index, and files the
+# repository's own index added (git add -f of an ignored file included). The same list decides what may
+# go: a file staged with content, a slice's oracle file, or one named with --include-new; any other
+# stops the build before anything is written. Each name given must be one of the new files, so a
+# mistyped path never passes for an allowed one.
+# A .env file (any case) may hold secrets and never goes, however it became new: staged (git add -f
+# included), an oracle file, or named. Its examples are product files.
+is_env() {
+  case "$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]')" in
+    .env.example|.env.sample|.env.template) return 1 ;;
+    .env|.env.*) return 0 ;;
+  esac
+  return 1
+}
+oracles=()
+for s in "${slices[@]}"; do
+  while IFS= read -r -d '' f; do oracles+=("$f"); done \
+    < <(jq -j '[.oracle.files[]? | .path | strings] | .[] | . + "\u0000"' "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)
+done
+# Staged with content against HEAD (or against nothing, before the first commit); an intent-to-add
+# entry (git add -N) has none, so it is not here.
+staged=()
+while IFS= read -r -d '' f; do staged+=("$f"); done \
+  < <(git -C "$root" diff --cached --no-renames --name-only --diff-filter=A -z)
 tmpd="$(mktemp -d "${TMPDIR:-/tmp}/judge-layout.XXXXXX")" || die "cannot create a temporary directory" 1
 trap 'rm -rf "$tmpd"' EXIT
 idx="$tmpd/index"
@@ -132,19 +164,54 @@ if git -C "$root" rev-parse --verify -q HEAD >/dev/null; then
 else
   GIT_INDEX_FILE="$idx" git -C "$root" read-tree --empty || die "could not make a temporary index" 1
 fi
+newfiles=(); unnamed=(); envs=()
 while IFS= read -r -d '' f; do
   case "$f" in .vetdd|.vetdd/*) continue ;; esac
   # A file staged and then removed is not in the delivered tree.
   [ -e "$root/$f" ] || [ -L "$root/$f" ] || continue
+  if is_env "$f"; then envs+=("$f"); continue; fi
+  newfiles+=("$f")
+  ok=0
+  for o in ${staged[@]+"${staged[@]}"} ${oracles[@]+"${oracles[@]}"} ${news[@]+"${news[@]}"}; do [ "$o" = "$f" ] && ok=1; done
+  [ "$ok" -eq 1 ] || unnamed+=("$f")
+done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
+           [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"; } | LC_ALL=C sort -zu)
+# An oracle file is copied whole, ignored or not: a .env among them is refused here too.
+for o in ${oracles[@]+"${oracles[@]}"}; do ! is_env "$o" || envs+=("$o"); done
+[ ${#envs[@]} -eq 0 ] \
+  || die "$(printf 'a .env file may hold secrets and never goes to the judge:%s\nunstage it (git rm --cached <path>), or move it out of the repository or into .gitignore' \
+    "$(printf ' %s' "${envs[@]}")" | vetdd_printable)"
+for n in ${news[@]+"${news[@]}"}; do
+  ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$n" ] && ok=1; done
+  [ "$ok" -eq 1 ] || die "--include-new $(printf '%s' "$n" | vetdd_printable): not a new file of this repository (give its path from the repository root, as git status --untracked-files=all shows it)"
+done
+# The flags for the first 20; more than that is usually build output that belongs in .gitignore.
+if [ ${#unnamed[@]} -gt 0 ]; then
+  flags=""; i=0
+  for f in "${unnamed[@]}"; do
+    [ "$i" -lt 20 ] || break
+    flags="$flags --include-new $(printf '%q' "$f")"; i=$((i + 1))
+  done
+  more=""; [ ${#unnamed[@]} -le 20 ] || more="$(printf '\n... and %s more; put build output and scratch directories in .gitignore' "$((${#unnamed[@]} - 20))")"
+  die "$(printf 'untracked new files would leave the machine in the diff; name each one a human allowed to leave with these flags, and delete the others:\n%s%s' \
+    "$flags" "$more" | vetdd_printable)"
+fi
+for f in ${newfiles[@]+"${newfiles[@]}"}; do
   # -f: a file the repository's index added with git add -f is ignored; the untracked list has no ignored file.
   GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" add -f --intent-to-add -- "$f" \
     || die "could not add $(printf '%s' "$f" | vetdd_printable) to the temporary index" 1
   # Every new file leaves the machine in the diff: name each one, so the caller can see what goes out.
   printf 'judge-layout.sh: new file in the diff: %s\n' "$f" | vetdd_printable >&2
-done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
-             git -C "$root" diff --cached --no-renames --name-only --diff-filter=A -z HEAD 2>/dev/null; } | LC_ALL=C sort -zu)
+done
 # Plumbing-stable output: no color, no textconv, the a/ b/ prefixes whatever the user's config says.
 diffopts=(--no-ext-diff --no-color --no-textconv --src-prefix=a/ --dst-prefix=b/)
+# The diff runs from --base, not HEAD: a .env committed in between, or a tracked one changed, is in it.
+envs=()
+while IFS= read -r -d '' f; do ! is_env "$f" || envs+=("$f"); done \
+  < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --name-only -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd')
+[ ${#envs[@]} -eq 0 ] \
+  || die "$(printf 'a .env file may hold secrets and never goes to the judge, and the diff from --base changes:%s\nleave it out of the delivered change, or take a --base after it' \
+    "$(printf ' %s' "${envs[@]}")" | vetdd_printable)"
 # A binary change would go out as base85 text, which neither check-blind nor the secret check reads.
 # -z: paths as they are (not quoted by core.quotePath); --no-renames: a renamed file under its new name.
 unallowed=""

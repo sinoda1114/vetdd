@@ -34,10 +34,10 @@ setup() {
   [[ "$output" == *'judge.sh --rubric'* ]]
 }
 
-@test "a new untracked product file is in the diff, and the real index is left as it was" {
+@test "a new untracked product file named with --include-new is in the diff, and the real index is left as it was" {
   printf 'new\n' > added.txt
   local before; before="$(git diff --cached --name-only; git ls-files)"
-  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new added.txt s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -q '^+++ b/added.txt$' "$OUT/c1/artifact/diff.patch"
   [ "$(git diff --cached --name-only; git ls-files)" = "$before" ]
@@ -160,7 +160,7 @@ setup() {
 
 @test "an untracked file whose name starts with : is taken literally (Y7)" {
   printf 'memo\n' > ':memo'
-  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new :memo s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -qF '+++ b/:memo' "$OUT/c1/artifact/diff.patch"
 }
@@ -179,7 +179,7 @@ setup() {
 
 @test "the mutation audit's log is not sent as a red-run log, the undefined-imports audit's is" {
   ev s1 calibration --audit undefined-imports -- sh -c 'exit 1' >/dev/null 2>&1 || true
-  printf 'mkdir -p .vetdd/reports\nexit 1\n' > mrun.sh
+  printf 'mkdir -p .vetdd/reports\nexit 1\n' > mrun.sh && git add mrun.sh
   ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1 || true
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -198,7 +198,7 @@ setup() {
 }
 
 @test "a binary file in the diff stops the build unless named with --allow-binary (Z2)" {
-  printf 'a\0b' > blob.bin
+  printf 'a\0b' > blob.bin && git add blob.bin
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
   [ "$status" -eq 2 ] || { echo "$output"; false; }
   [[ "$output" == *"blob.bin"* ]]
@@ -235,7 +235,7 @@ setup() {
 
 @test "the diff ignores the user's color, prefix, and textconv settings (Z7)" {
   git config color.ui always && git config diff.noprefix true
-  printf 'new\n' > added.txt
+  printf 'new\n' > added.txt && git add added.txt
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -q '^+++ b/added.txt$' "$OUT/c1/artifact/diff.patch"
@@ -266,7 +266,7 @@ setup() {
 
 @test "every new file going out in the diff is named on stderr" {
   printf 'new\n' > added.txt
-  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new added.txt s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"new file in the diff: added.txt"* ]]
 }
@@ -318,7 +318,7 @@ setup() {
 }
 
 @test "#28: --allow-binary matches a name with non-ASCII characters" {
-  printf 'a\0b' > "$(printf 'b\303\274.bin')"
+  printf 'a\0b' > "$(printf 'b\303\274.bin')" && git add -- "$(printf 'b\303\274.bin')"
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-binary "$(printf 'b\303\274.bin')" s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
@@ -408,7 +408,7 @@ setup() {
   ev s2 before --seam unit --oracle-version v1 --oracle-file .claude/skills/verify-x/verify-a.sh -- sh .claude/skills/verify-x/verify-a.sh >/dev/null 2>&1
   printf '42\n' > value.txt
   ev s2 after -- sh .claude/skills/verify-x/verify-a.sh >/dev/null 2>&1
-  printf 'new\n' > .claude/skills/verify-x/notes.txt
+  printf 'new\n' > .claude/skills/verify-x/notes.txt && git add .claude
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD~1 s2
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ -f "$OUT/c1/artifact/tests/.agent/skills/verify-x/verify-a.sh" ]
@@ -463,7 +463,7 @@ setup() {
 }
 
 @test "#35 r2: different names under .claude/ and .agent/ build, each under its own name" {
-  mkdir -p .claude .agent && printf 'a\n' > .claude/x.sh && printf 'b\n' > .agent/y.sh
+  mkdir -p .claude .agent && printf 'a\n' > .claude/x.sh && printf 'b\n' > .agent/y.sh && git add .claude .agent
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -q '^+++ b/.agent/y.sh$' "$OUT/c1/artifact/diff.patch"
@@ -526,10 +526,10 @@ setup() {
 # --- usage triage ----------------------------------------------------------------------------------
 
 @test "a product diff with variant or baseline builds; a model word needs --allow-words, which the printed command repeats" {
-  printf '<Button variant="primary" />\n.x { align-items: baseline; }\n' > ui.tsx
+  printf '<Button variant="primary" />\n.x { align-items: baseline; }\n' > ui.tsx && git add ui.tsx
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  printf 'import OpenAI from "openai";\n' > llm.ts
+  printf 'import OpenAI from "openai";\n' > llm.ts && git add llm.ts
   run JL --out "$OUT.2" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
   [ "$status" -eq 4 ]
   run JL --out "$OUT.3" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words 'c1/artifact/diff.patch:openai' s1
@@ -543,5 +543,155 @@ setup() {
   [ ! -e "$OUT" ]
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words 'c1/*:notaword' s1
   [ "$status" -eq 2 ]
+  [ ! -e "$OUT" ]
+}
+
+# --- #28: untracked new files leave only when named -------------------------------------------------
+
+@test "#28 s1: an untracked new file not named with --include-new stops the build (exit 2), nothing written, the exact flags printed" {
+  printf 'new\n' > added.txt
+  printf 'memo\n' > 'my notes.txt'
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+  [[ "$output" == *"added.txt"* ]]
+  [[ "$output" == *"--include-new added.txt"* ]]
+  [[ "$output" == *'--include-new my\ notes.txt'* ]]
+}
+
+@test "#28 s2: an untracked new file named with --include-new is in the diff and named on stderr" {
+  printf 'new\n' > added.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new added.txt s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/added.txt$' "$OUT/c1/artifact/diff.patch"
+  [[ "$output" == *"new file in the diff: added.txt"* ]]
+  # The printed judge command does not need it: it reads the built directory.
+  [[ "$output" != *'judge.sh'*'--include-new'* ]]
+}
+
+@test "#28 s3: a staged new file (git add) goes without --include-new" {
+  printf 'staged\n' > staged.txt && git add staged.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/staged.txt$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#28 s4: an untracked oracle file of a slice goes without --include-new" {
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file t2.sh -- sh t2.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh t2.sh >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/t2.sh$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#28 s5: --include-new naming a path that is not an untracked new file is a usage error, nothing written" {
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new value.txt s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+  [[ "$output" == *"value.txt"* ]]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new nothere.txt s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+}
+
+@test "#28 s6: an ignored file and files under .vetdd/ never need --include-new" {
+  mkdir -p ignored && printf 'x\n' > ignored/x.txt
+  printf 'note\n' > .vetdd/note.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  ! grep -q 'ignored/x.txt' "$OUT/c1/artifact/diff.patch" || false
+}
+
+@test "#28 s7: a control character in an untracked name is not echoed raw" {
+  printf 'x\n' > "$(printf 'bad\033[31mname')"
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" != *$'\033'* ]]
+}
+
+@test "#28 r1: an intent-to-add file (git add -N) is not staged content: it needs --include-new" {
+  printf 'secret\n' > notes.txt && git add -N notes.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"--include-new notes.txt"* ]]
+  [ ! -e "$OUT" ]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new notes.txt s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/notes.txt$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#28 r1: a file of HEAD only removed from the index (git rm --cached) is not a new file" {
+  git rm -q --cached sub/keep.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#28 r1: --include-new refuses a .env file, which may hold secrets" {
+  printf 'K=v\n' > .env.local
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new .env.local s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env.local"* ]]
+  [ ! -e "$OUT" ]
+}
+
+@test "#28 r2: a .env file never goes, staged (even with git add -f) or not, whatever its case; nothing written" {
+  printf 'DB_PASSWORD=x\n' > .env && git add -f .env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env"* ]]
+  [ ! -e "$OUT" ]
+  git rm -q --cached .env && rm .env
+  printf 'K=v\n' > .ENV.local
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" != *"--include-new .ENV.local"* ]]
+  [[ "$output" != *"git add it"* ]]
+  [ ! -e "$OUT" ]
+}
+
+@test "#28 r2: an example env file (.env.example, .env.sample, .env.template) goes like any product file" {
+  printf 'K=\n' > .env.example && git add .env.example
+  printf 'K=\n' > .env.sample
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new .env.sample s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/.env.example$' "$OUT/c1/artifact/diff.patch"
+  grep -q '^+++ b/.env.sample$' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#28 r2: many untracked files are listed up to 20, with the count of the rest and a hint to ignore them" {
+  mkdir -p build && for i in $(seq 1 30); do printf 'x\n' > "build/f$i.txt"; done
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ "$(printf '%s' "$output" | grep -o -- '--include-new' | wc -l | tr -d ' ')" -eq 20 ]
+  [[ "$output" == *"10 more"* ]]
+  [[ "$output" == *".gitignore"* ]]
+}
+
+@test "#28 r3: an ignored .env recorded as an oracle file stops the build before anything is copied" {
+  printf '.env\n' >> .gitignore && git add .gitignore && git commit -qm ignore-env
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > .env
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file .env -- sh .env >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh .env >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env"* ]]
+  [ ! -e "$OUT" ]
+}
+
+@test "#28 r3: a .env committed between --base and HEAD, or a tracked .env changed, stops the build" {
+  local base; base="$(git rev-parse HEAD)"
+  printf 'K=v\n' > .env && git add .env && git commit -qm env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base "$base" s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env"* ]]
+  [ ! -e "$OUT" ]
+  printf 'K=w\n' > .env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
   [ ! -e "$OUT" ]
 }
