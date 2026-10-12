@@ -669,3 +669,29 @@ setup() {
   [[ "$output" == *"10 more"* ]]
   [[ "$output" == *".gitignore"* ]]
 }
+
+@test "#28 r3: an ignored .env recorded as an oracle file stops the build before anything is copied" {
+  printf '.env\n' >> .gitignore && git add .gitignore && git commit -qm ignore-env
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > .env
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file .env -- sh .env >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh .env >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env"* ]]
+  [ ! -e "$OUT" ]
+}
+
+@test "#28 r3: a .env committed between --base and HEAD, or a tracked .env changed, stops the build" {
+  local base; base="$(git rev-parse HEAD)"
+  printf 'K=v\n' > .env && git add .env && git commit -qm env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base "$base" s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env"* ]]
+  [ ! -e "$OUT" ]
+  printf 'K=w\n' > .env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+}

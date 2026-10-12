@@ -9,7 +9,8 @@
 #   here, by its path from the repository root, or when it is one of the slices' oracle files; a file
 #   staged with git add goes as it is. Any other stops the build (exit 2, nothing written) with the
 #   flags to name each one (the first 20), so a scratch file never leaves unseen. A .env file (any case;
-#   .env.example, .env.sample, and .env.template excepted) stops it however it became new.
+#   .env.example, .env.sample, and .env.template excepted) stops it wherever it would go: a new file of
+#   any kind, an oracle file (ignored or not), or a path the diff from --base changes.
 #   --allow-words: product words a human confirmed (an SDK named after a model's maker), for
 #   check-blind.sh and the printed judge command. The origin words (variant, baseline, winner) are
 #   not checked for one delivered change; --lane (an arena lane, compared with others) keeps them.
@@ -175,6 +176,8 @@ while IFS= read -r -d '' f; do
   [ "$ok" -eq 1 ] || unnamed+=("$f")
 done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
            [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"; } | LC_ALL=C sort -zu)
+# An oracle file is copied whole, ignored or not: a .env among them is refused here too.
+for o in ${oracles[@]+"${oracles[@]}"}; do ! is_env "$o" || envs+=("$o"); done
 [ ${#envs[@]} -eq 0 ] \
   || die "$(printf 'a .env file may hold secrets and never goes to the judge:%s\nunstage it (git rm --cached <path>), or move it out of the repository or into .gitignore' \
     "$(printf ' %s' "${envs[@]}")" | vetdd_printable)"
@@ -202,6 +205,13 @@ for f in ${newfiles[@]+"${newfiles[@]}"}; do
 done
 # Plumbing-stable output: no color, no textconv, the a/ b/ prefixes whatever the user's config says.
 diffopts=(--no-ext-diff --no-color --no-textconv --src-prefix=a/ --dst-prefix=b/)
+# The diff runs from --base, not HEAD: a .env committed in between, or a tracked one changed, is in it.
+envs=()
+while IFS= read -r -d '' f; do ! is_env "$f" || envs+=("$f"); done \
+  < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --name-only -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd')
+[ ${#envs[@]} -eq 0 ] \
+  || die "$(printf 'a .env file may hold secrets and never goes to the judge, and the diff from --base changes:%s\nleave it out of the delivered change, or take a --base after it' \
+    "$(printf ' %s' "${envs[@]}")" | vetdd_printable)"
 # A binary change would go out as base85 text, which neither check-blind nor the secret check reads.
 # -z: paths as they are (not quoted by core.quotePath); --no-renames: a renamed file under its new name.
 unallowed=""
