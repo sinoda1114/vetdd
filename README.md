@@ -59,11 +59,25 @@ evals/              eval の課題・rubric・実行結果（回帰セット）
 
 ## 導入
 
+前提として次のコマンドが要ります。
+
+| コマンド | 用途 | 必須 |
+|---|---|---|
+| bash（3.2 以上）、git、jq、perl | スクリプト全般 | 必須 |
+| node | 判定者の返答をスキーマで検査する（`check-verdict.sh`） | 必須 |
+| codex（ファイル保存のログイン） | 別系統の判定者（`judge.sh`） | 判定を受けるなら必須 |
+
+リポジトリを取得して、`install.sh` を実行します。
+
 ```bash
-cp -r skills/vetdd ~/.claude/skills/vetdd
+git clone https://github.com/sinoda1114/vetdd.git && vetdd/install.sh
 ```
 
-対象プロジェクトで `scripts/setup-project.sh` を実行すると、`.vetdd/` の作成、`.gitignore` への追記、プロジェクトローカルの pre-commit フックの設置を行います。global の hooks は触りません。
+`install.sh` は前提のコマンドを確かめ、`~/.claude/skills/vetdd` に入れます（`CLAUDE_CONFIG_DIR` があればその下、`--dest` で場所を変えられます）。すでに入っている版は `~/.claude/skills-backup/vetdd-<日時>` へ移してから入れ替えます。同じ版なら何もしません。更新するときは `git pull` してからもう一度実行します。
+
+判定者の codex は、ログインをファイルに保存している必要があります。判定者は利用者の codex 設定から切り離した専用の場所で動き、そこへ貸せるのはファイルのログインだけだからです。OS のキーチェーンに保存している場合は、`~/.codex/config.toml` に `cli_auth_credentials_store = "file"` を書いてから `codex login` をやり直します。
+
+対象プロジェクトでは、最初に一度 `~/.claude/skills/vetdd/scripts/setup-project.sh` を実行します。`.vetdd/` の作成、`.gitignore` への追記、プロジェクトローカルの pre-commit フックの設置を行います。global の hooks は触りません。
 
 ## 由来
 
