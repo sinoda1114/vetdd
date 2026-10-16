@@ -7,8 +7,9 @@ load test_helper
 
 setup() {
   isolate_git
+  unset CODEX_HOME
   export CLAUDE_CONFIG_DIR="$HOME/.claude"
-  "$BATS_TEST_DIRNAME/../install.sh" >/dev/null 2>&1 || true
+  "$BATS_TEST_DIRNAME/../install.sh" > "$BATS_TEST_TMPDIR/install.log" 2>&1 || true
   V="$CLAUDE_CONFIG_DIR/skills/vetdd/scripts"
   # A fake codex with a file login: the isolation flags, login status, and a verdict for one label.
   mkdir -p "$BATS_TEST_TMPDIR/fake" "$HOME/.codex"
@@ -31,7 +32,7 @@ FAKE
 }
 
 @test "a clean install runs one slice end to end through the installed copy" {
-  [ -x "$V/evidence.sh" ] || { echo "install.sh did not install"; false; }
+  [ -x "$V/evidence.sh" ] || { echo "install.sh did not install:"; cat "$BATS_TEST_TMPDIR/install.log"; false; }
   make_repo
   run "$V/setup-project.sh"
   [ "$status" -eq 0 ] || { echo "$output"; false; }

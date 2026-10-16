@@ -75,7 +75,7 @@ git clone https://github.com/sinoda1114/vetdd.git && vetdd/install.sh
 
 `install.sh` は前提のコマンドを確かめ、`~/.claude/skills/vetdd` に入れます（`CLAUDE_CONFIG_DIR` があればその下、`--dest` で場所を変えられます）。すでに入っている版は `~/.claude/skills-backup/vetdd-<日時>` へ移してから入れ替えます。同じ版なら何もしません。更新するときは `git pull` してからもう一度実行します。
 
-判定者の codex は、ログインをファイルに保存している必要があります。判定者は利用者の codex 設定から切り離した専用の場所で動き、そこへ貸せるのはファイルのログインだけだからです。OS のキーチェーンに保存している場合は、`~/.codex/config.toml` に `cli_auth_credentials_store = "file"` を書いてから `codex login` をやり直します。
+判定者の codex は、ログインをファイルに保存している必要があります。判定者は利用者の codex 設定から切り離した専用の場所で動き、そこへ貸せるのはファイルのログインだけだからです。OS のキーチェーンに保存している場合は、`~/.codex/config.toml` に `cli_auth_credentials_store = "file"` を書いてから `codex login` をやり直します。ファイルのログインは平文で置かれ、同じ利用者の権限で動くプロセスなら確認なしに読めます。`ls -l ~/.codex/auth.json` で自分だけが読める（`-rw-------`）ことを確かめてください。判定者を使わない（eval をしない、test と verify を `blocked` で終える）なら、キーチェーンのままで構いません。
 
 対象プロジェクトでは、最初に一度 `~/.claude/skills/vetdd/scripts/setup-project.sh` を実行します。`.vetdd/` の作成、`.gitignore` への追記、プロジェクトローカルの pre-commit フックの設置を行います。global の hooks は触りません。
 

@@ -9,6 +9,7 @@ SRC="$BATS_TEST_DIRNAME/../skills/vetdd"
 
 setup() {
   isolate_git
+  unset CODEX_HOME
   export CLAUDE_CONFIG_DIR="$HOME/.claude"
   DEST="$CLAUDE_CONFIG_DIR/skills/vetdd"
   # A codex with a file login, so the judge's prerequisite is met unless a test takes it away.
@@ -114,5 +115,63 @@ without() {
 @test "an unknown option is a usage error (exit 2) and installs nothing" {
   run "$INSTALL" --bogus
   [ "$status" -eq 2 ]
+  [ ! -e "$DEST" ]
+}
+
+@test "r1: a --dest without a slash is taken from the current directory, and an old install there is backed up" {
+  mkdir -p "$BATS_TEST_TMPDIR/here/vetdd" && printf 'old\n' > "$BATS_TEST_TMPDIR/here/vetdd/SKILL.md"
+  cd "$BATS_TEST_TMPDIR/here"
+  run "$INSTALL" --dest vetdd
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  diff -r "$SRC" "$BATS_TEST_TMPDIR/here/vetdd"
+  [ "$(cat "$(ls -d "$CLAUDE_CONFIG_DIR"/skills-backup/vetdd-* | head -1)/SKILL.md")" = old ]
+}
+
+@test "r1: an empty --dest or / is a usage error" {
+  run "$INSTALL" --dest ""
+  [ "$status" -eq 2 ]
+  run "$INSTALL" --dest /
+  [ "$status" -eq 2 ]
+}
+
+@test "r1: when the new copy cannot be put in place, the old install comes back" {
+  mkdir -p "$DEST" && printf 'old\n' > "$DEST/SKILL.md"
+  # A mv that fails only for the final step (moving the new copy out of the temporary directory).
+  mkdir -p "$BATS_TEST_TMPDIR/mvbin"
+  printf '#!/bin/sh\ncase "$1" in */.vetdd-install.*) exit 1 ;; esac\nexec /bin/mv "$@"\n' > "$BATS_TEST_TMPDIR/mvbin/mv"
+  chmod +x "$BATS_TEST_TMPDIR/mvbin/mv"
+  PATH="$BATS_TEST_TMPDIR/mvbin:$PATH" run "$INSTALL"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ "$(cat "$DEST/SKILL.md")" = old ]
+}
+
+@test "r1: an install whose content matches but whose scripts lost their execute bit is replaced" {
+  "$INSTALL" >/dev/null
+  chmod -x "$DEST/scripts/evidence.sh"
+  run "$INSTALL"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -x "$DEST/scripts/evidence.sh" ]
+}
+
+@test "r1: files the checkout does not track (a .DS_Store, a scratch file) are not installed" {
+  local tmp; tmp="$SRC/.vetdd-install-test-untracked"
+  printf 'x\n' > "$tmp"
+  run "$INSTALL"
+  rm -f "$tmp"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -e "$DEST/.vetdd-install-test-untracked" ]
+}
+
+@test "r1: a --dest whose parent others can write is refused" {
+  mkdir -p "$BATS_TEST_TMPDIR/shared" && chmod 777 "$BATS_TEST_TMPDIR/shared"
+  run "$INSTALL" --dest "$BATS_TEST_TMPDIR/shared/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ ! -e "$BATS_TEST_TMPDIR/shared/vetdd" ]
+}
+
+@test "r1: run from standard input (no script path) it stops instead of copying from the current directory" {
+  cd "$BATS_TEST_TMPDIR"
+  run bash -s < "$INSTALL"
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
   [ ! -e "$DEST" ]
 }
