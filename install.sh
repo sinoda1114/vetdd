@@ -15,7 +15,7 @@
 # Exit: 0 installed or up to date; 1 a required tool is missing or a step failed (the install in
 # place is kept); 2 usage error.
 set -u
-unset CDPATH
+unset CDPATH GIT_DIR GIT_WORK_TREE
 
 die() { printf 'install.sh: %s\n' "$1" >&2; exit "${2:-1}"; }
 say() { printf 'install.sh: %s\n' "$1"; }
@@ -39,7 +39,7 @@ while [ $# -gt 0 ]; do
     *) die "unknown argument: $1 (usage: install.sh [--dest <dir>])" 2 ;;
   esac
 done
-dest="${dest%/}"
+while :; do case "$dest" in */) dest="${dest%/}" ;; *) break ;; esac; done
 [ -n "$dest" ] || die "--dest needs a directory other than /" 2
 case "$dest" in /*) ;; *) dest="$PWD/$dest" ;; esac
 [ -f "$src/SKILL.md" ] || die "cannot find skills/vetdd next to install.sh ($src)"
@@ -57,29 +57,71 @@ if ! command -v codex >/dev/null 2>&1; then
   say "WARNING: codex not found: the separate judge cannot run, so test and verify modes end blocked. Install it (npm install -g @openai/codex) and log in with a file login (below)"
 elif [ ! -f "$codex_home/auth.json" ]; then
   say "WARNING: no codex file login ($codex_home/auth.json): the judge cannot use a keyring login. Set cli_auth_credentials_store = \"file\" in $codex_home/config.toml and run \`codex login\`"
+elif [ -n "$(find -H "$codex_home/auth.json" -maxdepth 0 \( -perm -g+r -o -perm -o+r \) 2>/dev/null)" ]; then
+  say "WARNING: your codex login ($codex_home/auth.json) is readable by others; run chmod 600 on it"
 fi
+
+# safe_dir <dir>: its real path and every ancestor up to / are the user's or root's and writable by no
+# one else: by others only when sticky and root's (/tmp), by the group only when the group is the
+# user's own (a user-private group) or the directory is sticky and root's. Sets bad to the first that is not.
+uid="$(id -u)"; own_group=""
+[ "$(id -gn)" != "$(id -un)" ] || own_group="$(id -g)"
+safe_dir() {
+  local d
+  d="$(cd "$1" 2>/dev/null && pwd -P)" || { bad="$1"; return 1; }
+  while :; do
+    [ -n "$(find "$d" -maxdepth 0 \( -user "$uid" -o -user 0 \) \
+      \( ! -perm -o+w -o \( -perm -1000 -user 0 \) \) \
+      \( ! -perm -g+w ${own_group:+-o -group "$own_group"} -o \( -perm -1000 -user 0 \) \) 2>/dev/null)" ] \
+      || { bad="$d"; return 1; }
+    [ "$d" != / ] || return 0
+    d="$(dirname -- "$d")"
+  done
+}
 
 parent="${dest%/*}"; [ -n "$parent" ] || parent=/
 mkdir -p "$parent" || die "cannot create $parent"
-[ -n "$(find "$parent" -maxdepth 0 -user "$(id -u)" ! -perm -o+w 2>/dev/null)" ] \
-  || die "$parent is not yours or others can write to it; give a --dest under a directory only you can change"
+safe_dir "$parent" \
+  || die "$bad is not yours (or root's), or someone else can write to it; give a --dest under directories only you can change"
+# From here on the real path: a link in --dest is resolved once, after it was checked.
+dest="$(cd "$parent" && pwd -P)/${dest##*/}"; parent="${dest%/*}"; [ -n "$parent" ] || parent=/
+# A directory that is not a vetdd install (--dest naming the skills directory itself, say) is never moved away.
+if [ -d "$dest" ] && [ ! -L "$dest" ] && ! grep -qx 'name: vetdd' "$dest/SKILL.md" 2>/dev/null; then
+  die "$dest exists and is not a vetdd install; give --dest the vetdd directory itself (e.g. ~/.claude/skills/vetdd)"
+fi
 
 tmp="$(mktemp -d "$parent/.vetdd-install.XXXXXX")" || die "cannot create a temporary directory in $parent"
 trap 'rm -rf "$tmp"' EXIT
 new="$tmp/vetdd"
-if git -C "$here" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  # Only what git tracks: no .DS_Store or scratch file of the checkout goes along.
+# The checkout itself is a git repository: only what git tracks goes (no .DS_Store or scratch file).
+# A copy that is not one (an unpacked archive, even inside another repository) goes whole.
+top="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null)" && top="$(cd "$top" && pwd -P)" || top=""
+if [ "$top" = "$here" ]; then
+  list="$tmp/files"
+  git -C "$here" ls-files -z -- skills/vetdd > "$list" \
+    || die "git cannot list the files of $here; the install in place is kept"
+  tr '\0' '\n' < "$list" | grep -qx 'skills/vetdd/SKILL.md' \
+    || die "skills/vetdd/SKILL.md is not tracked in $here; the install in place is kept"
   mkdir "$new" || die "cannot create $new"
-  (cd "$src" && git ls-files -z -- .) | (cd "$src" && while IFS= read -r -d '' f; do
-    [ -e "$f" ] || [ -L "$f" ] || continue
-    mkdir -p "$new/$(dirname -- "$f")" && cp -P -p -- "$f" "$new/$f" || exit 1
-  done) || die "cannot copy $src"
+  while IFS= read -r -d '' f; do
+    r="${f#skills/vetdd/}"
+    [ -e "$here/$f" ] || [ -L "$here/$f" ] || continue
+    mkdir -p "$new/$(dirname -- "$r")" && cp -P -p -- "$here/$f" "$new/$r" || die "cannot copy $f"
+  done < "$list"
 else
   cp -R "$src" "$new" || die "cannot copy $src"
 fi
+[ -f "$new/SKILL.md" ] && [ -x "$new/scripts/setup-project.sh" ] \
+  || die "the copy of $src is incomplete; the install in place is kept"
+# Nobody else may change what Claude Code will run, whatever the checkout's modes.
+chmod -R go-w "$new" || die "cannot set the modes of the copy"
 
-# What "the same" means: content, and which files are executable or links.
-shape() { (cd "$1" && find . \( -type l -o -perm -u+x \) ! -type d -print | LC_ALL=C sort); }
+# What "the same" means: content, and, each listed on its own, the links, the executable files, and
+# anything the group or others can write.
+shape() {
+  (cd "$1" && { find . -type l | sed 's/^/l /'; find . -type f -perm -u+x | sed 's/^/x /'
+                find . ! -type l \( -perm -g+w -o -perm -o+w \) | sed 's/^/w /'; } | LC_ALL=C sort)
+}
 if [ -d "$dest" ] && [ ! -L "$dest" ] && diff -r "$new" "$dest" >/dev/null 2>&1 \
    && [ "$(shape "$new")" = "$(shape "$dest")" ]; then
   say "$dest is up to date"
@@ -88,6 +130,7 @@ else
   if [ -e "$dest" ] || [ -L "$dest" ]; then
     backups="$conf/skills-backup"
     mkdir -p "$backups" || die "cannot create $backups"
+    safe_dir "$backups" || die "$bad is not yours (or root's), or someone else can write to it; the install in place is kept"
     b="$backups/vetdd-$(date +%Y%m%d-%H%M%S)"
     [ ! -e "$b" ] && [ ! -L "$b" ] || b="$b-$$"
     mv "$dest" "$b" || die "cannot move the existing install to $b"
