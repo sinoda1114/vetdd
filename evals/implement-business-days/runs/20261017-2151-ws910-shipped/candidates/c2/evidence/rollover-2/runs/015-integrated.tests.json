@@ -1,0 +1,21 @@
+{
+  "format": "jest-json",
+  "passed": 2,
+  "failed": 0,
+  "skipped": 0,
+  "todo": 0,
+  "other": 0,
+  "total": 2,
+  "tests": [
+    {
+      "file": "src/rollover-sunday.test.ts",
+      "name": "rolls a due date that lands on a Sunday over to the following Monday",
+      "status": "passed"
+    },
+    {
+      "file": "src/rollover-sunday.test.ts",
+      "name": "does not move a weekday due date when rolling over (contrast for the Sunday rule)",
+      "status": "passed"
+    }
+  ]
+}

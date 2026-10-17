@@ -42,3 +42,14 @@ The change raises the labeled share from about a tenth to about four fifths, and
 ## Decision
 
 By step 8 this is inconclusive: the judge's winner is a tie and my reading prefers reply-labels. The human accepted the change on the measured share and no regression (2026-10-17), so it ships; no baseline is set, since no run has a judge winner. Criterion 4's all-or-nothing levels go to an issue (#60, a v5 that grades the share of labeled claims). The reply-format edits made after the last run here (f859266 and the review fixes after it: the reply only goes to the judge, a not-run judge is a claim, Measured cites a file or a local log, never a command) are not measured by any run of this eval; the next run of it, with v5, measures them.
+
+## The shipped format (run 20261017-2151-ws910-shipped, after the PR #61 review)
+
+A third run compared main (3be3dab) with the format as it ships (d364a99: the Result line labeled too, the judge gets the reply only, Measured cites a file or a log named as local), collected as the reply part only.
+
+| workspace | variant | labeled share, reply part | labeled share, whole message |
+|---|---|---|---|
+| 9 | before-labels | 16% | 16% |
+| 10 | reply-labels as shipped | 92% | 69% |
+
+The judge scored a tie again (2, 2, 2, 0 each). Against the shipped variant it cited only Measured claims that name a local log (a note under .vetdd/notes/, a command's output in the session), which the format now allows and the final judge's rubric accepts ("or is named as a local log"), but this eval's rubric v4 does not: criterion 4 asks for a path under artifact/ or evidence/. The rubrics are to be aligned in #60. The summary and the closing block the candidate added sit outside the reply part, as the format asks, which is why its two shares differ.

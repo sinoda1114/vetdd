@@ -1,0 +1,466 @@
+{
+  "slice_id": "rollover-3",
+  "oracle": {
+    "seam": "paymentDueDate() unit",
+    "version": "1",
+    "files": [
+      {
+        "path": "src/rollover-unchanged.test.ts",
+        "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "seq": 1,
+      "kind": "calibration",
+      "cmd": [
+        "npx",
+        "--no-install",
+        "vitest",
+        "run",
+        "src/rollover-unchanged.test.ts"
+      ],
+      "exit_code": 1,
+      "outcome": "target_failure",
+      "accepted": true,
+      "started_at": "2026-10-17T12:46:53Z",
+      "ended_at": "2026-10-17T12:46:55Z",
+      "log": "runs/001-calibration.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "08e003394e5d7173214be2345171408a7505b1c4"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 2,
+      "kind": "after",
+      "cmd": [
+        "npx",
+        "--no-install",
+        "vitest",
+        "run",
+        "src/rollover-unchanged.test.ts",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile.json=.vetdd/reports/rollover-3.json"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:47:02Z",
+      "ended_at": "2026-10-17T12:47:03Z",
+      "log": "runs/002-after.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "aa31ae4500bd85ffc7b374748de19d59fc0d05c0"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      },
+      "tests": {
+        "format": "jest-json",
+        "status": "ok",
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "other": 0,
+        "total": 2,
+        "sha256": "532b8ccac01444bc7585161714276205fa96eafd656bc686101fed88d5f1f9f2"
+      }
+    },
+    {
+      "seq": 3,
+      "kind": "calibration",
+      "cmd": [
+        "npx",
+        "--no-install",
+        "vitest",
+        "run",
+        "src/rollover-unchanged.test.ts"
+      ],
+      "exit_code": 1,
+      "outcome": "target_failure",
+      "accepted": true,
+      "started_at": "2026-10-17T12:47:03Z",
+      "ended_at": "2026-10-17T12:47:04Z",
+      "log": "runs/003-calibration.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "15ae0e747d8ca32849a521231218f9f79457aa2e"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      },
+      "audit": {
+        "kind": "undefined-imports"
+      }
+    },
+    {
+      "seq": 4,
+      "kind": "after",
+      "cmd": [
+        "npx",
+        "--no-install",
+        "vitest",
+        "run"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:47:04Z",
+      "ended_at": "2026-10-17T12:47:04Z",
+      "log": "runs/004-after.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "aa31ae4500bd85ffc7b374748de19d59fc0d05c0"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 5,
+      "kind": "after",
+      "cmd": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:47:04Z",
+      "ended_at": "2026-10-17T12:47:05Z",
+      "log": "runs/005-after.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "aa31ae4500bd85ffc7b374748de19d59fc0d05c0"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 6,
+      "kind": "integrated",
+      "cmd": [
+        "npx",
+        "--no-install",
+        "vitest",
+        "run",
+        "src/rollover-unchanged.test.ts",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile.json=.vetdd/reports/rollover-3.json"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:47:14Z",
+      "ended_at": "2026-10-17T12:47:14Z",
+      "log": "runs/006-integrated.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "aa31ae4500bd85ffc7b374748de19d59fc0d05c0"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      },
+      "tests": {
+        "format": "jest-json",
+        "status": "ok",
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "other": 0,
+        "total": 2,
+        "sha256": "532b8ccac01444bc7585161714276205fa96eafd656bc686101fed88d5f1f9f2"
+      }
+    },
+    {
+      "seq": 7,
+      "kind": "integrated",
+      "cmd": [
+        "npx",
+        "--no-install",
+        "vitest",
+        "run"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:47:14Z",
+      "ended_at": "2026-10-17T12:47:15Z",
+      "log": "runs/007-integrated.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "aa31ae4500bd85ffc7b374748de19d59fc0d05c0"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 8,
+      "kind": "integrated",
+      "cmd": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:47:15Z",
+      "ended_at": "2026-10-17T12:47:15Z",
+      "log": "runs/008-integrated.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "aa31ae4500bd85ffc7b374748de19d59fc0d05c0"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 9,
+      "kind": "integrated",
+      "cmd": [
+        "npx",
+        "--no-install",
+        "vitest",
+        "run",
+        "src/rollover-unchanged.test.ts",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile.json=.vetdd/reports/rollover-3.json"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:49:32Z",
+      "ended_at": "2026-10-17T12:49:32Z",
+      "log": "runs/009-integrated.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "0f99d779d560695f70e73b5e82de2964854deedd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      },
+      "tests": {
+        "format": "jest-json",
+        "status": "ok",
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "other": 0,
+        "total": 2,
+        "sha256": "532b8ccac01444bc7585161714276205fa96eafd656bc686101fed88d5f1f9f2"
+      }
+    },
+    {
+      "seq": 10,
+      "kind": "integrated",
+      "cmd": [
+        "npx",
+        "--no-install",
+        "vitest",
+        "run"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:49:33Z",
+      "ended_at": "2026-10-17T12:49:33Z",
+      "log": "runs/010-integrated.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "0f99d779d560695f70e73b5e82de2964854deedd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 11,
+      "kind": "integrated",
+      "cmd": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-10-17T12:49:33Z",
+      "ended_at": "2026-10-17T12:49:34Z",
+      "log": "runs/011-integrated.log",
+      "tree": {
+        "head_sha": "cf950a8d1e94cb087fc85dd48c8aed46aaaaa7e0",
+        "tree_hash": "0f99d779d560695f70e73b5e82de2964854deedd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "paymentDueDate() unit",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/rollover-unchanged.test.ts",
+            "sha256": "6a79315e7ade73f666e46bfa27330da85f31393eb7c1cf7edafb23f076f7c2d1"
+          }
+        ]
+      }
+    }
+  ],
+  "oracle_versions": [
+    {
+      "version": "1",
+      "change": "initial",
+      "reason": "Initial agreement from the requester message: rollover option on paymentDueDate, expected values hand-worked from the 2026 calendar (full text in .vetdd/notes/agreement-v1.md).",
+      "agreement": null,
+      "after_seq": 0,
+      "recorded_at": "2026-10-17T12:46:45Z"
+    }
+  ],
+  "audits": [
+    {
+      "kind": "mutation",
+      "status": "not_applicable",
+      "reason": "This slice only adds guard tests (weekday unchanged with rollover, weekend unchanged without it); it changed no runtime product code. The product lines are mutated under rollover-1 and rollover-2.",
+      "recorded_at": "2026-10-17T12:50:03Z",
+      "after_seq": 11
+    }
+  ]
+}

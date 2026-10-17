@@ -1,0 +1,30 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ❯ src/rollover-unchanged.test.ts (2 tests | 1 failed) 13ms
+   × keeps a due date that lands on a weekday when rolling over to the next business day 10ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/rollover-unchanged.test.ts > keeps a due date that lands on a weekday when rolling over to the next business day
+AssertionError: expected '2026-07-01' to be '2026-06-30' // Object.is equality
+
+Expected: "2026-06-30"
+Received: "2026-07-01"
+
+ ❯ src/rollover-unchanged.test.ts:6:79
+      4| it("keeps a due date that lands on a weekday when rolling over to the …
+      5|   // 2026-05-31 + 30 days = 2026-06-30, a Tuesday, so it stays as it i…
+      6|   expect(paymentDueDate("2026-05-31", 30, { rollover: "next-business-d…
+       |                                                                               ^
+      7| });
+      8|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  21:46:55
+   Duration  376ms (transform 69%, import 14%, tests 12%, worker 4%)
+

@@ -1,0 +1,52 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ❯ src/dueDate.rollover.test.ts (4 tests | 2 failed) 4ms
+   ❯ paymentDueDate with rollover: next-business-day (3)
+     × moves a due date that lands on a Saturday to the following Monday 3ms
+     × moves a due date that lands on a Sunday to the following Monday 0ms
+     ✓ keeps a due date that lands on a weekday 0ms
+   ✓ paymentDueDate without the rollover option (1)
+     ✓ keeps a due date that lands on a weekend 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/dueDate.rollover.test.ts > paymentDueDate with rollover: next-business-day > moves a due date that lands on a Saturday to the following Monday
+AssertionError: expected '2026-05-30' to be '2026-06-01' // Object.is equality
+
+Expected: "2026-06-01"
+Received: "2026-05-30"
+
+ ❯ src/dueDate.rollover.test.ts:7:81
+      5|   it("moves a due date that lands on a Saturday to the following Monda…
+      6|     // 2026-04-30 + 30 days = 2026-05-30, a Saturday; the following Mo…
+      7|     expect(paymentDueDate("2026-04-30", 30, { rollover: "next-business…
+       |                                                                                 ^
+      8|   });
+      9|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/dueDate.rollover.test.ts > paymentDueDate with rollover: next-business-day > moves a due date that lands on a Sunday to the following Monday
+AssertionError: expected '2026-08-30' to be '2026-08-31' // Object.is equality
+
+Expected: "2026-08-31"
+Received: "2026-08-30"
+
+ ❯ src/dueDate.rollover.test.ts:12:81
+     10|   it("moves a due date that lands on a Sunday to the following Monday"…
+     11|     // 2026-07-31 + 30 days = 2026-08-30, a Sunday; the following Mond…
+     12|     expect(paymentDueDate("2026-07-31", 30, { rollover: "next-business…
+       |                                                                                 ^
+     13|   });
+     14|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+   Start at  21:46:31
+   Duration  104ms (transform 63%, import 19%, tests 12%, worker 6%)
+
+JSON report written to /Users/sinoda/tmp/[redacted]/.vetdd/reports/rollover-1.json

@@ -1,0 +1,16 @@
+{
+  "format": "jest-json",
+  "passed": 0,
+  "failed": 1,
+  "skipped": 0,
+  "todo": 0,
+  "other": 0,
+  "total": 1,
+  "tests": [
+    {
+      "file": "src/rollover-saturday.test.ts",
+      "name": "rolls a due date that lands on a Saturday over to the following Monday",
+      "status": "failed"
+    }
+  ]
+}

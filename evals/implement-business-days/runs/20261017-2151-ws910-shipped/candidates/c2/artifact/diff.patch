@@ -1,0 +1,97 @@
+diff --git a/src/dueDate.ts b/src/dueDate.ts
+index 01c502e..2cb0c48 100644
+--- a/src/dueDate.ts
++++ b/src/dueDate.ts
+@@ -83,10 +83,30 @@ export function closingDate(invoiceDate: string, closingDay: ClosingDay): string
+   });
+ }
+ 
+-/** The payment due date: the closing date plus `termDays` calendar days. */
+-export function paymentDueDate(closing: string, termDays: number): string {
++export type PaymentDueDateOptions = { readonly rollover?: "next-business-day" };
++
++const SUNDAY = 0;
++const SATURDAY = 6;
++
++function nextBusinessDay(date: CalendarDate): CalendarDate {
++  const weekday = new Date(toUtc(date)).getUTCDay();
++  if (weekday === SATURDAY) return addDays(date, 2);
++  if (weekday === SUNDAY) return addDays(date, 1);
++  return date;
++}
++
++/**
++ * The payment due date: the closing date plus `termDays` calendar days. With
++ * `{ rollover: "next-business-day" }`, a date on a weekend moves to the following Monday.
++ */
++export function paymentDueDate(
++  closing: string,
++  termDays: number,
++  options: PaymentDueDateOptions = {},
++): string {
+   if (!Number.isInteger(termDays) || termDays < 0) {
+     throw new RangeError(`Term must be a non-negative integer number of days, got ${termDays}`);
+   }
+-  return formatDate(addDays(parseDate(closing), termDays));
++  const due = addDays(parseDate(closing), termDays);
++  return formatDate(options.rollover === "next-business-day" ? nextBusinessDay(due) : due);
+ }
+diff --git a/src/rollover-saturday.test.ts b/src/rollover-saturday.test.ts
+new file mode 100644
+index 0000000..06b1e7d
+--- /dev/null
++++ b/src/rollover-saturday.test.ts
+@@ -0,0 +1,17 @@
++import { expect, it } from "vitest";
++import { paymentDueDate } from "./dueDate.js";
++
++it("rolls a due date that lands on a Saturday over to the following Monday", () => {
++  // 2026-04-30 + 30 days = 2026-05-30, a Saturday; the next business day is Monday 2026-06-01.
++  expect(paymentDueDate("2026-04-30", 30, { rollover: "next-business-day" })).toBe("2026-06-01");
++});
++
++it("does not move a weekday due date when rolling over (contrast for the Saturday rule)", () => {
++  // 2026-05-31 + 30 days = 2026-06-30, a Tuesday, so it stays as it is.
++  expect(paymentDueDate("2026-05-31", 30, { rollover: "next-business-day" })).toBe("2026-06-30");
++});
++
++it("does not move a Saturday due date when no rollover is asked for", () => {
++  // 2026-04-30 + 30 days = 2026-05-30, a Saturday; without the option it is not moved.
++  expect(paymentDueDate("2026-04-30", 30)).toBe("2026-05-30");
++});
+diff --git a/src/rollover-sunday.test.ts b/src/rollover-sunday.test.ts
+new file mode 100644
+index 0000000..a9a9d75
+--- /dev/null
++++ b/src/rollover-sunday.test.ts
+@@ -0,0 +1,12 @@
++import { expect, it } from "vitest";
++import { paymentDueDate } from "./dueDate.js";
++
++it("rolls a due date that lands on a Sunday over to the following Monday", () => {
++  // 2026-07-31 + 30 days = 2026-08-30, a Sunday; the next business day is Monday 2026-08-31.
++  expect(paymentDueDate("2026-07-31", 30, { rollover: "next-business-day" })).toBe("2026-08-31");
++});
++
++it("does not move a weekday due date when rolling over (contrast for the Sunday rule)", () => {
++  // 2026-05-31 + 30 days = 2026-06-30, a Tuesday, so it stays as it is.
++  expect(paymentDueDate("2026-05-31", 30, { rollover: "next-business-day" })).toBe("2026-06-30");
++});
+diff --git a/src/rollover-unchanged.test.ts b/src/rollover-unchanged.test.ts
+new file mode 100644
+index 0000000..e3f2b5f
+--- /dev/null
++++ b/src/rollover-unchanged.test.ts
+@@ -0,0 +1,12 @@
++import { expect, it } from "vitest";
++import { paymentDueDate } from "./dueDate.js";
++
++it("keeps a due date that lands on a weekday when rolling over to the next business day", () => {
++  // 2026-05-31 + 30 days = 2026-06-30, a Tuesday, so it stays as it is.
++  expect(paymentDueDate("2026-05-31", 30, { rollover: "next-business-day" })).toBe("2026-06-30");
++});
++
++it("keeps a due date on a weekend when no rollover is asked for", () => {
++  // 2026-04-30 + 30 days = 2026-05-30, a Saturday; without the option it is not moved.
++  expect(paymentDueDate("2026-04-30", 30)).toBe("2026-05-30");
++});
