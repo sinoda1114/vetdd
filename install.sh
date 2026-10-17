@@ -105,8 +105,13 @@ if [ "$top" = "$here" ]; then
   mkdir "$new" || die "cannot create $new"
   while IFS= read -r -d '' f; do
     r="${f#skills/vetdd/}"
-    [ -e "$here/$f" ] || [ -L "$here/$f" ] || continue
-    mkdir -p "$new/$(dirname -- "$r")" && cp -P -p -- "$here/$f" "$new/$r" || die "cannot copy $f"
+    # A tracked file the working tree lacks (an unstaged deletion, a sparse checkout) would leave a
+    # skill that fails later: stop now.
+    [ -e "$here/$f" ] || [ -L "$here/$f" ] \
+      || die "$f is tracked but missing from $here (restore it with git checkout -- $f); the install in place is kept"
+    # No -p: the copy belongs to whoever runs this (as root, never to the checkout's owner); the
+    # mode, execute bits included, comes from the source through the umask.
+    mkdir -p "$new/$(dirname -- "$r")" && cp -P -- "$here/$f" "$new/$r" || die "cannot copy $f"
   done < "$list"
 else
   cp -R "$src" "$new" || die "cannot copy $src"

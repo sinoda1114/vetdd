@@ -273,3 +273,21 @@ same_as_tracked() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"chmod 600"* ]]
 }
+
+@test "r3: a tracked file missing from the working tree stops it (exit 1) and keeps the install in place" {
+  "$INSTALL" >/dev/null
+  local f="$SRC/references/stall.md"
+  mv "$f" "$BATS_TEST_TMPDIR/stall.md.saved"
+  run "$INSTALL"
+  mv "$BATS_TEST_TMPDIR/stall.md.saved" "$f"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"references/stall.md"* ]]
+  [ -f "$DEST/references/stall.md" ]
+}
+
+@test "r3: installed files belong to the user running it, with the checkout's execute bits" {
+  run "$INSTALL"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -z "$(find "$DEST" ! -user "$(id -u)")" ]
+  [ -x "$DEST/scripts/evidence.sh" ] && [ ! -x "$DEST/SKILL.md" ]
+}
