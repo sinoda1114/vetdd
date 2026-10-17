@@ -13,9 +13,12 @@
 # -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: CODEX_HOME
 # is a second private temporary directory holding only a link to the user's auth.json (from
 # $CODEX_HOME, else ~/.codex; a refreshed token is written back; a keyring login stops with exit 3),
-# also its HOME, and exec runs --ephemeral --ignore-user-config --ignore-rules with web search off and
-# the core environment only, so the user's config (MCP servers, tools, a model provider of their own),
-# AGENTS.md, personal skills, rules, and sessions never reach the judge; refuse the reply if it holds a secret-shaped
+# also its HOME (a node version manager's directories, mise, asdf, Volta, are passed on so an npm codex
+# behind their shim still starts; a codex that cannot start there stops with exit 3 before exec), the
+# login is kept in that file whatever codex's default store, and exec runs --ephemeral
+# --ignore-user-config --ignore-rules with web search off and the core environment only, so the user's
+# config (MCP servers, tools, a model provider of their own), AGENTS.md, personal skills, rules, and
+# sessions never reach the judge; refuse the reply if it holds a secret-shaped
 # string (lib/secret-patterns.sh, every kind: --allow-secrets covers input only); write the reply verbatim to
 # <out>, the judge metadata to <out>.meta.json, and codex's own output to
 # <git root>/.vetdd/judge-logs/<eval-id>-<run-id>.log (the git root of <out>'s directory, else of the
@@ -159,7 +162,23 @@ keep_login() {
 trap 'keep_login; rm -rf "$jhome"' EXIT
 ln -s "$user_home/auth.json" "$jhome/auth.json" || die "cannot link the codex login into $jhome" 1
 export CODEX_HOME="$jhome"
-login="$("$codex" login status 2>&1)" \
+# Every codex call from here runs with the private HOME too. An npm codex starts through node, and a
+# version manager's shim finds its versions under $HOME unless told where: pass on the directories the
+# user's own HOME holds, when the caller has not set them. Then check codex starts there at all, so a
+# shim that still fails stops here with a clear message, not in exec as a judge failure.
+vm_env=()
+if [ -n "${HOME:-}" ]; then
+  for kv in "MISE_DATA_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/mise" "MISE_CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/mise" \
+            "ASDF_DATA_DIR=$HOME/.asdf" "VOLTA_HOME=$HOME/.volta"; do
+    if [ -z "$(printenv "${kv%%=*}")" ] && [ -d "${kv#*=}" ]; then vm_env+=("$kv"); fi
+  done
+fi
+codex_private() { ( export HOME="$jhome" ${vm_env[@]+"${vm_env[@]}"} && exec "$codex" "$@" ); }
+started="$(codex_private --version 2>&1)" \
+  || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); a node version manager other than mise, asdf, or Volta needs its directory set in the environment, or install the standalone codex" 3
+# The login stays in the linked auth.json whatever codex's default store (keyring, auto): the user's
+# config.toml, where they chose the file store, is not read here.
+login="$(codex_private login status -c 'cli_auth_credentials_store="file"' 2>&1)" \
   || die "codex is not logged in ($login); run \`codex login\` first" 3
 
 # Every temporary file lives in one private directory. The judge's working directory is a copy
@@ -274,9 +293,10 @@ invoked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "${log%/*}" || die "cannot create ${log%/*}" 1
 # HOME is the private home too: codex finds personal skills under ~/.agents/skills. The judge's shell
 # gets the core variables only (HOME, PATH, USER, ...): CODEX_HOME and the caller's own stay out.
-# Both -c keys are read, not ignored: codex 0.159.1 refuses an unknown value of either (measured).
-HOME="$jhome" "$codex" exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effort=\"$effort\"" \
+# The -c keys are read, not ignored: codex 0.159.1 refuses an unknown value of each (measured).
+codex_private exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effort=\"$effort\"" \
   --ephemeral --ignore-user-config --ignore-rules -c 'web_search="disabled"' -c 'shell_environment_policy.inherit="core"' \
+  -c 'cli_auth_credentials_store="file"' \
   --skip-git-repo-check --output-schema "$skill/schemas/verdict.schema.json" -o "$work/reply.json" \
   < "$work/prompt.txt" > "$log" 2>&1
 rc=$?

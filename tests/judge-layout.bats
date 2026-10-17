@@ -695,3 +695,18 @@ setup() {
   [ "$status" -eq 2 ] || { echo "$output"; false; }
   [ ! -e "$OUT" ]
 }
+
+@test "review r3: a malformed meta.json stops the build as malformed (exit 1), never as an unnamed oracle file to delete" {
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file t2.sh -- sh t2.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh t2.sh >/dev/null 2>&1
+  printf '{' > .vetdd/evidence/s2/meta.json
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *malformed* ]]
+  [[ "$output" != *--include-new* ]]
+  [ ! -e "$OUT" ]
+  [ -f t2.sh ]
+}

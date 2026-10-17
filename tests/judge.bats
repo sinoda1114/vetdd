@@ -32,6 +32,12 @@ setup() {
 #!/bin/sh
 # Fake codex: `login status` honours FAKE_LOGGED_OUT; `exec` records argv and stdin, then writes FAKE_REPLY to -o.
 # `exec --help` lists the isolation flags unless FAKE_OLD_CODEX is set.
+# FAKE_SHIM=<dir under HOME>: codex behind a node version manager's shim (mise), which finds its
+# versions in MISE_DATA_DIR, else under $HOME, and fails without them on every call.
+if [ -n "${FAKE_SHIM:-}" ] && [ ! -d "${MISE_DATA_DIR:-${HOME:-/nonexistent}/$FAKE_SHIM}" ]; then
+  echo "mise ERROR No version is set for shim: codex" >&2; exit 1
+fi
+[ "$1" != --version ] || { echo "codex-cli 0.0.0-fake"; exit 0; }
 if [ "$1" = exec ] && [ "${2:-}" = --help ]; then
   [ -n "${FAKE_OLD_CODEX:-}" ] || printf '      --ephemeral\n      --ignore-user-config\n      --ignore-rules\n'
   exit 0
@@ -41,6 +47,7 @@ printf '%s %s\n' "$1" "${CODEX_HOME:-unset}" >> "$FAKE_SEEN.homes"
 printf '%s\n' "${HOME:-unset}" > "$FAKE_SEEN.home_env.$1"
 [ -z "${CODEX_HOME:-}" ] || { ls -A "$CODEX_HOME"; [ ! -e "$CODEX_HOME/auth.json" ] && [ ! -L "$CODEX_HOME/auth.json" ] || [ -r "$CODEX_HOME/auth.json" ] || echo unreadable-auth; } > "$FAKE_SEEN.home.$1" 2>/dev/null
 if [ "$1" = login ] && [ "$2" = status ]; then
+  printf '%s\n' "$@" > "$FAKE_SEEN.login_args"
   if [ -n "${FAKE_LOGGED_OUT:-}" ]; then echo "Not logged in"; exit 1; fi
   echo "Logged in using ChatGPT"; exit 0
 fi
@@ -694,4 +701,26 @@ user_codex_home() {
   [ -L "$HOME/.codex/auth.json" ]
   [ "$(cat "$BATS_TEST_TMPDIR/dots/auth.json")" = '{"token":"refreshed"}' ]
   [ -z "$(ls -A "$BATS_TEST_TMPDIR/dots" | grep -v '^auth.json$')" ]
+}
+
+@test "review r1: codex behind a version manager's shim (mise) runs with the private HOME: the manager's data directory is passed on" {
+  mkdir -p "$HOME/.local/share/mise"
+  FAKE_SHIM=.local/share/mise run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -s "$FAKE_ARGS" ]
+}
+
+@test "review r1: a codex that cannot start with the private HOME stops with exit 3 before exec, and says so" {
+  mkdir -p "$HOME/.other-manager"
+  FAKE_SHIM=.other-manager run judge
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" == *"private HOME"* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "review r2: login status and exec both keep the login in the file store, whatever codex's default" {
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'cli_auth_credentials_store="file"' "$FAKE_SEEN.login_args"
+  grep -qx 'cli_auth_credentials_store="file"' "$FAKE_ARGS"
 }
