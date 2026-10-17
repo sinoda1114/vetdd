@@ -148,10 +148,11 @@ is_env() {
 }
 oracles=()
 for s in "${slices[@]}"; do
-  # A malformed record stops here as malformed: read as empty, its oracle files would be reported as
-  # unnamed new files to delete.
+  # A malformed record stops here as malformed, before anything is written: read as empty, its oracle
+  # files would be reported as unnamed new files to delete.
   jq -e 'def files_ok: type == "array" and all(.[]; type == "object" and (.path | type) == "string");
-         type == "object" and (.oracle == null or ((.oracle | type) == "object" and ((.oracle.files // []) | files_ok)))' \
+         type == "object" and (.runs | type) == "array"
+         and (.oracle == null or ((.oracle | type) == "object" and (.oracle.files == null or (.oracle.files | files_ok))))' \
     "$root/.vetdd/evidence/$s/meta.json" >/dev/null 2>&1 \
     || die "could not read the evidence of slice $s (its meta.json is malformed)" 1
   while IFS= read -r -d '' f; do oracles+=("$f"); done \

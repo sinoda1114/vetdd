@@ -33,8 +33,8 @@ setup() {
 # Fake codex: `login status` honours FAKE_LOGGED_OUT; `exec` records argv and stdin, then writes FAKE_REPLY to -o.
 # `exec --help` lists the isolation flags unless FAKE_OLD_CODEX is set.
 # FAKE_SHIM=<dir under HOME>: codex behind a node version manager's shim, which finds its versions
-# under $HOME and fails without them on every call.
-if [ -n "${FAKE_SHIM:-}" ] && [ ! -d "${HOME:-/nonexistent}/$FAKE_SHIM" ]; then
+# in MISE_DATA_DIR, else under $HOME, and fails without them on every call.
+if [ -n "${FAKE_SHIM:-}" ] && [ ! -d "${MISE_DATA_DIR:-${HOME:-/nonexistent}/$FAKE_SHIM}" ]; then
   echo "mise ERROR No version is set for shim: codex" >&2; exit 1
 fi
 [ "$1" != --version ] || { echo "codex-cli 0.0.0-fake"; exit 0; }
@@ -723,4 +723,11 @@ user_codex_home() {
   run judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(cat "$FAKE_SEEN.home_env.help")" = "$(cat "$FAKE_SEEN.home_env.exec")" ]
+}
+
+@test "review r4: a version manager's directory set in the caller's environment does not reach the private HOME either" {
+  mkdir -p "$HOME/.local/share/mise"
+  MISE_DATA_DIR="$HOME/.local/share/mise" FAKE_SHIM=.local/share/mise run judge
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [ ! -e "$FAKE_ARGS" ]
 }

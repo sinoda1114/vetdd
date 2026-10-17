@@ -37,7 +37,8 @@
 # Defaults: --model `models.sh judge`, --effort `models.sh judge-effort`; both are validated by
 # models.sh. VETDD_CODEX_BIN overrides the codex binary (tests use a fake).
 # Exit: 0 verdict written and checked; 1 a local step failed (temporary directory, copy, write);
-#       2 usage error; 3 codex missing or not logged in; 4 the judge's input is not blind;
+#       2 usage error; 3 codex missing, unable to start with the private HOME, without the isolation
+#       flags, or not logged in; 4 the judge's input is not blind;
 #       5 the verdict failed its checks (left at <out>); 6 codex exec failed;
 #       7 check-verdict.sh could not run (the verdict is left at <out>, unchecked);
 #       8 the judge's reply holds a secret-shaped string (not written to <out>; read the judge log).
@@ -158,9 +159,12 @@ export CODEX_HOME="$jhome"
 # Every codex call from here runs with the private HOME too, so codex is checked to start there before
 # exec. A codex that starts through a node version manager's shim (an npm install under mise, asdf,
 # Volta) looks for its versions under $HOME and fails there: it stops here with a clear message, not in
-# exec as a judge failure. Passing the manager's directories on is not done: the shim would then apply
-# the user's own settings, which may set CODEX_HOME or HOME and undo the isolation.
-codex_private() { ( export HOME="$jhome" && exec "$codex" "$@" ); }
+# exec as a judge failure. The manager's directories are not passed on, and those the caller set are
+# taken out: the shim would then apply the user's own settings, which may set CODEX_HOME or HOME and
+# undo the isolation.
+VERSION_MANAGER_VARS="MISE_DATA_DIR MISE_CONFIG_DIR MISE_STATE_DIR ASDF_DIR ASDF_DATA_DIR ASDF_CONFIG_FILE VOLTA_HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME"
+# shellcheck disable=SC2086 # the names split on purpose
+codex_private() { ( unset $VERSION_MANAGER_VARS; export HOME="$jhome" && exec "$codex" "$@" ); }
 started="$(codex_private --version 2>&1)" \
   || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); a codex started through a node version manager's shim needs HOME. Install the standalone codex, or set VETDD_CODEX_BIN to a codex that starts without HOME" 3
 # The flags (codex 0.159 and later) are checked on the codex that runs, so an older one stops here, not in exec.
