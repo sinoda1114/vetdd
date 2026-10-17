@@ -3,6 +3,10 @@ ts	eval_id	run_id	labels	winner	confidence	judge_family	promoted	rubric_sha256
 2026-09-26T17:50:00+09:00	final-judge-dogfood	20260926-1750	c1	none	mid	codex/gpt-6-sol	yes
 2026-10-17T12:28:00+09:00	rubric-calibration	20261017-1228	c1,c2	c1	mid	codex/gpt-6-sol	no	fdfa7e4343faa8338292ce7b64047c96bcd574a113681de9dfe705390e8b9688
 2026-10-17T12:29:00+09:00	final-judge-dogfood	20261017-1229	c1	none	mid	codex/gpt-6-sol	no	63f3dcadaae9ae257a643078720dc716c1ecb5be463a17c2911be1493203a7d4
+2026-10-17T12:44:25+09:00	implement-business-days	20261017-1243-cal	c1,c2,c3	c2	mid	codex/gpt-6-sol	no	3f01d616d4d40e64c4dcd0533001511fa96f74f5cb199728fb9a5be683382ab3
+2026-10-17T12:46:30+09:00	implement-business-days	20261017-1246-cal2	c1,c2,c3	c2	high	codex/gpt-6-sol	no	1607df53dfd5f8983d0af0cfed8b9857e9d3b34047bfce12bc8cc633b0cba5d9
+2026-10-17T14:30:10+09:00	implement-business-days	20261017-1430-cal3	c1,c2,c3	c2	mid	codex/gpt-6-sol	no	31e3300cac371d8b031ecbe766bd71f8670f4f1fb84209214a9cc9adac082770
+2026-10-17T14:31:00+09:00	implement-business-days	20261017-1430-cal3-swap	c1,c2,c3	c1	mid	codex/gpt-6-sol	no	31e3300cac371d8b031ecbe766bd71f8670f4f1fb84209214a9cc9adac082770
 2026-10-17T14:32:00+09:00	implement-business-days	20261017-1432-cal4	c1,c2,c3	c2	high	codex/gpt-6-sol	no	31e3300cac371d8b031ecbe766bd71f8670f4f1fb84209214a9cc9adac082770
 2026-10-17T14:32:30+09:00	implement-business-days	20261017-1432-cal4-swap	c1,c2,c3	c1	mid	codex/gpt-6-sol	no	31e3300cac371d8b031ecbe766bd71f8670f4f1fb84209214a9cc9adac082770
 2026-10-17T15:00:40+09:00	implement-business-days	20261017-1459	c1,c2	tie	mid	codex/gpt-6-sol	no	31e3300cac371d8b031ecbe766bd71f8670f4f1fb84209214a9cc9adac082770
