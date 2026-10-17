@@ -60,26 +60,35 @@ elif [ ! -x "$hook_dst" ]; then
   chmod +x "$hook_dst" && say "made $hook_dst executable" && changes=$((changes + 1))
 fi
 
-# A core.hooksPath (often a global one) makes git ignore the repository's own hooks. Print the two
-# lines that chain this repository's vetdd hook from the hooksPath pre-commit. They run a hook only
-# when it carries the vetdd marker, so in a global hooks directory they never run another hook a
-# repository happens to hold (one unpacked from an archive, say). core.hooksPath is never changed.
-# No --type=path (git 2.18+): a leading ~/ is expanded here.
+# A core.hooksPath (often a global one) makes git ignore the repository's own hooks. Print one line
+# for the hooksPath pre-commit that runs the installed vetdd hook: code of this install, never a file
+# of the repository (a repository unpacked from an archive could carry any hook, whatever it says it
+# is). The hook does nothing in a repository without .vetdd/evidence. core.hooksPath is never changed.
 hooks_path="$(git -C "$root" config --get core.hooksPath 2>/dev/null || true)"
 if [ -n "$hooks_path" ]; then
-  case "$hooks_path" in "~/"*) hooks_path="$HOME/${hooks_path#\~/}" ;; "~") hooks_path="$HOME" ;; esac
+  case "$hooks_path" in
+    "~"*)
+      # git expands ~ and ~user itself (--type=path, git 2.18+); ~/ alone is done here for older git.
+      expanded="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null || true)"
+      if [ -n "$expanded" ] && [ "$expanded" != "$hooks_path" ]; then hooks_path="$expanded"
+      elif [ -n "${HOME:-}" ]; then case "$hooks_path" in "~/"*) hooks_path="$HOME/${hooks_path#\~/}" ;; "~") hooks_path="$HOME" ;; esac
+      fi ;;
+  esac
   case "$hooks_path" in /*) ;; *) hooks_path="$root/$hooks_path" ;; esac
   real_hooks="$(cd "$hooks_path" 2>/dev/null && pwd -P || true)"
-  line1='h="$(git rev-parse --git-common-dir)/hooks/pre-commit"'
-  line2='if [ -x "$h" ] && grep -q "vetdd pre-commit hook" "$h"; then "$h" "$@" || exit $?; fi'
-  has_line() { sed 's/^[[:space:]]*//' "$1" 2>/dev/null | grep -qxF -- "$2"; }
+  # husky (core.hooksPath .husky/_) regenerates .husky/_ and runs .husky/<hook>, executable or not.
+  target="$hooks_path/pre-commit"; need_x=1
+  case "$hooks_path" in */.husky/_) target="${hooks_path%/_}/pre-commit"; need_x=0 ;; esac
+  # Double-quoted for sh, with \ " $ ` escaped inside.
+  chain="\"$(printf '%s' "$scripts_dir/hooks/pre-commit" | sed 's/[\\"$`]/\\&/g')\""' "$@" || exit $?'
+  has_line() { tr -d '\r' < "$1" 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -qxF -- "$2"; }
   if [ -n "$real_hooks" ] && [ "$real_hooks" = "$common/hooks" ]; then
     : # hooksPath is this repository's own hooks directory: git runs the hook as installed.
-  elif [ -x "$hooks_path/pre-commit" ] && has_line "$hooks_path/pre-commit" "$line1" && has_line "$hooks_path/pre-commit" "$line2"; then
-    say "core.hooksPath is '$hooks_path'; its pre-commit appears to chain $hook_dst"
+  elif { [ "$need_x" -eq 0 ] || [ -x "$target" ]; } && has_line "$target" "$chain"; then
+    say "core.hooksPath is '$hooks_path'; $target appears to chain the vetdd hook (check that the line comes before any exit)"
   else
-    say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run it, put these two lines in $hooks_path/pre-commit, before any exit in that file (create it with #!/bin/sh first and make it executable if it does not exist; with husky, whose hooksPath is .husky/_, put them in .husky/pre-commit instead; core.hooksPath was not changed):"
-    printf '    %s\n' "$line1" "$line2"
+    say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run vetdd's check, put this line in $target, before any exit in that file (create it with #!/bin/sh first and make it executable if it does not exist; it runs this install's hook, which does nothing in a repository without .vetdd/evidence; core.hooksPath was not changed):"
+    printf '    %s\n' "$chain"
   fi
 fi
 

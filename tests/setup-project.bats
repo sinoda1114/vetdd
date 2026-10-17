@@ -98,43 +98,45 @@ hook_path() { echo "$REPO/.git/hooks/pre-commit"; }
   [ -d "$BATS_TEST_TMPDIR/wt/.vetdd" ]
 }
 
-# #57: with a global core.hooksPath, git never runs the repository's hook; the warning prints the two
-# lines that chain it, and once they are in the hooksPath pre-commit, the vetdd hook runs on commit.
-@test "#57: a set core.hooksPath prints the lines that chain the repository's hook, and those lines work" {
+# #57: with a global core.hooksPath, git never runs the repository's hook. The warning prints one line
+# that runs the installed vetdd hook (trusted code, never a file of the repository), which does nothing
+# in a repository without .vetdd/evidence.
+chain_line() { printf '%s\n' "$1" | grep -E '^ +"' | sed 's/^ *//'; }
+
+@test "#57: a set core.hooksPath prints the line that runs the installed vetdd hook, and that line works" {
   mkdir -p "$HOME/hooks"
   git config --global core.hooksPath "$HOME/hooks"
   run setup_project
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"$HOME/hooks/pre-commit"* ]]
-  [[ "$output" == *'h="$(git rev-parse --git-common-dir)/hooks/pre-commit"'* ]]
-  [[ "$output" == *'if [ -x "$h" ] && grep -q "vetdd pre-commit hook" "$h"; then "$h" "$@" || exit $?; fi'* ]]
-  # The printed lines, put in the hooksPath pre-commit, run the repository's hook.
-  { printf '#!/bin/sh\n'; printf '%s\n' "$output" | grep -E '^ +(h=|if \[)' | sed 's/^ *//'; } > "$HOME/hooks/pre-commit"
-  chmod +x "$HOME/hooks/pre-commit"
-  printf '#!/bin/sh\n# vetdd pre-commit hook (stand-in)\ntouch "%s/ran"\n' "$BATS_TEST_TMPDIR" > "$(hook_path)"
+  local line; line="$(chain_line "$output")"
+  [[ "$line" == *'/hooks/pre-commit" "$@" || exit $?' ]] || { echo "$output"; false; }
+  [[ "$line" == "\"$SCRIPTS/hooks/pre-commit\""* ]] || [[ "$line" == *"/scripts/hooks/pre-commit"* ]]
+  printf '#!/bin/sh\n%s\n' "$line" > "$HOME/hooks/pre-commit" && chmod +x "$HOME/hooks/pre-commit"
+  mkdir -p .vetdd/evidence
   printf 'x\n' > chained.txt && git add chained.txt
-  git commit -q -m chained
-  [ -e "$BATS_TEST_TMPDIR/ran" ]
+  run git commit -q -m chained
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"vetdd pre-commit"* ]]
 }
 
-@test "#57: a hooksPath pre-commit that already chains the hook is reported as chained, not warned about" {
+@test "#57: a hooksPath pre-commit that already holds the line is reported as chained, not warned about" {
   mkdir -p "$HOME/hooks"
   git config --global core.hooksPath "$HOME/hooks"
-  printf '#!/bin/sh\nh="$(git rev-parse --git-common-dir)/hooks/pre-commit"\nif [ -x "$h" ] && grep -q "vetdd pre-commit hook" "$h"; then "$h" "$@" || exit $?; fi\n' > "$HOME/hooks/pre-commit"
-  chmod +x "$HOME/hooks/pre-commit"
+  run setup_project
+  printf '#!/bin/sh\n%s\n' "$(chain_line "$output")" > "$HOME/hooks/pre-commit" && chmod +x "$HOME/hooks/pre-commit"
   run setup_project
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *WARNING* ]]
   [[ "$output" == *"appears to chain"* ]]
 }
 
-@test "#57 r1: the chained lines run only a vetdd hook, never another hook a repository carries" {
+@test "#57 r2: the chained line never runs a hook the repository carries, even one that claims to be vetdd's" {
   mkdir -p "$HOME/hooks"
   git config --global core.hooksPath "$HOME/hooks"
   run setup_project
-  { printf '#!/bin/sh\n'; printf '%s\n' "$output" | grep -E '^ +(h=|if \[)' | sed 's/^ *//'; } > "$HOME/hooks/pre-commit"
-  chmod +x "$HOME/hooks/pre-commit"
-  printf '#!/bin/sh\ntouch "%s/foreign"\n' "$BATS_TEST_TMPDIR" > "$(hook_path)"
+  printf '#!/bin/sh\n%s\n' "$(chain_line "$output")" > "$HOME/hooks/pre-commit" && chmod +x "$HOME/hooks/pre-commit"
+  printf '#!/bin/sh\n# vetdd pre-commit hook\ntouch "%s/foreign"\n' "$BATS_TEST_TMPDIR" > "$(hook_path)"
   printf 'y\n' > other.txt && git add other.txt
   git commit -q -m other
   [ ! -e "$BATS_TEST_TMPDIR/foreign" ]
@@ -145,27 +147,47 @@ hook_path() { echo "$REPO/.git/hooks/pre-commit"; }
   run setup_project
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *WARNING* ]]
-  [[ "$output" != *'h="$(git rev-parse'* ]]
+  [ -z "$(chain_line "$output")" ]
   git config core.hooksPath "$REPO/.git/hooks"
   run setup_project
   [[ "$output" != *WARNING* ]]
 }
 
-@test "#57 r1: a hooksPath written with ~ is expanded" {
+@test "#57 r1: a hooksPath written with ~ is expanded, and an unset HOME does not stop the setup" {
   mkdir -p "$HOME/hooks"
   git config --global core.hooksPath '~/hooks'
   run setup_project
   [[ "$output" == *"$HOME/hooks/pre-commit"* ]]
+  git config core.hooksPath '~/hooks'
+  HOME= run "$SCRIPTS/setup-project.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
-@test "#57 r1: only the first chaining line (or a commented one) is not taken as chained" {
+@test "#57 r1: a commented line is not taken as chained" {
   mkdir -p "$HOME/hooks"
   git config --global core.hooksPath "$HOME/hooks"
-  printf '#!/bin/sh\nh="$(git rev-parse --git-common-dir)/hooks/pre-commit"\n' > "$HOME/hooks/pre-commit"
-  chmod +x "$HOME/hooks/pre-commit"
+  run setup_project
+  printf '#!/bin/sh\n# %s\n' "$(chain_line "$output")" > "$HOME/hooks/pre-commit" && chmod +x "$HOME/hooks/pre-commit"
   run setup_project
   [[ "$output" == *WARNING* ]]
-  printf '#!/bin/sh\n# h="$(git rev-parse --git-common-dir)/hooks/pre-commit"\n# if [ -x "$h" ] && grep -q "vetdd pre-commit hook" "$h"; then "$h" "$@" || exit $?; fi\n' > "$HOME/hooks/pre-commit"
+}
+
+@test "#57 r2: with husky (core.hooksPath .husky/_), the line in .husky/pre-commit counts as chained, executable or not" {
+  mkdir -p .husky/_
+  git config core.hooksPath .husky/_
   run setup_project
-  [[ "$output" == *WARNING* ]]
+  [[ "$output" == *".husky/pre-commit"* ]]
+  printf '%s\n' "$(chain_line "$output")" > .husky/pre-commit
+  run setup_project
+  [[ "$output" != *WARNING* ]] || { echo "$output"; false; }
+  [[ "$output" == *"appears to chain"* ]]
+}
+
+@test "#57 r2: a chained line with a CRLF ending or trailing blanks still counts" {
+  mkdir -p "$HOME/hooks"
+  git config --global core.hooksPath "$HOME/hooks"
+  run setup_project
+  printf '#!/bin/sh\r\n%s  \r\n' "$(chain_line "$output")" > "$HOME/hooks/pre-commit" && chmod +x "$HOME/hooks/pre-commit"
+  run setup_project
+  [[ "$output" == *"appears to chain"* ]]
 }
