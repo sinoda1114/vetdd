@@ -738,3 +738,135 @@ setup() {
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+@test "#63: a new oracle file that .gitignore matches is in the diff, not only in artifact/tests" {
+  mkdir -p ignored && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > ignored/t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file ignored/t2.sh -- sh ignored/t2.sh
+  printf '42\n' > value.txt
+  ev s2 after -- sh ignored/t2.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  cmp -s "$OUT/c1/artifact/tests/ignored/t2.sh" ignored/t2.sh
+  grep -q '^+++ b/ignored/t2.sh$' "$OUT/c1/artifact/diff.patch" || { cat "$OUT/c1/artifact/diff.patch"; false; }
+  [[ "$output" == *"new file in the diff: ignored/t2.sh"* ]]
+  # Another ignored file stays out.
+  printf 'x\n' > ignored/other.txt
+  run JL --out "$BATS_TEST_TMPDIR/judge2/candidates" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  ! grep -q 'ignored/other.txt' "$BATS_TEST_TMPDIR/judge2/candidates/c1/artifact/diff.patch" || false
+}
+
+@test "#63: an ignored oracle file that HEAD already tracks is not listed as new" {
+  mkdir -p ignored && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > ignored/t3.sh
+  git add -f ignored/t3.sh && git commit -q -m t3
+  printf '0\n' > value.txt
+  ev s3 before --seam unit --oracle-version v1 --oracle-file ignored/t3.sh -- sh ignored/t3.sh
+  printf '42\n' > value.txt
+  ev s3 after -- sh ignored/t3.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s3
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"new file in the diff: ignored/t3.sh"* ]] || { echo "$output"; false; }
+}
+
+@test "#63 r1: an ignored .env recorded as an oracle file is named once in the refusal" {
+  printf '.env\n' >> .gitignore && git add .gitignore && git commit -qm ignore-env
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > .env
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file .env -- sh .env >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh .env >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ "$(printf '%s\n' "$output" | grep 'never goes to the judge:' | sed 's/.*judge://')" = " .env" ] || { echo "$output"; false; }
+}
+
+@test "#63 r1: a new oracle file that ls-files cannot list (behind a symbolic link) stops the build" {
+  mkdir -p ignored && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > ignored/t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file ignored/t2.sh -- sh ignored/t2.sh
+  printf '42\n' > value.txt
+  ev s2 after -- sh ignored/t2.sh
+  # The record now names the file through a link: git lists nothing beyond a symbolic link.
+  ln -s ignored lnk
+  local m=.vetdd/evidence/s2/meta.json
+  jq '(.. | objects | select(has("path")) | .path) |= sub("^ignored/"; "lnk/")' "$m" > "$m.new" && mv "$m.new" "$m"
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new lnk s2
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"lnk/t2.sh"*"git does not list it"* ]] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+}
+
+# A record edited by hand (tamper): the oracle path is rewritten after the runs.
+ignored_oracle_slice() {
+  mkdir -p ignored && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > ignored/t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file ignored/t2.sh -- sh ignored/t2.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh ignored/t2.sh >/dev/null 2>&1
+}
+rewrite_oracle_path() {
+  local m=.vetdd/evidence/s2/meta.json
+  jq --arg p "$1" '(.. | objects | select(has("path")) | .path) |= $p' "$m" > "$m.new" && mv "$m.new" "$m"
+}
+
+@test "#63 r2: an oracle path that is a directory lists none of the ignored files under it" {
+  ignored_oracle_slice
+  printf 'x\n' > ignored/other.txt
+  rewrite_oracle_path ignored
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" != *"--include-new"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"git does not list it"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"ignored/other.txt"* ]] || { echo "$output"; false; }
+}
+
+@test "#63 r2: an oracle path outside the repository is refused as outside, not as a file git does not list" {
+  ignored_oracle_slice
+  cp ignored/t2.sh "$BATS_TEST_TMPDIR/outside.sh"
+  rewrite_oracle_path ../outside.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"outside the repository"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"git does not list it"* ]] || { echo "$output"; false; }
+}
+
+@test "#63 r2: an ignored .env oracle recorded as cfg//.env is still named once" {
+  printf '.env\n' >> .gitignore && git add .gitignore && git commit -qm ignore-env
+  mkdir -p cfg && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > cfg/.env
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file cfg/.env -- sh cfg/.env >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh cfg/.env >/dev/null 2>&1
+  rewrite_oracle_path cfg//.env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ "$(printf '%s\n' "$output" | grep 'never goes to the judge:' | sed 's/.*judge://')" = " cfg/.env" ] || { echo "$output"; false; }
+}
+
+@test "#63 r3: an oracle file tracked inside a submodule (gitlink) still builds" {
+  mkdir -p nested && git -C nested init -q
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > nested/t.sh
+  git -C nested add t.sh && git -C nested -c user.name=t -c user.email=t@t commit -qm t
+  git add nested 2>/dev/null && git commit -qm gitlink
+  printf '0\n' > value.txt
+  run ev s2 before --seam unit --oracle-version v1 --oracle-file nested/t.sh -- sh nested/t.sh
+  [ "$status" -eq 0 ] || skip "evidence.sh refuses an oracle file in a submodule: $output"
+  printf '42\n' > value.txt
+  ev s2 after -- sh nested/t.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#63 r3: on a case-insensitive checkout, a tracked oracle file spelled in another case on disk still builds" {
+  mkdir -p Tests && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > Tests/a.sh
+  git add Tests/a.sh && git commit -qm upper
+  [ -e tests/a.sh ] || skip "the file system is case-sensitive"
+  mv Tests tmpdir-case && mv tmpdir-case tests
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file tests/a.sh -- sh tests/a.sh
+  printf '42\n' > value.txt
+  ev s2 after -- sh tests/a.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

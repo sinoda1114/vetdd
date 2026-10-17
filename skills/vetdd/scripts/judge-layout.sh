@@ -6,7 +6,8 @@
 #                        [--before-close] [--lane] <slice-id>...
 #   --include-new: a new file (not in HEAD, not ignored, outside .vetdd/) that is not staged with content
 #   (untracked, or only intent-to-add with git add -N) leaves the machine in the diff only when named
-#   here, by its path from the repository root, or when it is one of the slices' oracle files; a file
+#   here, by its path from the repository root, or when it is one of the slices' oracle files (those go
+#   even when .gitignore matches them, since they are copied to artifact/tests anyway); a file
 #   staged with git add goes as it is. Any other stops the build (exit 2, nothing written) with the
 #   flags to name each one (the first 20), so a scratch file never leaves unseen. A .env file (any case;
 #   .env.example, .env.sample, and .env.template excepted) stops it wherever it would go: a new file of
@@ -133,7 +134,8 @@ out="$abs"
 
 # The diff, with new files: a temporary index (in a private temporary directory) holds HEAD plus
 # intent-to-add entries for every new file: those not in HEAD, listed against that index, and files the
-# repository's own index added (git add -f of an ignored file included). The same list decides what may
+# repository's own index added (git add -f of an ignored file included), and the slices' oracle files
+# not in HEAD, ignored or not. The same list decides what may
 # go: a file staged with content, a slice's oracle file, or one named with --include-new; any other
 # stops the build before anything is written. Each name given must be one of the new files, so a
 # mistyped path never passes for an allowed one.
@@ -180,6 +182,11 @@ else
   GIT_INDEX_FILE="$idx" git -C "$root" read-tree --empty || die "could not make a temporary index" 1
 fi
 newfiles=(); unnamed=(); envs=()
+# The list: the untracked files, the staged ones, and each oracle file of a slice not in HEAD, even
+# when .gitignore matches it (#63), since the judge reads the tests in the diff; one ls-files call
+# per oracle path, so a bad one drops only itself; only a regular file, so a directory never brings
+# the ignored files under it. No comment inside the list: bash 3.2 misreads an
+# apostrophe in a comment within a process substitution.
 while IFS= read -r -d '' f; do
   case "$f" in .vetdd|.vetdd/*) continue ;; esac
   # A file staged and then removed is not in the delivered tree.
@@ -190,12 +197,34 @@ while IFS= read -r -d '' f; do
   for o in ${staged[@]+"${staged[@]}"} ${oracles[@]+"${oracles[@]}"} ${news[@]+"${news[@]}"}; do [ "$o" = "$f" ] && ok=1; done
   [ "$ok" -eq 1 ] || unnamed+=("$f")
 done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
-           [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"; } | LC_ALL=C sort -zu)
-# An oracle file is copied whole, ignored or not: a .env among them is refused here too.
-for o in ${oracles[@]+"${oracles[@]}"}; do ! is_env "$o" || envs+=("$o"); done
+           [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"
+           for o in ${oracles[@]+"${oracles[@]}"}; do
+             [ -f "$root/$o" ] && [ ! -L "$root/$o" ] || continue
+             GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others -z -- "$o" 2>/dev/null
+           done; } | LC_ALL=C sort -zu)
+# An oracle file is copied whole, ignored or not: a .env among them is refused here too (once, when
+# the list above already took it).
+for o in ${oracles[@]+"${oracles[@]}"}; do
+  is_env "$o" || continue
+  # Compared as git spells it: a record may write a//.env for a/.env.
+  dup=0; for e in ${envs[@]+"${envs[@]}"}; do [ "$e" = "$(printf '%s' "$o" | sed 's#//*#/#g')" ] && dup=1; done
+  [ "$dup" -eq 1 ] || envs+=("$o")
+done
 [ ${#envs[@]} -eq 0 ] \
   || die "$(printf 'a .env file may hold secrets and never goes to the judge:%s\nunstage it (git rm --cached <path>), or move it out of the repository or into .gitignore' \
     "$(printf ' %s' "${envs[@]}")" | vetdd_printable)"
+# A new oracle file git did not list (behind a symbolic link, say) would be copied to artifact/tests
+# but be missing from the diff, as in #63: stop instead. A path that is not a regular file of the
+# repository is left to the copy below, which refuses it as missing, a link, or outside.
+for o in ${oracles[@]+"${oracles[@]}"}; do
+  case "$o" in .vetdd|.vetdd/*) continue ;; esac
+  vetdd_inside_repo "$root" "$o" && [ -f "$root/$o" ] || continue
+  # A file of another repository (a submodule, a nested one) was never in this diff: copied only, as before.
+  [ "$(git -C "$(dirname -- "$root/$o")" rev-parse --show-toplevel 2>/dev/null)" = "$root" ] || continue
+  GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" ls-files --error-unmatch -- "$o" >/dev/null 2>&1 && continue
+  ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$o" ] && ok=1; done
+  [ "$ok" -eq 1 ] || die "$(printf 'oracle file %s is new, but git does not list it as a file of this repository (it is behind a symbolic link, say), so the diff would leave it out' "$o" | vetdd_printable)"
+done
 for n in ${news[@]+"${news[@]}"}; do
   ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$n" ] && ok=1; done
   [ "$ok" -eq 1 ] || die "--include-new $(printf '%s' "$n" | vetdd_printable): not a new file of this repository (give its path from the repository root, as git status --untracked-files=all shows it)"
@@ -212,7 +241,7 @@ if [ ${#unnamed[@]} -gt 0 ]; then
     "$flags" "$more" | vetdd_printable)"
 fi
 for f in ${newfiles[@]+"${newfiles[@]}"}; do
-  # -f: a file the repository's index added with git add -f is ignored; the untracked list has no ignored file.
+  # -f: a file the repository's index added with git add -f, or a slice's oracle file (#63), may be ignored.
   GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" add -f --intent-to-add -- "$f" \
     || die "could not add $(printf '%s' "$f" | vetdd_printable) to the temporary index" 1
   # Every new file leaves the machine in the diff: name each one, so the caller can see what goes out.
