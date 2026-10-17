@@ -19,4 +19,4 @@ Collection friction: package-lock.json holds "baseline" (baseline-browser-mappin
 
 ## Pruned before commit
 
-The sanitized copies kept in the repository leave out each candidate's artifact/package-lock.json (byte for byte the fixture's, which no candidate changed; the judge saw it with "baseline" redacted), and the candidates of the superseded calibration runs 1243-cal, 1246-cal2, 1430-cal3, and 1430-cal3-swap (the same three artifacts as 1432-cal4, but for one line of the known-good reply); their judge.json, rubric.md, and variants.json stay.
+The sanitized copies kept in the repository leave out each candidate's artifact/package-lock.json (the fixture's own, which no candidate changed, with "baseline" redacted as the judge saw it), and the candidates of the superseded calibration runs 1243-cal, 1246-cal2, 1430-cal3, and 1430-cal3-swap (the same three artifacts as 1432-cal4, but for one line of the known-good reply); their judge.json, rubric.md, and variants.json stay.
