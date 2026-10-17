@@ -97,3 +97,124 @@ hook_path() { echo "$REPO/.git/hooks/pre-commit"; }
   [ -x "$(hook_path)" ]
   [ -d "$BATS_TEST_TMPDIR/wt/.vetdd" ]
 }
+
+# #57: with a core.hooksPath, git never runs the repository's hook. The warning prints one line for the
+# hooksPath pre-commit that runs the installed vetdd hook (trusted code, never a file of the repository),
+# and skips with a warning when that install is gone, so a removed vetdd blocks no commit.
+chain_line() { printf '%s\n' "$1" | grep -E '^ +vetdd_hook=' | sed 's/^ *//'; }
+
+# Puts the printed line into $HOME/hooks/pre-commit (core.hooksPath is set globally to $HOME/hooks).
+# Fails when the output holds no line, so a test never goes on with an empty hook.
+chain_into_global_hooks() {
+  local line; line="$(chain_line "$1")"
+  [ -n "$line" ] || { echo "no line in: $1"; return 1; }
+  printf '#!/bin/sh\n%s\n' "$line" > "$HOME/hooks/pre-commit" && chmod +x "$HOME/hooks/pre-commit"
+}
+
+global_hooks_path() { mkdir -p "$HOME/hooks" && git config --global core.hooksPath "$HOME/hooks"; }
+
+@test "#57: a set core.hooksPath prints the line that runs the installed vetdd hook, and that line works" {
+  global_hooks_path
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"WARNING"*"$HOME/hooks/pre-commit"* ]] || { echo "$output"; false; }
+  [[ "$(chain_line "$output")" == *"/hooks/pre-commit"* ]] || { echo "$output"; false; }
+  chain_into_global_hooks "$output"
+  mkdir -p .vetdd/evidence
+  printf 'x\n' > chained.txt && git add chained.txt
+  run git commit -q -m chained
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"vetdd pre-commit"* ]]
+}
+
+@test "#57: through the line, a vetdd check that fails blocks the commit" {
+  global_hooks_path
+  run setup_project
+  chain_into_global_hooks "$output"
+  mkdir -p .vetdd/evidence/-bad && printf '{}\n' > .vetdd/evidence/-bad/meta.json
+  local head; head="$(git rev-parse HEAD)"
+  printf 'x\n' > blocked.txt && git add blocked.txt
+  run git commit -q -m blocked
+  [ "$status" -ne 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"commit blocked"* ]] || { echo "$output"; false; }
+  [ "$(git rev-parse HEAD)" = "$head" ]
+}
+
+@test "#57: when the install the line points at is gone, the commit goes through with a warning" {
+  global_hooks_path
+  cp -R "$SCRIPTS" "$BATS_TEST_TMPDIR/gone"
+  run "$BATS_TEST_TMPDIR/gone/setup-project.sh"
+  [[ "$(chain_line "$output")" == *"$BATS_TEST_TMPDIR/gone/hooks/pre-commit"* ]] || { echo "$output"; false; }
+  chain_into_global_hooks "$output"
+  rm -rf "$BATS_TEST_TMPDIR/gone"
+  mkdir -p .vetdd/evidence/-bad && printf '{}\n' > .vetdd/evidence/-bad/meta.json
+  printf 'x\n' > through.txt && git add through.txt
+  run git commit -q -m through
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"not found; skipped"* ]] || { echo "$output"; false; }
+}
+
+@test "#57: a hooksPath pre-commit that already mentions the installed hook gets no warning" {
+  global_hooks_path
+  run setup_project
+  chain_into_global_hooks "$output"
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *WARNING* ]] || { echo "$output"; false; }
+  [ -z "$(chain_line "$output")" ]
+}
+
+@test "#57: the line never runs a hook the repository carries, even one that claims to be vetdd's" {
+  global_hooks_path
+  run setup_project
+  chain_into_global_hooks "$output"
+  printf '#!/bin/sh\n# vetdd pre-commit hook\ntouch "%s/foreign"\n' "$BATS_TEST_TMPDIR" > "$(hook_path)"
+  printf 'y\n' > other.txt && git add other.txt
+  git commit -q -m other
+  [ ! -e "$BATS_TEST_TMPDIR/foreign" ]
+}
+
+@test "#57: a hooksPath that is this repository's own hooks directory gets no warning" {
+  git config core.hooksPath .git/hooks
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *WARNING* ]]
+  git config core.hooksPath "$REPO/.git/hooks"
+  run setup_project
+  [[ "$output" != *WARNING* ]]
+}
+
+@test "#57: a hooksPath written with ~ is expanded by git" {
+  mkdir -p "$HOME/hooks"
+  git config --global core.hooksPath '~/hooks'
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"$HOME/hooks/pre-commit"* ]] || { echo "$output"; false; }
+}
+
+@test "#57: with husky (core.hooksPath .husky/_), the warning prints no line for the shared .husky/pre-commit" {
+  mkdir -p .husky/_
+  git config core.hooksPath .husky/_
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*husky* ]] || { echo "$output"; false; }
+  [ -z "$(chain_line "$output")" ]
+  [[ "$output" != *'"$@"'* ]] || { echo "$output"; false; }
+  [ ! -e .husky/pre-commit ]
+}
+
+@test "#57: the line holds an install path with a space, a quote and a \$ intact" {
+  global_hooks_path
+  local odd="$BATS_TEST_TMPDIR/a b\"c\$d"
+  cp -R "$SCRIPTS" "$odd"
+  run "$odd/setup-project.sh"
+  chain_into_global_hooks "$output"
+  # The file holds the escaped path, and the second run finds it.
+  run "$odd/setup-project.sh"
+  [[ "$output" != *WARNING* ]] || { echo "$output"; false; }
+  mkdir -p .vetdd/evidence
+  printf 'x\n' > odd.txt && git add odd.txt
+  run git commit -q -m odd
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"vetdd pre-commit"* ]] || { echo "$output"; false; }
+}

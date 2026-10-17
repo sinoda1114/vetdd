@@ -19,6 +19,8 @@ Run it from <workspace path> with:
     --oracle-version <n> --oracle-file <path> -- <command>
 <record instructions>
 Never use git checkout, git restore, or git stash on files that hold uncommitted work.
+The Bash tool may run zsh: write each command's arguments out in full, never through a variable
+holding several words.
 
 ## Scope
 Files you may change: <list or glob>. Files you must not touch: <list>.
