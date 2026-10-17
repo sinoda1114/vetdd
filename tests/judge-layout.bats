@@ -738,3 +738,33 @@ setup() {
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+@test "#63: a new oracle file that .gitignore matches is in the diff, not only in artifact/tests" {
+  mkdir -p ignored && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > ignored/t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file ignored/t2.sh -- sh ignored/t2.sh
+  printf '42\n' > value.txt
+  ev s2 after -- sh ignored/t2.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  cmp -s "$OUT/c1/artifact/tests/ignored/t2.sh" ignored/t2.sh
+  grep -q '^+++ b/ignored/t2.sh$' "$OUT/c1/artifact/diff.patch" || { cat "$OUT/c1/artifact/diff.patch"; false; }
+  [[ "$output" == *"new file in the diff: ignored/t2.sh"* ]]
+  # Another ignored file stays out.
+  printf 'x\n' > ignored/other.txt
+  run JL --out "$BATS_TEST_TMPDIR/judge2/candidates" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  ! grep -q 'ignored/other.txt' "$BATS_TEST_TMPDIR/judge2/candidates/c1/artifact/diff.patch" || false
+}
+
+@test "#63: an ignored oracle file that HEAD already tracks is not listed as new" {
+  mkdir -p ignored && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > ignored/t3.sh
+  git add -f ignored/t3.sh && git commit -q -m t3
+  printf '0\n' > value.txt
+  ev s3 before --seam unit --oracle-version v1 --oracle-file ignored/t3.sh -- sh ignored/t3.sh
+  printf '42\n' > value.txt
+  ev s3 after -- sh ignored/t3.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s3
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"new file in the diff: ignored/t3.sh"* ]] || { echo "$output"; false; }
+}

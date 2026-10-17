@@ -180,6 +180,10 @@ else
   GIT_INDEX_FILE="$idx" git -C "$root" read-tree --empty || die "could not make a temporary index" 1
 fi
 newfiles=(); unnamed=(); envs=()
+# The list: the untracked files, the staged ones, and each oracle file of a slice not in HEAD, even
+# when .gitignore matches it (#63), since the judge reads the tests in the diff; one ls-files call
+# per oracle path, so a bad one drops only itself. No comment inside the list: bash 3.2 misreads an
+# apostrophe in a comment within a process substitution.
 while IFS= read -r -d '' f; do
   case "$f" in .vetdd|.vetdd/*) continue ;; esac
   # A file staged and then removed is not in the delivered tree.
@@ -190,7 +194,10 @@ while IFS= read -r -d '' f; do
   for o in ${staged[@]+"${staged[@]}"} ${oracles[@]+"${oracles[@]}"} ${news[@]+"${news[@]}"}; do [ "$o" = "$f" ] && ok=1; done
   [ "$ok" -eq 1 ] || unnamed+=("$f")
 done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
-           [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"; } | LC_ALL=C sort -zu)
+           [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"
+           for o in ${oracles[@]+"${oracles[@]}"}; do
+             GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others -z -- "$o" 2>/dev/null
+           done; } | LC_ALL=C sort -zu)
 # An oracle file is copied whole, ignored or not: a .env among them is refused here too.
 for o in ${oracles[@]+"${oracles[@]}"}; do ! is_env "$o" || envs+=("$o"); done
 [ ${#envs[@]} -eq 0 ] \
