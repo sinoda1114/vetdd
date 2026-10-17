@@ -748,10 +748,10 @@ user_codex_home() {
 }
 
 @test "pr52: VETDD_JUDGE_KEEP_ENV keeps a named variable, never HOME or CODEX_HOME, and refuses a name that is not one" {
-  export VETDD_TEST_PROXY=p VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV VETDD_TEST_PROXY"
+  export TEST_CORP_PROXY=p VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV TEST_CORP_PROXY"
   run judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  grep -qx 'VETDD_TEST_PROXY=p' "$FAKE_SEEN.env.exec"
+  grep -qx 'TEST_CORP_PROXY=p' "$FAKE_SEEN.env.exec"
   for bad in CODEX_HOME HOME 'a-b' CODEX_X OPENAI_BASE_URL XDG_CONFIG_HOME MISE_GLOBAL_CONFIG_FILE NODE_OPTIONS DYLD_INSERT_LIBRARIES LD_PRELOAD BASH_ENV \
              GIT_CONFIG_GLOBAL ZDOTDIR SHELLOPTS BASHOPTS PS4 PYTHONPATH PERL5LIB RUBYOPT; do
     VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV $bad" run judge
@@ -803,12 +803,12 @@ WRAP
 }
 
 @test "pr52 r7: codex's CA bundle variable is kept, and VETDD_JUDGE_KEEP_ENV may list names on separate lines" {
-  export CODEX_CA_CERTIFICATE=/etc/corp-ca.pem VETDD_TEST_PROXY=p
+  export CODEX_CA_CERTIFICATE=/etc/corp-ca.pem TEST_CORP_PROXY=p
   VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV
-VETDD_TEST_PROXY" run judge
+TEST_CORP_PROXY" run judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -qx 'CODEX_CA_CERTIFICATE=/etc/corp-ca.pem' "$FAKE_SEEN.env.exec"
-  grep -qx 'VETDD_TEST_PROXY=p' "$FAKE_SEEN.env.exec"
+  grep -qx 'TEST_CORP_PROXY=p' "$FAKE_SEEN.env.exec"
 }
 
 @test "pr52 r7: the caller exporting judge.sh's own names (codex, jhome, keep_names) changes nothing" {
@@ -843,6 +843,8 @@ VETDD_TEST_PROXY" run judge
   [ "$status" -eq 2 ] || { echo "$output"; false; }
   [[ "$output" != *$'\033'* ]]
   for bad in RUST_LOG SSLKEYLOGFILE SSL_KEYLOGFILE RUBYLIB PROMPT_COMMAND PERLLIB JAVA_TOOL_OPTIONS _JAVA_OPTIONS GCONV_PATH \
+             GLIBC_TUNABLES LOCPATH MALLOC_CONF RES_OPTIONS HOSTALIASES LOCALDOMAIN OTEL_EXPORTER_OTLP_ENDPOINT \
+             PROTO_HOME PKGX_DIR VFOX_HOME SDKMAN_DIR RTX_DATA_DIR JDK_JAVA_OPTIONS \
              PYENV_VERSION RBENV_VERSION NODENV_VERSION FNM_DIR N_PREFIX COREPACK_HOME BUN_INSTALL npm_config_prefix NPM_CONFIG_PREFIX; do
     VETDD_JUDGE_KEEP_ENV="$bad" run judge
     [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
@@ -873,4 +875,13 @@ VETDD_TEST_PROXY" run judge
     --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
   [ "$status" -eq 3 ] || { echo "$output"; false; }
   [[ "$output" != *$'\033'* ]]
+}
+
+@test "pr52 r9: a kept name must be an upper-case one outside VETDD_*, so it never meets a variable judge.sh sets" {
+  for bad in log model out n VETDD_MODEL_JUDGE VETDD_CODEX_BIN; do
+    export "$bad=caller"
+    VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV $bad" run judge
+    [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
+    unset "$bad"
+  done
 }

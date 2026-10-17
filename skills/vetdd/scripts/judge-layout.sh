@@ -266,6 +266,8 @@ printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
 SEND='
 def green: .kind == "after" or .kind == "integrated";
 def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
+# The check before anything is written (see oracle_ok there) already refuses a run whose oracle is
+# not null or an object; usable keeps also refusing one with no oracle, so the two stay in step.
 def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array";
 [.runs[] | select(.accepted != false)] as $all
 | [$all[] | select(usable)] as $acc

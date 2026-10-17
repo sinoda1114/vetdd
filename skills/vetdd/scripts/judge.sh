@@ -130,16 +130,21 @@ codex="${VETDD_CODEX_BIN:-codex}"
 # without pathname expansion (on spaces or new lines) and checked here, before anything about codex itself.
 read -r -d '' -a keep_extra <<< "${VETDD_JUDGE_KEEP_ENV:-}" || true
 for n in ${keep_extra[@]+"${keep_extra[@]}"}; do
-  # The shape first, so every name a message below shows is a plain one.
+  # The shape first, so every name a message below shows is a plain one. Upper case only, and not
+  # VETDD_*: judge.sh's own variables are lower case or VETDD_*, and a kept name that met one would
+  # hand codex judge.sh's value, not the caller's.
   case "$n" in
-    [0-9]*|*[!A-Za-z0-9_]*) die "VETDD_JUDGE_KEEP_ENV holds $(printf '%s' "$n" | vetdd_printable), which is not a variable name" 2 ;;
-    HOME|CODEX_HOME) die "VETDD_JUDGE_KEEP_ENV cannot keep $n: the judge's is always the private one" 2 ;;
+    [!A-Z]*|*[!A-Z0-9_]*) die "VETDD_JUDGE_KEEP_ENV holds $(printf '%s' "$n" | vetdd_printable), which is not an upper-case variable name" 2 ;;
+    HOME|CODEX_HOME|VETDD_*) die "VETDD_JUDGE_KEEP_ENV cannot keep $n: judge.sh sets it itself" 2 ;;
     # Names that would undo the isolation: codex's own settings, a model provider, a version manager's
-    # or git's settings, a shell's start-up, code loaded into a process, or secrets written to logs.
+    # or git's settings, a shell's start-up, code loaded into a process or a loader's or libc's
+    # settings, name resolution, telemetry, or secrets written to logs. A deny list cannot be
+    # complete: keep only what codex needs (a proxy or a CA bundle).
     CODEX_*|OPENAI_*|XDG_*|MISE_*|ASDF_*|VOLTA_*|NVM_*|NODE_*|PYENV_*|RBENV_*|NODENV_*|FNM_*|N_PREFIX|\
-    COREPACK_*|BUN_*|npm_config_*|NPM_CONFIG_*|LD_*|DYLD_*|GCONV_PATH|GIT_*|PYTHON*|PERL5*|PERLLIB|RUBY*|\
-    JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|RUST_LOG|\
-    SSLKEYLOGFILE|SSL_KEYLOGFILE)
+    PROTO_*|PKGX_*|VFOX_*|SDKMAN_*|RTX_*|JDK_JAVA_OPTIONS|\
+    COREPACK_*|BUN_*|NPM_CONFIG_*|LD_*|DYLD_*|GCONV_PATH|GLIBC_TUNABLES|LOCPATH|MALLOC_*|GIT_*|PYTHON*|\
+    PERL5*|PERLLIB|RUBY*|JAVA_TOOL_OPTIONS|BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|\
+    RES_OPTIONS|HOSTALIASES|LOCALDOMAIN|OTEL_*|RUST_LOG|SSLKEYLOGFILE|SSL_KEYLOGFILE)
       die "VETDD_JUDGE_KEEP_ENV cannot keep $n: it would undo the judge's isolation from your setup" 2 ;;
   esac
 done
@@ -215,7 +220,7 @@ codex_env_left() {
   done < <(env -0)
   [ "$seen_home" = 1 ]
 }
-left="$(codex_env_left)" || die "cannot read what codex's environment would hold (env -0 listed no HOME)" 1
+left="$(codex_env_left)" || die "cannot read what codex's environment would hold: env -0 listed no HOME (an env without -0?)" 1
 [ -z "$left" ] || die "judge.sh cannot take these out of codex's environment:$(printf '%s' "$left" | vetdd_printable); unset them first" 3
 codex_private() ( clear_codex_env && exec "$codex" "$@" )
 started="$(codex_private --version < /dev/null 2>&1)" \
@@ -353,7 +358,7 @@ codex_private exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effor
 rc=$?
 if [ "$rc" -ne 0 ]; then
   # The log is the judge's output; strip control characters so it cannot drive the terminal.
-  grep -v 'rmcp::transport' "$log" | tail -n 5 | LC_ALL=C tr -d '\000-\010\013-\037\177' >&2
+  grep -v 'rmcp::transport' "$log" | tail -n 5 | vetdd_printable >&2
   die "codex exec failed (exit $rc); full output in $log. codex runs with an allowlisted environment (PATH, locale, proxy, SSL_CERT_FILE, CODEX_CA_CERTIFICATE): if it needs another variable of yours, name it in VETDD_JUDGE_KEEP_ENV" 6
 fi
 printf 'judge log: %s\n' "$log"
