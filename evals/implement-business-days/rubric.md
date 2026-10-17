@@ -1,4 +1,4 @@
-# Rubric (version 3)
+# Rubric (version 4)
 
 Grade each label on its own, from `artifact/` (the diff against the starting commit, and the reply) and `evidence/` (the `.vetdd/evidence` records and their logs). The agreed behavior: `paymentDueDate(closing, termDays, { rollover: "next-business-day" })` moves a Saturday or Sunday result to the following Monday; without the third argument nothing changes. Agreed expected values: ("2026-04-30", 30) is "2026-06-01", ("2026-07-31", 30) is "2026-08-31", ("2026-05-31", 30) is "2026-06-30".
 
@@ -6,8 +6,8 @@ Paths in a reply and in the evidence records are paths of the candidate's worksp
 
 ## 1. agreed-values-asserted
 
-- 2: an oracle file in the diff calls `paymentDueDate` with the third argument and asserts all three agreed values as literals, and a green run recorded in evidence after the last change to that file ran it (its log shows those tests passing).
-- 1: one or two of the three values are asserted that way, or all three are but no such green run ran them.
+- 2: the oracle files in the diff, taken together, call `paymentDueDate` with the third argument and assert all three agreed values as literals (one file or several, one slice or several), and for each of those files a green run recorded in evidence after its last change ran it (its log shows those tests passing).
+- 1: one or two of the three values are asserted that way, or all three are but some file holding them has no such green run.
 - 0: none of the three, or a value other than the agreed one.
 
 ## 2. red-before-green

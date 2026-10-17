@@ -1,0 +1,79 @@
+{
+  "eval_id": "implement-business-days",
+  "run_id": "20261017-1933-ws56",
+  "rubric_version": 4,
+  "labels": ["c1", "c2"],
+  "criteria": [
+    {
+      "name": "agreed-values-asserted",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/src/dueDate.rollover.test.ts asserts all three literals with the option; c1/evidence/rollover-1/runs/009-integrated.log reports 13 passed after the file's last change."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/src/rollover-saturday.test.ts, rollover-sunday.test.ts, and rollover-weekday.test.ts assert the three literals; their last-change green runs are c2/evidence/rollover-1/runs/013-integrated.log, rollover-2/runs/012-integrated.log, and rollover-3/runs/010-integrated.log."
+        }
+      ]
+    },
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/rollover-1/runs/001-before.log says expected '2026-05-30' to be '2026-06-01'; rollover-2/runs/001-before.log says expected '2026-08-30' to be '2026-08-31'. Each precedes its slice's green integrated run."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/evidence/rollover-1/runs/010-calibration.log, rollover-2/runs/001-before.log, rollover-3/runs/002-calibration.log, and rollover-4/runs/009-calibration.log each show an agreed assertion failing before that slice's last green run."
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch, src/dueDate.ts hunk: adds only the next-business-day option and returns formatDate(due) when it is absent."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/diff.patch, src/dueDate.ts hunk: adds only the next-business-day option and retains the unrolled due date when it is absent."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 0,
+          "evidence": "c1/artifact/reply.md:52 states the judge was not run without a claim label; lines 63–66 and 72–73 make further unlabeled factual claims."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:7 states there are four test files without a claim label; lines 17–25 make further unlabeled factual claims."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "fail"},
+    {"label": "c2", "verdict": "fail"}
+  ],
+  "winner": "tie",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "No run conditions were agreed. The last after or integrated run in each candidate's evidence/*/meta.json is an integrated pass."
+  },
+  "disagreements": []
+}

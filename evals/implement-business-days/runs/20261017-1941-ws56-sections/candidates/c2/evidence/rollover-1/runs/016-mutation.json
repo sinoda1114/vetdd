@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "1.0",
+  "config": {
+    "mutate": [
+      "src/dueDate.ts:93-94"
+    ],
+    "testRunner": "command",
+    "command": "npx --no-install vitest run 'src/rollover-saturday.test.ts'"
+  },
+  "files": {
+    "src/dueDate.ts": {
+      "source": "export type ClosingDay = number | \"end\";\n\n/** Numeric closing days stop at 28 so that every month has them; use \"end\" for month end. */\nexport const MAX_NUMERIC_CLOSING_DAY = 28;\n\ntype YearMonth = { readonly year: number; readonly month: number };\ntype CalendarDate = YearMonth & { readonly day: number };\n\nconst ISO_DATE = /^(\\d{4})-(\\d{2})-(\\d{2})$/;\nconst MS_PER_DAY = 24 * 60 * 60 * 1000;\n\nfunction fromUtc(ms: number): CalendarDate {\n  const d = new Date(ms);\n  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };\n}\n\nfunction toUtc({ year, month, day }: CalendarDate): number {\n  return Date.UTC(year, month - 1, day);\n}\n\nfunction pad(n: number, width: number): string {\n  return String(n).padStart(width, \"0\");\n}\n\nfunction formatDate({ year, month, day }: CalendarDate): string {\n  return `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}`;\n}\n\nfunction parseDate(text: string): CalendarDate {\n  const match = ISO_DATE.exec(text);\n  if (!match) {\n    throw new RangeError(`Expected a date as YYYY-MM-DD, got \"${text}\"`);\n  }\n  const date = { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };\n  if (formatDate(fromUtc(toUtc(date))) !== text) {\n    throw new RangeError(`No such calendar date: \"${text}\"`);\n  }\n  return date;\n}\n\nfunction addDays(date: CalendarDate, days: number): CalendarDate {\n  return fromUtc(toUtc(date) + days * MS_PER_DAY);\n}\n\nfunction nextMonth({ year, month }: YearMonth): YearMonth {\n  return month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };\n}\n\nfunction lastDayOfMonth({ year, month }: YearMonth): number {\n  // Date.UTC rolls an out-of-range day into the next month, so probe the 31st\n  // and fall back to the 30th when this month does not have one.\n  const probe = fromUtc(Date.UTC(year, month - 1, 31));\n  if (probe.month === month) return 31;\n  return fromUtc(Date.UTC(year, month - 1, 30)).day;\n}\n\nfunction closingDayIn(ym: YearMonth, closingDay: ClosingDay): number {\n  return closingDay === \"end\" ? lastDayOfMonth(ym) : closingDay;\n}\n\nfunction assertClosingDay(closingDay: ClosingDay): void {\n  if (closingDay === \"end\") return;\n  if (!Number.isInteger(closingDay) || closingDay < 1 || closingDay > MAX_NUMERIC_CLOSING_DAY) {\n    throw new RangeError(\n      `Closing day must be an integer from 1 to ${MAX_NUMERIC_CLOSING_DAY} or \"end\", got ${closingDay}`,\n    );\n  }\n}\n\n/**\n * The closing date for an invoice: the closing day of the invoice's month when the\n * invoice is dated on or before it, otherwise the closing day of the following month.\n */\nexport function closingDate(invoiceDate: string, closingDay: ClosingDay): string {\n  assertClosingDay(closingDay);\n  const invoice = parseDate(invoiceDate);\n  const sameMonthCutoff = closingDayIn(invoice, closingDay);\n  const closingMonth = invoice.day <= sameMonthCutoff ? invoice : nextMonth(invoice);\n  return formatDate({\n    year: closingMonth.year,\n    month: closingMonth.month,\n    day: closingDayIn(closingMonth, closingDay),\n  });\n}\n\nexport type PaymentDueOptions = { readonly rollover: \"next-business-day\" };\n\nconst SUNDAY = 0;\nconst SATURDAY = 6;\n\n/** Saturday and Sunday move to the following Monday; holidays are not handled. */\nfunction nextBusinessDay(date: CalendarDate): CalendarDate {\n  const weekday = new Date(toUtc(date)).getUTCDay();\n  if (weekday === SATURDAY) return addDays(date, 2);\n  if (weekday === SUNDAY) return addDays(date, 1);\n  return date;\n}\n\n/**\n * The payment due date: the closing date plus `termDays` calendar days. With\n * `{ rollover: \"next-business-day\" }`, a due date on a weekend moves to the following Monday.\n */\nexport function paymentDueDate(\n  closing: string,\n  termDays: number,\n  options?: PaymentDueOptions,\n): string {\n  if (!Number.isInteger(termDays) || termDays < 0) {\n    throw new RangeError(`Term must be a non-negative integer number of days, got ${termDays}`);\n  }\n  const due = addDays(parseDate(closing), termDays);\n  return formatDate(options?.rollover === \"next-business-day\" ? nextBusinessDay(due) : due);\n}\n",
+      "mutants": [
+        {
+          "id": "0",
+          "mutatorName": "ConditionalExpression",
+          "replacement": "true",
+          "status": "Killed",
+          "location": {
+            "start": {
+              "line": 94,
+              "column": 7
+            },
+            "end": {
+              "line": 94,
+              "column": 27
+            }
+          }
+        },
+        {
+          "id": "1",
+          "mutatorName": "ConditionalExpression",
+          "replacement": "false",
+          "status": "Killed",
+          "location": {
+            "start": {
+              "line": 94,
+              "column": 7
+            },
+            "end": {
+              "line": 94,
+              "column": 27
+            }
+          }
+        },
+        {
+          "id": "2",
+          "mutatorName": "EqualityOperator",
+          "replacement": "weekday !== SATURDAY",
+          "status": "Killed",
+          "location": {
+            "start": {
+              "line": 94,
+              "column": 7
+            },
+            "end": {
+              "line": 94,
+              "column": 27
+            }
+          }
+        }
+      ]
+    }
+  }
+}

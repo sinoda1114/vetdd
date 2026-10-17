@@ -1,0 +1,9 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+
+ Test Files  6 passed (6)
+      Tests  13 passed (13)
+   Start at  19:27:01
+   Duration  118ms (transform 59%, import 25%, worker 8%, tests 8%)
+

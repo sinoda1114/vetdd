@@ -1,0 +1,51 @@
+[32m19:26:18 (84121) INFO ProjectReader[39m Found 1 of 79 file(s) to be mutated.
+[32m19:26:18 (84121) INFO Instrumenter[39m Instrumented 1 source file(s) with 22 mutant(s)
+[32m19:26:18 (84121) INFO ConcurrencyTokenProvider[39m Creating 9 test runner process(es).
+[32m19:26:18 (84121) INFO DryRunExecutor[39m Starting initial test run (command test runner with "off" coverage analysis). This may take a while.
+[32m19:26:18 (84121) INFO DryRunExecutor[39m Initial test run succeeded. Ran 1 tests in 0 seconds (net 445 ms, overhead 0 ms).
+
+All tests
+  ✓ All tests (killed 16)
+
+[Survived] EqualityOperator
+src/dueDate.ts:107:38
+-     if (!Number.isInteger(termDays) || termDays < 0) {
++     if (!Number.isInteger(termDays) || termDays <= 0) {
+
+[Survived] ConditionalExpression
+src/dueDate.ts:107:7
+-     if (!Number.isInteger(termDays) || termDays < 0) {
++     if (false) {
+
+[Survived] BlockStatement
+src/dueDate.ts:107:52
+-     if (!Number.isInteger(termDays) || termDays < 0) {
+-       throw new RangeError(`Term must be a non-negative integer number of days, got ${termDays}`);
+-     }
++     if (!Number.isInteger(termDays) || termDays < 0) {}
+
+[Survived] ConditionalExpression
+src/dueDate.ts:107:38
+-     if (!Number.isInteger(termDays) || termDays < 0) {
++     if (!Number.isInteger(termDays) || false) {
+
+[Survived] StringLiteral
+src/dueDate.ts:108:26
+-       throw new RangeError(`Term must be a non-negative integer number of days, got ${termDays}`);
++       throw new RangeError(``);
+
+[Survived] LogicalOperator
+src/dueDate.ts:107:7
+-     if (!Number.isInteger(termDays) || termDays < 0) {
++     if (!Number.isInteger(termDays) && termDays < 0) {
+
+Ran 1.00 tests per mutant on average.
+------------|------------------|----------|-----------|------------|----------|----------|
+            | % Mutation score |          |           |            |          |          |
+File        |  total | covered | # killed | # timeout | # survived | # no cov | # errors |
+------------|--------|---------|----------|-----------|------------|----------|----------|
+All files   |  72.73 |   72.73 |       16 |         0 |          6 |        0 |        0 |
+ dueDate.ts |  72.73 |   72.73 |       16 |         0 |          6 |        0 |        0 |
+------------|--------|---------|----------|-----------|------------|----------|----------|
+[32m19:26:24 (84121) INFO JsonReporter[39m Your report can be found at: file:///Users/sinoda/tmp/[redacted]/.vetdd/reports/stryker.json
+[32m19:26:24 (84121) INFO MutationTestExecutor[39m Done in 6 seconds.

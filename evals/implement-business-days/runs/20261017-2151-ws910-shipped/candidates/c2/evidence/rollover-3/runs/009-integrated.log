@@ -1,0 +1,11 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ✓ src/rollover-unchanged.test.ts (2 tests) 2ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  21:49:32
+   Duration  93ms (transform 57%, import 31%, worker 6%, tests 6%, environment 1%)
+
+JSON report written to /Users/sinoda/tmp/[redacted]/.vetdd/reports/rollover-3.json

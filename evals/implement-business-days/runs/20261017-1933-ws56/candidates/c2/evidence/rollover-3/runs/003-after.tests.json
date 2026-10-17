@@ -1,0 +1,16 @@
+{
+  "format": "jest-json",
+  "passed": 1,
+  "failed": 0,
+  "skipped": 0,
+  "todo": 0,
+  "other": 0,
+  "total": 1,
+  "tests": [
+    {
+      "file": "src/rollover-weekday.test.ts",
+      "name": "keeps a due date that lands on a weekday when rolling over to the next business day",
+      "status": "passed"
+    }
+  ]
+}

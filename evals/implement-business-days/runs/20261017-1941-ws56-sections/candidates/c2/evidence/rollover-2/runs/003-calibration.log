@@ -1,0 +1,26 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ❯ src/rollover-sunday.test.ts (1 test | 1 failed) 3ms
+   × moves a due date that lands on a Sunday to the following Monday 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/rollover-sunday.test.ts > moves a due date that lands on a Sunday to the following Monday
+TypeError: paymentDueDate is not a function
+ ❯ src/rollover-sunday.test.ts:6:10
+      4| it("moves a due date that lands on a Sunday to the following Monday", …
+      5|   // 2026-07-31 + 30 days = 2026-08-30, a Sunday; the next Monday is 2…
+      6|   expect(paymentDueDate("2026-07-31", 30, { rollover: "next-business-d…
+       |          ^
+      7| });
+      8|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  19:26:08
+   Duration  81ms (transform 54%, import 24%, tests 14%, worker 8%)
+
