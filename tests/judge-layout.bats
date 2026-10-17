@@ -710,3 +710,19 @@ setup() {
   [ ! -e "$OUT" ]
   [ -f t2.sh ]
 }
+
+@test "review r3 round 2: a record whose oracle or oracle files are the wrong shape also stops as malformed (exit 1)" {
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file t2.sh -- sh t2.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh t2.sh >/dev/null 2>&1
+  cp .vetdd/evidence/s2/meta.json "$BATS_TEST_TMPDIR/good.json"
+  for broken in '.oracle = "x"' '.oracle.files = [1]'; do
+    jq "$broken" "$BATS_TEST_TMPDIR/good.json" > .vetdd/evidence/s2/meta.json
+    run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+    [ "$status" -eq 1 ] || { echo "$broken: $output"; false; }
+    [[ "$output" == *malformed* ]]
+    [ ! -e "$OUT" ]
+  done
+}

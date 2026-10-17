@@ -129,13 +129,6 @@ command -v "$codex" >/dev/null 2>&1 \
 # It keeps no secret from the judge: the read-only sandbox reads the whole disk, the link included, as
 # it could read the user's auth.json before; the reply's secret check covers what the judge quotes.
 # A login kept in the OS keyring is filed under the user's CODEX_HOME and cannot be lent this way.
-# The flags (codex 0.159 and later) are checked first, so an older codex stops here, not in exec.
-help="$("$codex" exec --help 2>/dev/null)"; missing=""
-for f in --ephemeral --ignore-user-config --ignore-rules; do
-  printf '%s\n' "$help" | grep -qe "$f" || missing="$missing $f"
-done
-[ -z "$missing" ] \
-  || die "codex ($codex) has no exec$missing, which the judge's isolation needs; update it (npm install -g @openai/codex)" 3
 user_home="${CODEX_HOME:-}"
 [ -n "$user_home" ] || { [ -n "${HOME:-}" ] || die "neither CODEX_HOME nor HOME is set; cannot find the codex login" 3; user_home="$HOME/.codex"; }
 case "$user_home" in /*) ;; *) user_home="$PWD/$user_home" ;; esac
@@ -166,16 +159,28 @@ export CODEX_HOME="$jhome"
 # version manager's shim finds its versions under $HOME unless told where: pass on the directories the
 # user's own HOME holds, when the caller has not set them. Then check codex starts there at all, so a
 # shim that still fails stops here with a clear message, not in exec as a judge failure.
+# mise keeps the trust of a project's mise.toml in its state directory; asdf reads the global versions
+# from ~/.tool-versions, which a link in the private HOME reaches.
 vm_env=()
 if [ -n "${HOME:-}" ]; then
   for kv in "MISE_DATA_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/mise" "MISE_CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/mise" \
-            "ASDF_DATA_DIR=$HOME/.asdf" "VOLTA_HOME=$HOME/.volta"; do
+            "MISE_STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/mise" "ASDF_DATA_DIR=$HOME/.asdf" "VOLTA_HOME=$HOME/.volta"; do
     if [ -z "$(printenv "${kv%%=*}")" ] && [ -d "${kv#*=}" ]; then vm_env+=("$kv"); fi
   done
+  if [ -f "$HOME/.tool-versions" ]; then
+    ln -s "$HOME/.tool-versions" "$jhome/.tool-versions" || die "cannot link ~/.tool-versions into $jhome" 1
+  fi
 fi
 codex_private() { ( export HOME="$jhome" ${vm_env[@]+"${vm_env[@]}"} && exec "$codex" "$@" ); }
 started="$(codex_private --version 2>&1)" \
-  || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); a node version manager other than mise, asdf, or Volta needs its directory set in the environment, or install the standalone codex" 3
+  || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); passed on: $(printf '%s ' ${vm_env[@]+"${vm_env[@]%%=*}"})~/.tool-versions when present. Set what else its node version manager reads from HOME in the environment, or install the standalone codex" 3
+# The flags (codex 0.159 and later) are checked on the codex that runs, so an older one stops here, not in exec.
+help="$(codex_private exec --help 2>/dev/null)"; missing=""
+for f in --ephemeral --ignore-user-config --ignore-rules; do
+  printf '%s\n' "$help" | grep -qe "$f" || missing="$missing $f"
+done
+[ -z "$missing" ] \
+  || die "codex ($codex) has no exec$missing, which the judge's isolation needs; update it (npm install -g @openai/codex)" 3
 # The login stays in the linked auth.json whatever codex's default store (keyring, auto): the user's
 # config.toml, where they chose the file store, is not read here.
 login="$(codex_private login status -c 'cli_auth_credentials_store="file"' 2>&1)" \
