@@ -1,0 +1,30 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ❯ src/rollover-default.test.ts (1 test | 1 failed) 3ms
+   × keeps a weekend due date when no rollover is asked for 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/rollover-default.test.ts > keeps a weekend due date when no rollover is asked for
+AssertionError: expected '2026-06-01' to be '2026-05-30' // Object.is equality
+
+Expected: "2026-05-30"
+Received: "2026-06-01"
+
+ ❯ src/rollover-default.test.ts:6:44
+      4| it("keeps a weekend due date when no rollover is asked for", () => {
+      5|   // 2026-04-30 + 30 days = 2026-05-30, a Saturday; without the option…
+      6|   expect(paymentDueDate("2026-04-30", 30)).toBe("2026-05-30");
+       |                                            ^
+      7| });
+      8|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  19:26:35
+   Duration  80ms (transform 57%, import 21%, tests 15%, worker 7%)
+

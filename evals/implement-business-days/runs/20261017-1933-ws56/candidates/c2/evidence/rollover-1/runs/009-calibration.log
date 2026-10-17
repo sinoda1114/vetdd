@@ -1,0 +1,49 @@
+[32m19:28:23 (93734) INFO ProjectReader[39m Found 1 of 125 file(s) to be mutated.
+[32m19:28:23 (93734) INFO Instrumenter[39m Instrumented 1 source file(s) with 12 mutant(s)
+[32m19:28:23 (93734) INFO ConcurrencyTokenProvider[39m Creating 9 test runner process(es).
+[32m19:28:23 (93734) INFO DryRunExecutor[39m Starting initial test run (command test runner with "off" coverage analysis). This may take a while.
+[32m19:28:24 (93734) INFO DryRunExecutor[39m Initial test run succeeded. Ran 1 tests in 0 seconds (net 500 ms, overhead 1 ms).
+
+All tests
+  ✓ All tests (killed 6)
+
+[Survived] ConditionalExpression
+src/dueDate.ts:94:7
+-     if (weekday === SATURDAY) return addDays(date, 2);
++     if (true) return addDays(date, 2);
+
+[Survived] EqualityOperator
+src/dueDate.ts:95:7
+-     if (weekday === SUNDAY) return addDays(date, 1);
++     if (weekday !== SUNDAY) return addDays(date, 1);
+
+[Survived] ConditionalExpression
+src/dueDate.ts:95:7
+-     if (weekday === SUNDAY) return addDays(date, 1);
++     if (false) return addDays(date, 1);
+
+[Survived] ConditionalExpression
+src/dueDate.ts:112:21
+-     return formatDate(options?.rollover === "next-business-day" ? nextBusinessDay(due) : due);
++     return formatDate(true ? nextBusinessDay(due) : due);
+
+[Survived] ConditionalExpression
+src/dueDate.ts:95:7
+-     if (weekday === SUNDAY) return addDays(date, 1);
++     if (true) return addDays(date, 1);
+
+[Survived] OptionalChaining
+src/dueDate.ts:112:21
+-     return formatDate(options?.rollover === "next-business-day" ? nextBusinessDay(due) : due);
++     return formatDate(options.rollover === "next-business-day" ? nextBusinessDay(due) : due);
+
+Ran 1.00 tests per mutant on average.
+------------|------------------|----------|-----------|------------|----------|----------|
+            | % Mutation score |          |           |            |          |          |
+File        |  total | covered | # killed | # timeout | # survived | # no cov | # errors |
+------------|--------|---------|----------|-----------|------------|----------|----------|
+All files   |  50.00 |   50.00 |        6 |         0 |          6 |        0 |        0 |
+ dueDate.ts |  50.00 |   50.00 |        6 |         0 |          6 |        0 |        0 |
+------------|--------|---------|----------|-----------|------------|----------|----------|
+[32m19:28:27 (93734) INFO JsonReporter[39m Your report can be found at: file:///Users/sinoda/tmp/[redacted]/.vetdd/reports/stryker.json
+[32m19:28:27 (93734) INFO MutationTestExecutor[39m Done in 3 seconds.

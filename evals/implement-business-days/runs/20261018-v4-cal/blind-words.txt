@@ -1,0 +1,15 @@
+baseline
+known-bad (hand-made)
+known-good (hand-made)
+empty (task echoed)
+billing-b
+baseline
+known-bad (hand-made)
+known-good (hand-made)
+empty (task echoed)
+billing-a
+baseline
+known-bad (hand-made)
+known-good (hand-made)
+empty (task echoed)
+billing-c

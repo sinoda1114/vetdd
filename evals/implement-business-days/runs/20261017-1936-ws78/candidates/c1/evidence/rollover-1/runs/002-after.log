@@ -1,0 +1,51 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ❯ src/rollover.test.ts (4 tests | 2 failed) 4ms
+   ❯ paymentDueDate with rollover: next-business-day (4)
+     × moves a due date on a Saturday to the following Monday 3ms
+     × moves a due date on a Sunday to the following Monday 0ms
+     ✓ keeps a due date on a weekday 0ms
+     ✓ keeps a weekend due date when the option is not given 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/rollover.test.ts > paymentDueDate with rollover: next-business-day > moves a due date on a Saturday to the following Monday
+AssertionError: expected '2026-05-30' to be '2026-06-01' // Object.is equality
+
+Expected: "2026-06-01"
+Received: "2026-05-30"
+
+ ❯ src/rollover.test.ts:9:65
+      7|   it("moves a due date on a Saturday to the following Monday", () => {
+      8|     // 2026-04-30 + 30 days = 2026-05-30, a Saturday; the next Monday …
+      9|     expect(paymentDueDate("2026-04-30", 30, NEXT_BUSINESS_DAY)).toBe("…
+       |                                                                 ^
+     10|   });
+     11|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/rollover.test.ts > paymentDueDate with rollover: next-business-day > moves a due date on a Sunday to the following Monday
+AssertionError: expected '2026-08-30' to be '2026-08-31' // Object.is equality
+
+Expected: "2026-08-31"
+Received: "2026-08-30"
+
+ ❯ src/rollover.test.ts:14:65
+     12|   it("moves a due date on a Sunday to the following Monday", () => {
+     13|     // 2026-07-31 + 30 days = 2026-08-30, a Sunday; the next Monday is…
+     14|     expect(paymentDueDate("2026-07-31", 30, NEXT_BUSINESS_DAY)).toBe("…
+       |                                                                 ^
+     15|   });
+     16|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+   Start at  19:25:39
+   Duration  91ms (transform 62%, import 18%, tests 13%, worker 7%)
+
+JSON report written to /Users/sinoda/tmp/[redacted]/.vetdd/reports/rollover-1.json

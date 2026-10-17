@@ -1,0 +1,66 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ❯ src/rollover.test.ts (4 tests | 4 failed) 4ms
+   ❯ paymentDueDate with rollover: next-business-day (4)
+     × moves a due date on a Saturday to the following Monday 2ms
+     × moves a due date on a Sunday to the following Monday 1ms
+     × keeps a due date on a weekday 0ms
+     × keeps a weekend due date when the option is not given 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/rollover.test.ts > paymentDueDate with rollover: next-business-day > moves a due date on a Saturday to the following Monday
+TypeError: paymentDueDate is not a function
+ ❯ src/rollover.test.ts:9:12
+      7|   it("moves a due date on a Saturday to the following Monday", () => {
+      8|     // 2026-04-30 + 30 days = 2026-05-30, a Saturday; the next Monday …
+      9|     expect(paymentDueDate("2026-04-30", 30, NEXT_BUSINESS_DAY)).toBe("…
+       |            ^
+     10|   });
+     11|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/rollover.test.ts > paymentDueDate with rollover: next-business-day > moves a due date on a Sunday to the following Monday
+TypeError: paymentDueDate is not a function
+ ❯ src/rollover.test.ts:14:12
+     12|   it("moves a due date on a Sunday to the following Monday", () => {
+     13|     // 2026-07-31 + 30 days = 2026-08-30, a Sunday; the next Monday is…
+     14|     expect(paymentDueDate("2026-07-31", 30, NEXT_BUSINESS_DAY)).toBe("…
+       |            ^
+     15|   });
+     16|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/rollover.test.ts > paymentDueDate with rollover: next-business-day > keeps a due date on a weekday
+TypeError: paymentDueDate is not a function
+ ❯ src/rollover.test.ts:19:12
+     17|   it("keeps a due date on a weekday", () => {
+     18|     // 2026-05-31 + 30 days = 2026-06-30, a Tuesday.
+     19|     expect(paymentDueDate("2026-05-31", 30, NEXT_BUSINESS_DAY)).toBe("…
+       |            ^
+     20|   });
+     21|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/rollover.test.ts > paymentDueDate with rollover: next-business-day > keeps a weekend due date when the option is not given
+TypeError: paymentDueDate is not a function
+ ❯ src/rollover.test.ts:24:12
+     22|   it("keeps a weekend due date when the option is not given", () => {
+     23|     // Without the third argument nothing moves: 2026-04-30 + 30 days …
+     24|     expect(paymentDueDate("2026-04-30", 30)).toBe("2026-05-30");
+       |            ^
+     25|   });
+     26| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  19:26:02
+   Duration  243ms (transform 56%, import 19%, worker 18%, tests 7%)
+

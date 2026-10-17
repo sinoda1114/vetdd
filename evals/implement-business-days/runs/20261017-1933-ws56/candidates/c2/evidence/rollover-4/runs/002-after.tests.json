@@ -1,0 +1,16 @@
+{
+  "format": "jest-json",
+  "passed": 1,
+  "failed": 0,
+  "skipped": 0,
+  "todo": 0,
+  "other": 0,
+  "total": 1,
+  "tests": [
+    {
+      "file": "src/rollover-default.test.ts",
+      "name": "keeps a weekend due date when no rollover is asked for",
+      "status": "passed"
+    }
+  ]
+}
