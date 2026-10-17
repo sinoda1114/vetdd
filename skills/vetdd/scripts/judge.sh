@@ -35,7 +35,9 @@
 # (no variants.json) also passes --final: the origin words (variant, baseline, winner) are product
 # words there.
 # Defaults: --model `models.sh judge`, --effort `models.sh judge-effort`; both are validated by
-# models.sh. VETDD_CODEX_BIN overrides the codex binary (tests use a fake).
+# models.sh. VETDD_CODEX_BIN overrides the codex binary (tests use a fake). codex runs with an
+# allowlisted environment (PATH, user, locale, terminal, proxy, and CA variables, plus the names in
+# VETDD_JUDGE_KEEP_ENV), with HOME and CODEX_HOME the private ones.
 # Exit: 0 verdict written and checked; 1 a local step failed (temporary directory, copy, write);
 #       2 usage error; 3 codex missing, unable to start with the private HOME, without the isolation
 #       flags, or not logged in; 4 the judge's input is not blind;
@@ -159,16 +161,27 @@ export CODEX_HOME="$jhome"
 # Every codex call from here runs with the private HOME too, so codex is checked to start there before
 # exec. A codex that starts through a node version manager's shim (an npm install under mise, asdf,
 # Volta) looks for its versions under $HOME and fails there: it stops here with a clear message, not in
-# exec as a judge failure. The manager's directories are not passed on, and those the caller set are
-# taken out: the shim would then apply the user's own settings, which may set CODEX_HOME or HOME and
-# undo the isolation.
-VERSION_MANAGER_VARS="MISE_DATA_DIR MISE_CONFIG_DIR MISE_STATE_DIR ASDF_DIR ASDF_DATA_DIR ASDF_CONFIG_FILE VOLTA_HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME"
-# shellcheck disable=SC2086 # the names split on purpose
-codex_private() { ( unset $VERSION_MANAGER_VARS; export HOME="$jhome" && exec "$codex" "$@" ); }
-started="$(codex_private --version 2>&1)" \
+# exec as a judge failure. codex gets an allowlisted environment and nothing else of the caller's: a
+# variable that points a version manager at the user's settings (MISE_GLOBAL_CONFIG_FILE, XDG_*, ...)
+# would let its shim start and apply them, and they may set CODEX_HOME or HOME and undo the isolation.
+# VETDD_JUDGE_KEEP_ENV names more variables to keep (a proxy of one's own); HOME and CODEX_HOME are
+# always the private ones.
+keep=()
+for n in PATH USER LOGNAME SHELL TMPDIR TERM LANG LC_ALL LC_CTYPE LC_MESSAGES TZ \
+         HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy SSL_CERT_FILE SSL_CERT_DIR \
+         ${VETDD_JUDGE_KEEP_ENV:-}; do
+  case "$n" in
+    HOME|CODEX_HOME) die "VETDD_JUDGE_KEEP_ENV cannot keep $n: the judge's is always the private one" 2 ;;
+    ''|[0-9]*|*[!A-Za-z0-9_]*) die "VETDD_JUDGE_KEEP_ENV holds $(printf '%s' "$n" | vetdd_printable), which is not a variable name" 2 ;;
+  esac
+  if v="$(printenv "$n")"; then keep+=("$n=$v"); fi
+done
+# The checks below read nothing from stdin: a codex that reads it would wait on the caller's.
+codex_private() { env -i ${keep[@]+"${keep[@]}"} HOME="$jhome" CODEX_HOME="$jhome" "$codex" "$@"; }
+started="$(codex_private --version < /dev/null 2>&1)" \
   || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); a codex started through a node version manager's shim needs HOME. Install the standalone codex, or set VETDD_CODEX_BIN to a codex that starts without HOME" 3
 # The flags (codex 0.159 and later) are checked on the codex that runs, so an older one stops here, not in exec.
-help="$(codex_private exec --help 2>/dev/null)"; missing=""
+help="$(codex_private exec --help < /dev/null 2>/dev/null)"; missing=""
 for f in --ephemeral --ignore-user-config --ignore-rules; do
   printf '%s\n' "$help" | grep -qe "$f" || missing="$missing $f"
 done
@@ -176,7 +189,7 @@ done
   || die "codex ($codex) has no exec$missing, which the judge's isolation needs; update it (npm install -g @openai/codex)" 3
 # The login stays in the linked auth.json whatever codex's default store (keyring, auto): the user's
 # config.toml, where they chose the file store, is not read here.
-login="$(codex_private login status -c 'cli_auth_credentials_store="file"' 2>&1)" \
+login="$(codex_private login status -c 'cli_auth_credentials_store="file"' < /dev/null 2>&1)" \
   || die "codex is not logged in ($login); run \`codex login\` first" 3
 
 # Every temporary file lives in one private directory. The judge's working directory is a copy

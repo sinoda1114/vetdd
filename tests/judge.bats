@@ -37,7 +37,8 @@ setup() {
 if [ -n "${FAKE_SHIM:-}" ] && [ ! -d "${MISE_DATA_DIR:-${HOME:-/nonexistent}/$FAKE_SHIM}" ]; then
   echo "mise ERROR No version is set for shim: codex" >&2; exit 1
 fi
-[ "$1" != --version ] || { echo "codex-cli 0.0.0-fake"; exit 0; }
+# FAKE_VERSION_READS: a codex that reads stdin when asked its version (what it got is recorded).
+[ "$1" != --version ] || { [ -z "${FAKE_VERSION_READS:-}" ] || cat > "$FAKE_SEEN.version_stdin"; echo "codex-cli 0.0.0-fake"; exit 0; }
 if [ "$1" = exec ] && [ "${2:-}" = --help ]; then
   printf '%s\n' "${HOME:-unset}" > "$FAKE_SEEN.home_env.help"
   [ -n "${FAKE_OLD_CODEX:-}" ] || printf '      --ephemeral\n      --ignore-user-config\n      --ignore-rules\n'
@@ -46,6 +47,7 @@ fi
 # Which CODEX_HOME each call ran with, and what it held.
 printf '%s %s\n' "$1" "${CODEX_HOME:-unset}" >> "$FAKE_SEEN.homes"
 printf '%s\n' "${HOME:-unset}" > "$FAKE_SEEN.home_env.$1"
+env > "$FAKE_SEEN.env.$1"
 [ -z "${CODEX_HOME:-}" ] || { ls -A "$CODEX_HOME"; [ ! -e "$CODEX_HOME/auth.json" ] && [ ! -L "$CODEX_HOME/auth.json" ] || [ -r "$CODEX_HOME/auth.json" ] || echo unreadable-auth; } > "$FAKE_SEEN.home.$1" 2>/dev/null
 if [ "$1" = login ] && [ "$2" = status ]; then
   printf '%s\n' "$@" > "$FAKE_SEEN.login_args"
@@ -78,6 +80,8 @@ cp "$FAKE_REPLY" "$out"
 FAKE
   chmod +x "$BATS_TEST_TMPDIR/fake/codex"
   export VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/fake/codex"
+  # codex runs with an allowlisted environment: the fake's own variables are kept by name.
+  export VETDD_JUDGE_KEEP_ENV="FAKE_VERSION_READS FAKE_ARGS FAKE_EXEC_FAIL FAKE_LOGGED_OUT FAKE_OLD_CODEX FAKE_REFRESH FAKE_REPLY FAKE_SEEN FAKE_SHIM FAKE_STDIN FAKE_USER_AUTH"
   unset VETDD_MODEL_JUDGE VETDD_MODEL_JUDGE_EFFORT CODEX_HOME
   # The user's file login (isolate_git set HOME to a private directory).
   mkdir -p "$HOME/.codex" && printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
@@ -730,4 +734,32 @@ user_codex_home() {
   MISE_DATA_DIR="$HOME/.local/share/mise" FAKE_SHIM=.local/share/mise run judge
   [ "$status" -eq 3 ] || { echo "$output"; false; }
   [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "pr52: codex runs with an allowlisted environment: a mise config selector or any other variable of the caller never reaches it" {
+  export MISE_GLOBAL_CONFIG_FILE="$BATS_TEST_TMPDIR/mise.toml" MISE_CONFIG_FILE=x VETDD_TEST_CALLER_ONLY=1
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  for v in MISE_GLOBAL_CONFIG_FILE MISE_CONFIG_FILE VETDD_TEST_CALLER_ONLY; do
+    ! grep -q "^$v=" "$FAKE_SEEN.env.exec" || false
+    ! grep -q "^$v=" "$FAKE_SEEN.env.login" || false
+  done
+  grep -q '^PATH=' "$FAKE_SEEN.env.exec"
+}
+
+@test "pr52: VETDD_JUDGE_KEEP_ENV keeps a named variable, never HOME or CODEX_HOME, and refuses a name that is not one" {
+  export VETDD_TEST_PROXY=p VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV VETDD_TEST_PROXY"
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'VETDD_TEST_PROXY=p' "$FAKE_SEEN.env.exec"
+  for bad in CODEX_HOME HOME 'a-b'; do
+    VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV $bad" run judge
+    [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
+  done
+}
+
+@test "pr52: the start checks read nothing from the caller's stdin, so a codex that reads it cannot hang them" {
+  FAKE_VERSION_READS=1 run judge <<< "the caller's stdin"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -s "$FAKE_SEEN.version_stdin" ]
 }
