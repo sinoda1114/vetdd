@@ -1,0 +1,31 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ❯ src/dueDate.rollover-sunday.test.ts (2 tests | 1 failed) 4ms
+   ❯ paymentDueDate with rollover next-business-day (2)
+     × moves a due date that lands on a Sunday to the following Monday 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/dueDate.rollover-sunday.test.ts > paymentDueDate with rollover next-business-day > moves a due date that lands on a Sunday to the following Monday
+AssertionError: expected '2026-08-30' to be '2026-08-31' // Object.is equality
+
+Expected: "2026-08-31"
+Received: "2026-08-30"
+
+ ❯ src/dueDate.rollover-sunday.test.ts:7:81
+      5|   it("moves a due date that lands on a Sunday to the following Monday"…
+      6|     // 2026-07-31 + 30 days = 2026-08-30, a Sunday; the following Mond…
+      7|     expect(paymentDueDate("2026-07-31", 30, { rollover: "next-business…
+       |                                                                                 ^
+      8|   });
+      9|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  14:57:41
+   Duration  89ms (transform 62%, import 20%, tests 12%, worker 6%)
+

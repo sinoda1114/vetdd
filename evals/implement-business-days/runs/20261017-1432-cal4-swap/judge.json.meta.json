@@ -1,0 +1,9 @@
+{
+  "model": "gpt-6-sol",
+  "effort": "high",
+  "invoked_at": "2026-10-17T05:33:01Z",
+  "family": "codex",
+  "log": "/Users/sinoda/dev/vetdd-p7b/.vetdd/judge-logs/implement-business-days-20261017-1432-cal4-swap.log",
+  "allowed_secrets": [],
+  "allowed_words": []
+}

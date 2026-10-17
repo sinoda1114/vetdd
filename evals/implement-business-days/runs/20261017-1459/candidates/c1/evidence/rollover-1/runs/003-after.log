@@ -1,0 +1,33 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ❯ src/dueDate.rollover-saturday.test.ts (2 tests | 1 failed) 4ms
+   ❯ paymentDueDate with rollover next-business-day (2)
+     × moves a due date that lands on a Saturday to the following Monday 3ms
+     ✓ keeps a due date that lands on a weekday 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/dueDate.rollover-saturday.test.ts > paymentDueDate with rollover next-business-day > moves a due date that lands on a Saturday to the following Monday
+AssertionError: expected '2026-05-30' to be '2026-06-01' // Object.is equality
+
+Expected: "2026-06-01"
+Received: "2026-05-30"
+
+ ❯ src/dueDate.rollover-saturday.test.ts:7:81
+      5|   it("moves a due date that lands on a Saturday to the following Monda…
+      6|     // 2026-04-30 + 30 days = 2026-05-30, a Saturday; the following Mo…
+      7|     expect(paymentDueDate("2026-04-30", 30, { rollover: "next-business…
+       |                                                                                 ^
+      8|   });
+      9|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  14:54:45
+   Duration  110ms (transform 65%, import 17%, tests 11%, worker 7%)
+
+JSON report written to /Users/sinoda/tmp/[redacted]/.vetdd/reports/rollover-1.json

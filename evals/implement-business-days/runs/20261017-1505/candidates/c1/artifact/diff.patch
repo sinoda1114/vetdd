@@ -1,0 +1,71 @@
+diff --git a/src/dueDate.rollover.test.ts b/src/dueDate.rollover.test.ts
+new file mode 100644
+index 0000000..0377b62
+--- /dev/null
++++ b/src/dueDate.rollover.test.ts
+@@ -0,0 +1,24 @@
++import { describe, expect, it } from "vitest";
++import { paymentDueDate } from "./dueDate.js";
++
++describe("paymentDueDate with rollover to the next business day", () => {
++  it("moves a due date that lands on a Saturday to the following Monday", () => {
++    // 2026-04-30 + 30 days = 2026-05-30, a Saturday, so the due date moves to Monday 2026-06-01.
++    expect(paymentDueDate("2026-04-30", 30, { rollover: "next-business-day" })).toBe("2026-06-01");
++  });
++
++  it("moves a due date that lands on a Sunday to the following Monday", () => {
++    // 2026-07-31 + 30 days = 2026-08-30, a Sunday, so the due date moves to Monday 2026-08-31.
++    expect(paymentDueDate("2026-07-31", 30, { rollover: "next-business-day" })).toBe("2026-08-31");
++  });
++
++  it("keeps a due date that lands on a weekday", () => {
++    // 2026-05-31 + 30 days = 2026-06-30, a Tuesday, so it stays as it is.
++    expect(paymentDueDate("2026-05-31", 30, { rollover: "next-business-day" })).toBe("2026-06-30");
++  });
++
++  it("does not move a weekend due date when no rollover is asked for", () => {
++    // Without the third argument nothing changes: 2026-04-30 + 30 days stays Saturday 2026-05-30.
++    expect(paymentDueDate("2026-04-30", 30)).toBe("2026-05-30");
++  });
++});
+diff --git a/src/dueDate.ts b/src/dueDate.ts
+index 01c502e..7ecf6f6 100644
+--- a/src/dueDate.ts
++++ b/src/dueDate.ts
+@@ -83,10 +83,33 @@ export function closingDate(invoiceDate: string, closingDay: ClosingDay): string
+   });
+ }
+ 
+-/** The payment due date: the closing date plus `termDays` calendar days. */
+-export function paymentDueDate(closing: string, termDays: number): string {
++export type PaymentDueDateOptions = { readonly rollover: "next-business-day" };
++
++const SUNDAY = 0;
++const SATURDAY = 6;
++
++/** Days to move a date forward so that it lands on a weekday (Saturday and Sunday go to Monday). */
++function daysToNextWeekday(date: CalendarDate): number {
++  const weekday = new Date(toUtc(date)).getUTCDay();
++  if (weekday === SATURDAY) return 2;
++  if (weekday === SUNDAY) return 1;
++  return 0;
++}
++
++/**
++ * The payment due date: the closing date plus `termDays` calendar days. With
++ * `{ rollover: "next-business-day" }`, a due date on a Saturday or Sunday moves to the
++ * following Monday. Holidays are not handled.
++ */
++export function paymentDueDate(
++  closing: string,
++  termDays: number,
++  options?: PaymentDueDateOptions,
++): string {
+   if (!Number.isInteger(termDays) || termDays < 0) {
+     throw new RangeError(`Term must be a non-negative integer number of days, got ${termDays}`);
+   }
+-  return formatDate(addDays(parseDate(closing), termDays));
++  const due = addDays(parseDate(closing), termDays);
++  if (options?.rollover !== "next-business-day") return formatDate(due);
++  return formatDate(addDays(due, daysToNextWeekday(due)));
+ }

@@ -1,0 +1,31 @@
+{
+  "format": "jest-json",
+  "passed": 2,
+  "failed": 2,
+  "skipped": 0,
+  "todo": 0,
+  "other": 0,
+  "total": 4,
+  "tests": [
+    {
+      "file": "src/dueDate.rollover.test.ts",
+      "name": "paymentDueDate with rollover to the next business day moves a due date on a Saturday to the following Monday",
+      "status": "failed"
+    },
+    {
+      "file": "src/dueDate.rollover.test.ts",
+      "name": "paymentDueDate with rollover to the next business day moves a due date on a Sunday to the following Monday",
+      "status": "failed"
+    },
+    {
+      "file": "src/dueDate.rollover.test.ts",
+      "name": "paymentDueDate with rollover to the next business day keeps a due date that falls on a weekday",
+      "status": "passed"
+    },
+    {
+      "file": "src/dueDate.rollover.test.ts",
+      "name": "paymentDueDate with rollover to the next business day keeps a Saturday due date when no rollover is asked for",
+      "status": "passed"
+    }
+  ]
+}

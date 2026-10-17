@@ -1,0 +1,79 @@
+{
+  "eval_id": "implement-business-days",
+  "run_id": "20261017-1459",
+  "rubric_version": 3,
+  "labels": ["c1", "c2"],
+  "criteria": [
+    {
+      "name": "agreed-values-asserted",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/src/dueDate.rollover-saturday.test.ts:7,12 and c1/artifact/src/dueDate.rollover-sunday.test.ts:7,12 assert all three literals; c1/evidence/rollover-1/runs/020-integrated.log:4-7 and c1/evidence/rollover-2/runs/016-integrated.log:4-7 show passing runs."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/src/dueDate.rollover.test.ts:7,12,17 asserts all three literals; c2/evidence/rollover-1/runs/006-integrated.log:4-7 shows four tests passing."
+        }
+      ]
+    },
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/rollover-1/runs/013-calibration.log:10-14 and c1/evidence/rollover-2/runs/013-calibration.log:10-14 show the agreed assertions failing; each precedes its passing 014-after.log."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/evidence/rollover-1/runs/001-before.log:13-33 shows both agreed weekend assertions failing; c2/evidence/rollover-1/runs/006-integrated.log:4-7 shows the later green run."
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch:54-87 adds only the next-business-day option and Saturday/Sunday rollover; the existing termDays validation remains."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/diff.patch:39-69 adds only the next-business-day option and Saturday/Sunday rollover; the existing termDays validation remains."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 0,
+          "evidence": "c1/artifact/reply.md:5-12 contains multiple factual claims without Measured, inferred, or guess labels, including the oracle version, expected values, and coverage."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:7-14 contains multiple factual claims without Measured, inferred, or guess labels, including the oracle version, expected values, and verification scope."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "fail"},
+    {"label": "c2", "verdict": "fail"}
+  ],
+  "winner": "tie",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "No run conditions were agreed. The final after/integrated records are c1/evidence/rollover-1/meta.json seq 22, c1/evidence/rollover-2/meta.json seq 18, and c2/evidence/rollover-1/meta.json seq 8."
+  },
+  "disagreements": []
+}

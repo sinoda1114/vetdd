@@ -1,0 +1,24 @@
+[32m14:57:21 (67480) INFO ProjectReader[39m Found 1 of 118 file(s) to be mutated.
+[32m14:57:22 (67480) INFO Instrumenter[39m Instrumented 1 source file(s) with 3 mutant(s)
+[32m14:57:22 (67480) INFO ConcurrencyTokenProvider[39m Creating 9 test runner process(es).
+[32m14:57:22 (67480) INFO DryRunExecutor[39m Starting initial test run (command test runner with "off" coverage analysis). This may take a while.
+[32m14:57:22 (67480) INFO DryRunExecutor[39m Initial test run succeeded. Ran 1 tests in 0 seconds (net 463 ms, overhead 0 ms).
+
+All tests
+  ✓ All tests (killed 2)
+
+[Survived] ConditionalExpression
+src/dueDate.ts:99:7
+-     if (day === SUNDAY) return addDays(date, 1);
++     if (true) return addDays(date, 1);
+
+Ran 1.00 tests per mutant on average.
+------------|------------------|----------|-----------|------------|----------|----------|
+            | % Mutation score |          |           |            |          |          |
+File        |  total | covered | # killed | # timeout | # survived | # no cov | # errors |
+------------|--------|---------|----------|-----------|------------|----------|----------|
+All files   |  66.67 |   66.67 |        2 |         0 |          1 |        0 |        0 |
+ dueDate.ts |  66.67 |   66.67 |        2 |         0 |          1 |        0 |        0 |
+------------|--------|---------|----------|-----------|------------|----------|----------|
+[32m14:57:23 (67480) INFO JsonReporter[39m Your report can be found at: file:///Users/sinoda/tmp/[redacted]/.vetdd/reports/stryker.json
+[32m14:57:23 (67480) INFO MutationTestExecutor[39m Done in 2 seconds.

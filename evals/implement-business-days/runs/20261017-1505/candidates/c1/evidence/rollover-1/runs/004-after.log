@@ -1,0 +1,7 @@
+
+> ts-kata@0.0.0 typecheck
+> tsc --noEmit
+
+src/dueDate.rollover.test.ts(7,45): error TS2554: Expected 2 arguments, but got 3.
+src/dueDate.rollover.test.ts(12,45): error TS2554: Expected 2 arguments, but got 3.
+src/dueDate.rollover.test.ts(17,45): error TS2554: Expected 2 arguments, but got 3.

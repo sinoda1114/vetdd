@@ -1,0 +1,13 @@
+
+> ts-kata@0.0.0 test
+> vitest run
+
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+
+ Test Files  3 passed (3)
+      Tests  13 passed (13)
+   Start at  15:03:39
+   Duration  85ms (transform 65%, import 21%, worker 7%, tests 6%)
+

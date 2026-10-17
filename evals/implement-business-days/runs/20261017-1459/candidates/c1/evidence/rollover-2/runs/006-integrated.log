@@ -1,0 +1,11 @@
+
+ RUN  v5.0.1 /Users/sinoda/tmp/[redacted]
+
+ ✓ src/dueDate.rollover-sunday.test.ts (1 test) 1ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  14:55:35
+   Duration  81ms (transform 65%, import 22%, worker 7%, tests 5%)
+
+JSON report written to /Users/sinoda/tmp/[redacted]/.vetdd/reports/rollover-2.json

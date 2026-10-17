@@ -1,0 +1,102 @@
+{
+  "eval_id": "implement-business-days",
+  "run_id": "20261017-1432-cal4-swap",
+  "rubric_version": 3,
+  "labels": ["c1", "c2", "c3"],
+  "criteria": [
+    {
+      "name": "agreed-values-asserted",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/src/rollover.test.ts:10,15,20 asserts all three values; c1/evidence/rollover-1/meta.json:50-80 records the matching oracle in the after run, and runs/002-after.log:5-6 shows 3 passed."
+        },
+        {
+          "label": "c2",
+          "score": 1,
+          "evidence": "c2/artifact/src/rollover.test.ts:5 asserts only 2026-06-01; c2/evidence/rollover-1/runs/001-after.log:5-6 shows its single test passed."
+        },
+        {
+          "label": "c3",
+          "score": 0,
+          "evidence": "c3/artifact/diff.patch is empty; c3/artifact/src/dueDate.ts:87-91 has no third argument or rollover oracle."
+        }
+      ]
+    },
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/rollover-1/meta.json:13-59 orders target_failure before pass; runs/001-before.log:11-31 shows the two agreed weekend assertions failing."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/evidence/rollover-1/meta.json:13-49 records only one run, kind after; there is no red run."
+        },
+        {
+          "label": "c3",
+          "score": 0,
+          "evidence": "c3/artifact/diff.patch is empty, and c3 has no evidence directory or recorded runs."
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch:9-25 adds only the next-business-day option and weekend adjustment, preserving the two-argument calculation."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/diff.patch:10-29 adds holidays, a previous-business-day mode, and an unknown-rollover error."
+        },
+        {
+          "label": "c3",
+          "score": 0,
+          "evidence": "c3/artifact/diff.patch is empty; c3/artifact/src/dueDate.ts:87-91 still has only the two-argument function."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/reply.md:5-17 labels its claims and cites the oracle, diff, and run logs; c1/evidence/rollover-1/runs/002-after.log:5-6, 003-after.log:5-6, and 004-after.log:2-3 support the reported results."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:1 contains multiple unlabeled claims, including 'All tests pass'; c2/evidence/rollover-1/runs/001-after.log:5-6 records only one passing test."
+        },
+        {
+          "label": "c3",
+          "score": 0,
+          "evidence": "c3/artifact/reply.md:1-16 repeats the request without a result line or claim labels; its assertions at lines 5-7 are unsupported by c3/artifact/src/dueDate.ts:87-91."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "pass"},
+    {"label": "c2", "verdict": "fail"},
+    {"label": "c3", "verdict": "fail"}
+  ],
+  "winner": "c1",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": false,
+    "note": "No run conditions were recorded. The final after records for c1 (c1/evidence/rollover-1/meta.json:119-150) and c2 (c2/evidence/rollover-1/meta.json:14-47) therefore satisfy the stated conditions; c3 has no final evidence record to check."
+  },
+  "disagreements": [
+    "c3/artifact/reply.md:5-7 states the three rollover results, but c3/artifact/src/dueDate.ts:87-91 has no rollover implementation."
+  ]
+}
