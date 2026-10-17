@@ -85,7 +85,7 @@ When the slice has nothing to stub (no product import), record why with `"$VETDD
 
 Run the mutation audit (JS and TS, with StrykerJS, its version pinned in devDependencies) for every slice that changed product code, on the lines it changed, now that no green run follows: `VETDD_MUTATION_TESTS='<the slice's test files>' "$VETDD/scripts/evidence.sh" <slice> calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/stryker.json -- npx --no-install stryker run stryker.config.mjs --mutate '<file>:<first>-<last>,<file>:<first>-<last>'` (every changed range in one comma-separated `--mutate`: Stryker keeps only the last of several `--mutate` options; the ranges are kept in the report).
 
-Take the ranges from the diff, never from memory: `git diff -U0 <base> -- <file>` prints each changed range as `@@ -a,b +c,d @@` (lines c to c+d-1 of the file now). A range that reaches unchanged lines (an existing validation, a helper) charges their survivors to the slice.
+Take the ranges from the diff, never from memory: `git diff -U0 <base> -- <file>` prints each changed range as `@@ -a,b +c,d @@` (lines c to c+d-1 of the file now; no `,d` means one line, and `,0` a deletion with no line to mutate). A range that reaches unchanged lines (an existing validation, a helper) charges their survivors to the slice.
 
 A range must hold whole statements: an emptied function body is a mutant of the whole block, so reach the function's closing brace; a range with no mutant in it is recorded `empty`, and rule 10c says to widen it rather than run the same range again. `--no-install` keeps npx from fetching an unpinned package when Stryker is not installed.
 

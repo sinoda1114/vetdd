@@ -61,18 +61,25 @@ elif [ ! -x "$hook_dst" ]; then
 fi
 
 # A core.hooksPath (often a global one) makes git ignore the repository's own hooks. Print the two
-# lines that chain this repository's hook from the hooksPath pre-commit; they run nothing in a
-# repository without one, so they are safe in a global hooks directory. core.hooksPath is never changed.
-hooks_path="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null || true)"
+# lines that chain this repository's vetdd hook from the hooksPath pre-commit. They run a hook only
+# when it carries the vetdd marker, so in a global hooks directory they never run another hook a
+# repository happens to hold (one unpacked from an archive, say). core.hooksPath is never changed.
+# No --type=path (git 2.18+): a leading ~/ is expanded here.
+hooks_path="$(git -C "$root" config --get core.hooksPath 2>/dev/null || true)"
 if [ -n "$hooks_path" ]; then
+  case "$hooks_path" in "~/"*) hooks_path="$HOME/${hooks_path#\~/}" ;; "~") hooks_path="$HOME" ;; esac
   case "$hooks_path" in /*) ;; *) hooks_path="$root/$hooks_path" ;; esac
-  chain_line='h="$(git rev-parse --git-common-dir)/hooks/pre-commit"'
-  if [ -x "$hooks_path/pre-commit" ] && grep -qF -- "$chain_line" "$hooks_path/pre-commit"; then
-    say "core.hooksPath is '$hooks_path'; its pre-commit chains $hook_dst"
+  real_hooks="$(cd "$hooks_path" 2>/dev/null && pwd -P || true)"
+  line1='h="$(git rev-parse --git-common-dir)/hooks/pre-commit"'
+  line2='if [ -x "$h" ] && grep -q "vetdd pre-commit hook" "$h"; then "$h" "$@" || exit $?; fi'
+  has_line() { sed 's/^[[:space:]]*//' "$1" 2>/dev/null | grep -qxF -- "$2"; }
+  if [ -n "$real_hooks" ] && [ "$real_hooks" = "$common/hooks" ]; then
+    : # hooksPath is this repository's own hooks directory: git runs the hook as installed.
+  elif [ -x "$hooks_path/pre-commit" ] && has_line "$hooks_path/pre-commit" "$line1" && has_line "$hooks_path/pre-commit" "$line2"; then
+    say "core.hooksPath is '$hooks_path'; its pre-commit appears to chain $hook_dst"
   else
-    say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run it, put these two lines in $hooks_path/pre-commit (create it with #!/bin/sh first and make it executable if it does not exist; core.hooksPath was not changed):"
-    printf '    %s\n' "$chain_line"
-    printf '    %s\n' 'if [ -x "$h" ]; then "$h" "$@" || exit $?; fi'
+    say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run it, put these two lines in $hooks_path/pre-commit, before any exit in that file (create it with #!/bin/sh first and make it executable if it does not exist; with husky, whose hooksPath is .husky/_, put them in .husky/pre-commit instead; core.hooksPath was not changed):"
+    printf '    %s\n' "$line1" "$line2"
   fi
 fi
 
