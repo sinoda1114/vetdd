@@ -61,33 +61,26 @@ elif [ ! -x "$hook_dst" ]; then
 fi
 
 # A core.hooksPath (often a global one) makes git ignore the repository's own hooks. Print one line
-# for the hooksPath pre-commit that runs the installed vetdd hook: code of this install, never a file
-# of the repository (a repository unpacked from an archive could carry any hook, whatever it says it
-# is). The hook does nothing in a repository without .vetdd/evidence. core.hooksPath is never changed.
-hooks_path="$(git -C "$root" config --get core.hooksPath 2>/dev/null || true)"
+# for the hooksPath pre-commit that runs this install's hook: never a file of the repository, which
+# could carry any hook. The line skips with a warning when the install is gone, so a removed vetdd
+# blocks no commit; the hook does nothing in a repository without .vetdd/evidence. git expands ~
+# (--type=path). core.hooksPath is never changed.
+hooks_path="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null || true)"
 if [ -n "$hooks_path" ]; then
-  case "$hooks_path" in
-    "~"*)
-      # git expands ~ and ~user itself (--type=path, git 2.18+); ~/ alone is done here for older git.
-      expanded="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null || true)"
-      if [ -n "$expanded" ] && [ "$expanded" != "$hooks_path" ]; then hooks_path="$expanded"
-      elif [ -n "${HOME:-}" ]; then case "$hooks_path" in "~/"*) hooks_path="$HOME/${hooks_path#\~/}" ;; "~") hooks_path="$HOME" ;; esac
-      fi ;;
-  esac
   case "$hooks_path" in /*) ;; *) hooks_path="$root/$hooks_path" ;; esac
   real_hooks="$(cd "$hooks_path" 2>/dev/null && pwd -P || true)"
-  # husky (core.hooksPath .husky/_) regenerates .husky/_ and runs .husky/<hook>, executable or not.
-  target="$hooks_path/pre-commit"; need_x=1
-  case "$hooks_path" in */.husky/_) target="${hooks_path%/_}/pre-commit"; need_x=0 ;; esac
-  # Double-quoted for sh, with \ " $ ` escaped inside.
-  chain="\"$(printf '%s' "$scripts_dir/hooks/pre-commit" | sed 's/[\\"$`]/\\&/g')\""' "$@" || exit $?'
-  has_line() { tr -d '\r' < "$1" 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -qxF -- "$2"; }
+  # The path goes between double quotes in sh, with \ " $ ` escaped.
+  quoted="$(printf '%s' "$hook_src" | sed 's/[\\"$`]/\\&/g')"
+  chain="vetdd_hook=\"$quoted\"; if [ -x \"\$vetdd_hook\" ]; then \"\$vetdd_hook\" \"\$@\" || exit \$?; else echo \"vetdd: \$vetdd_hook not found; skipped\" >&2; fi"
   if [ -n "$real_hooks" ] && [ "$real_hooks" = "$common/hooks" ]; then
     : # hooksPath is this repository's own hooks directory: git runs the hook as installed.
-  elif { [ "$need_x" -eq 0 ] || [ -x "$target" ]; } && has_line "$target" "$chain"; then
-    say "core.hooksPath is '$hooks_path'; $target appears to chain the vetdd hook (check that the line comes before any exit)"
+  elif [ "${hooks_path%/.husky/_}" != "$hooks_path" ]; then
+    # .husky/pre-commit is a tracked file shared with the team; this install's path does not belong there.
+    say "WARNING: core.hooksPath is husky's ('$hooks_path'), so git ignores $hook_dst. vetdd prints no line for .husky/pre-commit, a file shared with the team; run check-evidence.sh before committing instead."
+  elif grep -qF -- "$quoted" "$hooks_path/pre-commit" 2>/dev/null; then
+    say "core.hooksPath is '$hooks_path'; $hooks_path/pre-commit mentions the vetdd hook (check that the line comes before any exit)"
   else
-    say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run vetdd's check, put this line in $target, before any exit in that file (create it with #!/bin/sh first and make it executable if it does not exist; it runs this install's hook, which does nothing in a repository without .vetdd/evidence; core.hooksPath was not changed):"
+    say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run vetdd's check, put this line in $hooks_path/pre-commit, before any exit in that file (create it with #!/bin/sh first and make it executable if it does not exist; core.hooksPath was not changed):"
     printf '    %s\n' "$chain"
   fi
 fi
