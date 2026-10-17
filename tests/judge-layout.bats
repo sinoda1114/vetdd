@@ -768,3 +768,31 @@ setup() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *"new file in the diff: ignored/t3.sh"* ]] || { echo "$output"; false; }
 }
+
+@test "#63 r1: an ignored .env recorded as an oracle file is named once in the refusal" {
+  printf '.env\n' >> .gitignore && git add .gitignore && git commit -qm ignore-env
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > .env
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file .env -- sh .env >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh .env >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ "$(printf '%s\n' "$output" | grep 'never goes to the judge:' | sed 's/.*judge://')" = " .env" ] || { echo "$output"; false; }
+}
+
+@test "#63 r1: a new oracle file that ls-files cannot list (behind a symbolic link) stops the build" {
+  mkdir -p ignored && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > ignored/t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file ignored/t2.sh -- sh ignored/t2.sh
+  printf '42\n' > value.txt
+  ev s2 after -- sh ignored/t2.sh
+  # The record now names the file through a link: git lists nothing beyond a symbolic link.
+  ln -s ignored lnk
+  local m=.vetdd/evidence/s2/meta.json
+  jq '(.. | objects | select(has("path")) | .path) |= sub("^ignored/"; "lnk/")' "$m" > "$m.new" && mv "$m.new" "$m"
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new lnk s2
+  [ "$status" -ne 0 ] || { cat "$OUT/c1/artifact/diff.patch"; false; }
+  [[ "$output" == *"lnk/t2.sh"* ]] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+}
