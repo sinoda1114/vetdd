@@ -843,3 +843,30 @@ rewrite_oracle_path() {
   [ "$status" -eq 2 ] || { echo "$output"; false; }
   [ "$(printf '%s\n' "$output" | grep 'never goes to the judge:' | sed 's/.*judge://')" = " cfg/.env" ] || { echo "$output"; false; }
 }
+
+@test "#63 r3: an oracle file tracked inside a submodule (gitlink) still builds" {
+  mkdir -p nested && git -C nested init -q
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > nested/t.sh
+  git -C nested add t.sh && git -C nested -c user.name=t -c user.email=t@t commit -qm t
+  git add nested 2>/dev/null && git commit -qm gitlink
+  printf '0\n' > value.txt
+  run ev s2 before --seam unit --oracle-version v1 --oracle-file nested/t.sh -- sh nested/t.sh
+  [ "$status" -eq 0 ] || skip "evidence.sh refuses an oracle file in a submodule: $output"
+  printf '42\n' > value.txt
+  ev s2 after -- sh nested/t.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#63 r3: on a case-insensitive checkout, a tracked oracle file spelled in another case on disk still builds" {
+  mkdir -p Tests && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > Tests/a.sh
+  git add Tests/a.sh && git commit -qm upper
+  [ -e tests/a.sh ] || skip "the file system is case-sensitive"
+  mv Tests tmpdir-case && mv tmpdir-case tests
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file tests/a.sh -- sh tests/a.sh
+  printf '42\n' > value.txt
+  ev s2 after -- sh tests/a.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

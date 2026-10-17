@@ -219,9 +219,11 @@ done
 for o in ${oracles[@]+"${oracles[@]}"}; do
   case "$o" in .vetdd|.vetdd/*) continue ;; esac
   vetdd_inside_repo "$root" "$o" && [ -f "$root/$o" ] || continue
+  # A file of another repository (a submodule, a nested one) was never in this diff: copied only, as before.
+  [ "$(git -C "$(dirname -- "$root/$o")" rev-parse --show-toplevel 2>/dev/null)" = "$root" ] || continue
   GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" ls-files --error-unmatch -- "$o" >/dev/null 2>&1 && continue
   ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$o" ] && ok=1; done
-  [ "$ok" -eq 1 ] || die "$(printf 'oracle file %s is new, but git does not list it as a file of this repository (it is behind a symbolic link, or inside a nested repository or a submodule), so the diff would leave it out' "$o" | vetdd_printable)"
+  [ "$ok" -eq 1 ] || die "$(printf 'oracle file %s is new, but git does not list it as a file of this repository (it is behind a symbolic link, say), so the diff would leave it out' "$o" | vetdd_printable)"
 done
 for n in ${news[@]+"${news[@]}"}; do
   ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$n" ] && ok=1; done
