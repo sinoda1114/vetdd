@@ -66,5 +66,5 @@ Read the mode file chosen in step 1 and follow it. Every oracle run goes through
 - The author did not issue the final verdict; the judge is a different model family.
 - Refactoring, if any, was done by a separate subagent after the slices were green, and every test was rerun after it.
 - `check-evidence.sh` output is quoted in the reply.
-- Every statement of fact in the reply but the Result line carries a label, and each Measured label names a path the judge receives or a log named as local (`references/reply-format.md` "Labels").
+- Every statement of fact in the reply, the Result line included, carries a label, and each Measured label names a path the judge receives or a log named as local (`references/reply-format.md` "Labels").
 - Any subagent brief starts with the fixed no-redelegation text.
