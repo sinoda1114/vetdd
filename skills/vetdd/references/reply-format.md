@@ -7,29 +7,39 @@ The final reply of a vetdd task. Every claim carries its label in the same sente
 <one line: done | blocked | inconclusive, and the mode used>
 
 ## Oracle
-Seam: <seam>, version <n>. Expected value <literal>, from <source>.
-Covers: <what>. Out of scope: <what>. Blind spots: <what>.
+Seam: <seam>, version <n> (Measured: .vetdd/evidence/<id>/meta.json).
+Expected value <literal> (Measured: asserted in <oracle file>), from <source> (inferred: <why, when the judge cannot open the source>).
+Covers: <what> (Measured: <oracle file>). Out of scope: <what> (inferred: the agreement). Blind spots: <what> (<label>).
 
 ## Evidence
 | slice | kind | outcome | path |
 |---|---|---|---|
 | <id> | before | target_failure | .vetdd/evidence/<id>/runs/001-before.log |
 | <id> | after | pass | .vetdd/evidence/<id>/runs/002-after.log |
-check-evidence: <exact output line(s)>
+Every row is Measured. check-evidence: <exact output line(s)> (Measured).
 
 ## Requirements → evidence
 - <requirement 1>: <evidence path> (Measured)
 - <requirement 2>: <evidence path> (Measured)
 
 ## Change
-<what changed and why, 3–6 lines; the diff is the source, do not restate it>
+<what changed and why, 3–6 sentences, each labeled: (Measured: the diff) for what the diff shows, (inferred: ...) for why>
 
 ## Judge
 <verdict from the separate judge, or "not run: <reason>">
 
 ## Attention
-<anything the human should look at: a guess, a skipped step with its reason, a blind spot that matters>
+<anything the human should look at, each item labeled: a guess, a skipped step with its reason, a blind spot that matters>
 ```
+
+## Labels
+
+The final judge counts every unlabeled statement of fact against the reply (`references/final-judge-rubric.md`, claims-match-evidence), so label as you write, not afterwards:
+
+- **The Result line is the conclusion, not a claim**: it takes no label. The Judge section quotes the judge. Every other sentence, bullet, and table row that states a fact carries a label, in the sections the template shows without one too (Oracle, Change, Attention). A table may label all its rows at once in a line under it ("Every row is Measured"), when each row names its path.
+- **Measured names a path the judge receives**: a file of the diff or an oracle file (`artifact/`), or a record or log of the evidence (`evidence/`). Write paths as they are in your workspace (`src/dueDate.test.ts`, `.vetdd/evidence/<slice>/runs/001-before.log`); the judge layout maps them, and it renames `.claude` itself, so never write `.agent` in the reply.
+- **A source the judge does not receive is inferred**, even when you read it yourself: the README, the agreement note under `.vetdd/notes/`, a calendar or a `date` command you ran by hand, a local arena note. Cite the oracle file that asserts the value as Measured, and the source of the value as inferred.
+- **Before sending**, read the reply once for a sentence with no label, and for a Measured label whose path the judge cannot open; fix each one.
 
 A `blocked` or `inconclusive` result keeps the same sections and states, under Attention, what was tried and what would unblock it.
 
