@@ -12,7 +12,7 @@ setup() {
   "$BATS_TEST_DIRNAME/../install.sh" > "$BATS_TEST_TMPDIR/install.log" 2>&1 || true
   V="$CLAUDE_CONFIG_DIR/skills/vetdd/scripts"
   # A fake codex with a file login: its version (judge.sh checks it starts), the isolation flags, login
-# status, and a verdict for one label.
+  # status, and a verdict for one label.
   mkdir -p "$BATS_TEST_TMPDIR/fake" "$HOME/.codex"
   printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
   cat > "$BATS_TEST_TMPDIR/fake/codex" <<'FAKE'

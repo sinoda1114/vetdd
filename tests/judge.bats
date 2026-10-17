@@ -752,7 +752,7 @@ user_codex_home() {
   run judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -qx 'VETDD_TEST_PROXY=p' "$FAKE_SEEN.env.exec"
-  for bad in CODEX_HOME HOME 'a-b'; do
+  for bad in CODEX_HOME HOME 'a-b' CODEX_X OPENAI_BASE_URL XDG_CONFIG_HOME MISE_GLOBAL_CONFIG_FILE NODE_OPTIONS DYLD_INSERT_LIBRARIES LD_PRELOAD BASH_ENV; do
     VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV $bad" run judge
     [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
   done
@@ -762,4 +762,41 @@ user_codex_home() {
   FAKE_VERSION_READS=1 run judge <<< "the caller's stdin"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ ! -s "$FAKE_SEEN.version_stdin" ]
+}
+
+@test "pr52 r1: a kept variable's value goes to codex in its environment, never on a command line (ps, audit logs)" {
+  cat > "$BATS_TEST_TMPDIR/guard/env" <<WRAP
+#!/bin/sh
+printf '%s\\n' "\$@" >> "$BATS_TEST_TMPDIR/env-argv"
+exec /usr/bin/env "\$@"
+WRAP
+  chmod +x "$BATS_TEST_TMPDIR/guard/env"
+  export HTTPS_PROXY="http://u:s3cr3t-proxy@proxy.invalid:1"
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'HTTPS_PROXY=http://u:s3cr3t-proxy@proxy.invalid:1' "$FAKE_SEEN.env.exec"
+  [ ! -e "$BATS_TEST_TMPDIR/env-argv" ] || ! grep -q s3cr3t-proxy "$BATS_TEST_TMPDIR/env-argv" || false
+}
+
+@test "pr52 r1: VETDD_JUDGE_KEEP_ENV is split into names without pathname expansion" {
+  mkdir "$BATS_TEST_TMPDIR/only-readme" && cd "$BATS_TEST_TMPDIR/only-readme"
+  touch README
+  VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV *" run judge
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"holds *,"* ]]
+}
+
+@test "pr52 r1: a codex path with = in it still runs" {
+  mkdir -p "$BATS_TEST_TMPDIR/a=b"
+  cp "$VETDD_CODEX_BIN" "$BATS_TEST_TMPDIR/a=b/codex"
+  VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/a=b/codex" run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "pr52 r1: a bad VETDD_JUDGE_KEEP_ENV is a usage error before codex is looked for, and a failed exec points to it" {
+  VETDD_CODEX_BIN=vetdd-no-such-codex-binary VETDD_JUDGE_KEEP_ENV="a-b" run judge
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  FAKE_EXEC_FAIL=1 run judge
+  [ "$status" -eq 6 ] || { echo "$output"; false; }
+  [[ "$output" == *VETDD_JUDGE_KEEP_ENV* ]]
 }

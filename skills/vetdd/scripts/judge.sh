@@ -125,6 +125,19 @@ fi
 log="$root/.vetdd/judge-logs/$eval_id-$run_id.log"
 
 codex="${VETDD_CODEX_BIN:-codex}"
+# VETDD_JUDGE_KEEP_ENV names more variables codex keeps (a proxy or CA bundle of one's own): split
+# without pathname expansion and checked here, before anything about codex itself.
+read -r -a keep_extra <<< "${VETDD_JUDGE_KEEP_ENV:-}"
+for n in ${keep_extra[@]+"${keep_extra[@]}"}; do
+  case "$n" in
+    HOME|CODEX_HOME) die "VETDD_JUDGE_KEEP_ENV cannot keep $n: the judge's is always the private one" 2 ;;
+    # Names that would undo the isolation: codex's own settings, a model provider, a version manager's
+    # settings, or code loaded into a process.
+    CODEX_*|OPENAI_*|XDG_*|MISE_*|ASDF_*|VOLTA_*|NVM_*|NODE_*|LD_*|DYLD_*|BASH_ENV|ENV)
+      die "VETDD_JUDGE_KEEP_ENV cannot keep $n: it would undo the judge's isolation from your setup" 2 ;;
+    [0-9]*|*[!A-Za-z0-9_]*) die "VETDD_JUDGE_KEEP_ENV holds $(printf '%s' "$n" | vetdd_printable), which is not a variable name" 2 ;;
+  esac
+done
 command -v "$codex" >/dev/null 2>&1 \
   || die "codex CLI not found ($codex); install it (npm install -g @openai/codex) or set VETDD_CODEX_BIN" 3
 # The judge runs with a CODEX_HOME of its own that holds only a link to the user's auth.json: the
@@ -164,20 +177,18 @@ export CODEX_HOME="$jhome"
 # exec as a judge failure. codex gets an allowlisted environment and nothing else of the caller's: a
 # variable that points a version manager at the user's settings (MISE_GLOBAL_CONFIG_FILE, XDG_*, ...)
 # would let its shim start and apply them, and they may set CODEX_HOME or HOME and undo the isolation.
-# VETDD_JUDGE_KEEP_ENV names more variables to keep (a proxy of one's own); HOME and CODEX_HOME are
-# always the private ones.
-keep=()
-for n in PATH USER LOGNAME SHELL TMPDIR TERM LANG LC_ALL LC_CTYPE LC_MESSAGES TZ \
-         HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy SSL_CERT_FILE SSL_CERT_DIR \
-         ${VETDD_JUDGE_KEEP_ENV:-}; do
-  case "$n" in
-    HOME|CODEX_HOME) die "VETDD_JUDGE_KEEP_ENV cannot keep $n: the judge's is always the private one" 2 ;;
-    ''|[0-9]*|*[!A-Za-z0-9_]*) die "VETDD_JUDGE_KEEP_ENV holds $(printf '%s' "$n" | vetdd_printable), which is not a variable name" 2 ;;
-  esac
-  if v="$(printenv "$n")"; then keep+=("$n=$v"); fi
-done
-# The checks below read nothing from stdin: a codex that reads it would wait on the caller's.
-codex_private() { env -i ${keep[@]+"${keep[@]}"} HOME="$jhome" CODEX_HOME="$jhome" "$codex" "$@"; }
+# Every other exported variable is unset in a subshell before exec, so the kept values stay in the
+# environment (never on a command line, where ps and audit logs read them) and a path with = in it
+# runs as it is. HOME and CODEX_HOME are always the private ones.
+keep_names=" PATH USER LOGNAME SHELL TMPDIR TERM LANG LC_ALL LC_CTYPE LC_MESSAGES TZ HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy SSL_CERT_FILE SSL_CERT_DIR ${keep_extra[*]+${keep_extra[*]}} "
+compgen -e > /dev/null 2>&1 || die "this bash has no compgen, which judge.sh needs to clear codex's environment" 1
+codex_private() (
+  for n in $(compgen -e); do
+    case "$keep_names" in *" $n "*) ;; *) unset "$n" 2>/dev/null ;; esac
+  done
+  export HOME="$jhome" CODEX_HOME="$jhome"
+  exec "$codex" "$@"
+)
 started="$(codex_private --version < /dev/null 2>&1)" \
   || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); a codex started through a node version manager's shim needs HOME. Install the standalone codex, or set VETDD_CODEX_BIN to a codex that starts without HOME" 3
 # The flags (codex 0.159 and later) are checked on the codex that runs, so an older one stops here, not in exec.
@@ -314,7 +325,7 @@ rc=$?
 if [ "$rc" -ne 0 ]; then
   # The log is the judge's output; strip control characters so it cannot drive the terminal.
   grep -v 'rmcp::transport' "$log" | tail -n 5 | LC_ALL=C tr -d '\000-\010\013-\037\177' >&2
-  die "codex exec failed (exit $rc); full output in $log" 6
+  die "codex exec failed (exit $rc); full output in $log. codex runs with an allowlisted environment: if it needs a variable of yours (a proxy or CA bundle, say), name it in VETDD_JUDGE_KEEP_ENV" 6
 fi
 printf 'judge log: %s\n' "$log"
 
