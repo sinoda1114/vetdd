@@ -2,7 +2,7 @@
 
 Oracle: a failing test at the agreed seam. Governing principles: 1, 2, 3, 4, 6, 7. Read `references/test-quality.md` before writing any test.
 
-`$VETDD` is this skill's base directory (see SKILL.md step 0). Every script below is called as `$VETDD/scripts/<name>` and run from the target project's root. The Bash tool keeps no variables between calls: start each command with `VETDD='<absolute path>' &&` (single quotes: the path may contain spaces), or write the absolute path in place of `$VETDD`.
+`$VETDD` is this skill's base directory (see SKILL.md step 0). Every script below is called as `$VETDD/scripts/<name>` and run from the target project's root. The Bash tool keeps no variables between calls: start each command with `VETDD='<absolute path>' &&` (single quotes: the path may contain spaces), or write the absolute path in place of `$VETDD`. Write each script's arguments out in full: the Bash tool may run zsh, which does not split a variable holding several words (a `$OF` with every `--oracle-file`), so the call fails or, worse, runs with a mangled list; put such lists in a bash array inside a script file instead.
 
 Work in vertical slices: one test → the smallest change that passes it → next test. Each slice has its own slice id (`<topic>-<n>`) and its own evidence directory.
 
@@ -64,6 +64,8 @@ VETDD='<absolute path>' && "$VETDD/scripts/calibrate.sh" planted <slice> \
   --seam '<seam>' --oracle-version <n> --oracle-file <test file> -- <test command>
 ```
 
+When the fix is already committed (a swarm or arena Close, after the merge), `unfix` finds no change against HEAD and refuses: take the red of a new oracle version with `plant` and `planted` instead, planting the defect the new test is there to see.
+
 - Run it from the directory the test command runs in; paths are relative to it. `--file` and `--oracle-file` take regular files (no directories, no symlinks), compared by real path. The oracle is required and is never parked: a red on reverted tests proves "old tests", not "the defect is back". `planted` refuses if the oracle or any file outside the saved set changed since `plant` (content or executable bit), or if nothing was planted. Files ignored by git are not covered by that check: if the oracle reads any, name them with `--oracle-file`.
 - `calibrate.sh` exits 0 only when the calibration ended `target_failure`, and 1 when it did not (the oracle does not see the defect: fix the test). Exit 0 is necessary, not sufficient: read the calibration log and confirm the red comes from the agreed assertion. A red from an import error (for example because a new module was parked), "no tests", a syntax error, or a crash of the runner is not a calibration; fix the setup and run it again. Then record the oracle as `after`; for a behavior-preserving change, record `after` before the change and again after it.
 - The known-good `calibration` pass in step 3 is recorded with `evidence.sh` directly; `calibrate.sh` is only for the red half.
@@ -82,6 +84,8 @@ When the slice has nothing to stub (no product import), record why with `"$VETDD
 ### Mutation (Close step 2)
 
 Run the mutation audit (JS and TS, with StrykerJS, its version pinned in devDependencies) for every slice that changed product code, on the lines it changed, now that no green run follows: `VETDD_MUTATION_TESTS='<the slice's test files>' "$VETDD/scripts/evidence.sh" <slice> calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/stryker.json -- npx --no-install stryker run stryker.config.mjs --mutate '<file>:<first>-<last>,<file>:<first>-<last>'` (every changed range in one comma-separated `--mutate`: Stryker keeps only the last of several `--mutate` options; the ranges are kept in the report).
+
+Take the ranges from the diff, never from memory: `git diff -U0 <base> -- <file>` prints each changed range as `@@ -a,b +c,d @@` (lines c to c+d-1 of the file now). A range that reaches unchanged lines (an existing validation, a helper) charges their survivors to the slice.
 
 A range must hold whole statements: an emptied function body is a mutant of the whole block, so reach the function's closing brace; a range with no mutant in it is recorded `empty`, and rule 10c says to widen it rather than run the same range again. `--no-install` keeps npx from fetching an unpinned package when Stryker is not installed.
 

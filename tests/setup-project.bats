@@ -97,3 +97,33 @@ hook_path() { echo "$REPO/.git/hooks/pre-commit"; }
   [ -x "$(hook_path)" ]
   [ -d "$BATS_TEST_TMPDIR/wt/.vetdd" ]
 }
+
+# #57: with a global core.hooksPath, git never runs the repository's hook; the warning prints the two
+# lines that chain it, and once they are in the hooksPath pre-commit, the vetdd hook runs on commit.
+@test "#57: a set core.hooksPath prints the lines that chain the repository's hook, and those lines work" {
+  mkdir -p "$HOME/hooks"
+  git config --global core.hooksPath "$HOME/hooks"
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"$HOME/hooks/pre-commit"* ]]
+  [[ "$output" == *'h="$(git rev-parse --git-common-dir)/hooks/pre-commit"'* ]]
+  [[ "$output" == *'if [ -x "$h" ]; then "$h" "$@" || exit $?; fi'* ]]
+  # The printed lines, put in the hooksPath pre-commit, run the repository's hook.
+  { printf '#!/bin/sh\n'; printf '%s\n' "$output" | grep -E '^ +(h=|if \[)' | sed 's/^ *//'; } > "$HOME/hooks/pre-commit"
+  chmod +x "$HOME/hooks/pre-commit"
+  printf '#!/bin/sh\ntouch "%s/ran"\n' "$BATS_TEST_TMPDIR" > "$(hook_path)"
+  printf 'x\n' > chained.txt && git add chained.txt
+  git commit -q -m chained
+  [ -e "$BATS_TEST_TMPDIR/ran" ]
+}
+
+@test "#57: a hooksPath pre-commit that already chains the hook is reported as chained, not warned about" {
+  mkdir -p "$HOME/hooks"
+  git config --global core.hooksPath "$HOME/hooks"
+  printf '#!/bin/sh\nh="$(git rev-parse --git-common-dir)/hooks/pre-commit"\nif [ -x "$h" ]; then "$h" "$@" || exit $?; fi\n' > "$HOME/hooks/pre-commit"
+  chmod +x "$HOME/hooks/pre-commit"
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *WARNING* ]]
+  [[ "$output" == *"chains"* ]]
+}

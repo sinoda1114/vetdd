@@ -60,9 +60,20 @@ elif [ ! -x "$hook_dst" ]; then
   chmod +x "$hook_dst" && say "made $hook_dst executable" && changes=$((changes + 1))
 fi
 
-hooks_path="$(git -C "$root" config --get core.hooksPath || true)"
+# A core.hooksPath (often a global one) makes git ignore the repository's own hooks. Print the two
+# lines that chain this repository's hook from the hooksPath pre-commit; they run nothing in a
+# repository without one, so they are safe in a global hooks directory. core.hooksPath is never changed.
+hooks_path="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null || true)"
 if [ -n "$hooks_path" ]; then
-  say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst; call it from your hooksPath pre-commit to enable it (core.hooksPath was not changed)"
+  case "$hooks_path" in /*) ;; *) hooks_path="$root/$hooks_path" ;; esac
+  chain_line='h="$(git rev-parse --git-common-dir)/hooks/pre-commit"'
+  if [ -x "$hooks_path/pre-commit" ] && grep -qF -- "$chain_line" "$hooks_path/pre-commit"; then
+    say "core.hooksPath is '$hooks_path'; its pre-commit chains $hook_dst"
+  else
+    say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run it, put these two lines in $hooks_path/pre-commit (create it with #!/bin/sh first and make it executable if it does not exist; core.hooksPath was not changed):"
+    printf '    %s\n' "$chain_line"
+    printf '    %s\n' 'if [ -x "$h" ]; then "$h" "$@" || exit $?; fi'
+  fi
 fi
 
 [ "$changes" -gt 0 ] || say "no changes (already set up)"
