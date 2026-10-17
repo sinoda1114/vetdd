@@ -600,3 +600,19 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
     [ ! -e "$(git rev-parse --git-dir)/vetdd-calib/u2" ]
   done
 }
+
+# bash 3.2 matches a bracket range by the locale's collation: under en_US.UTF-8 or ja_JP.UTF-8,
+# [a-z] holds the capital letters too, so a range must never stand for "lower case" (CI on macOS
+# runs with LANG=en_US.UTF-8).
+@test "locale: plant and planted work under a UTF-8 locale (a tracked file is not taken for assume-unchanged)" {
+  local loc
+  loc="$(locale -a 2>/dev/null | grep -ixE 'en_US\.utf-?8' | head -1)"
+  [ -n "$loc" ] || skip "no en_US UTF-8 locale here"
+  git add -A && git commit -q -m fixed
+  LC_ALL="$loc" run cal plant s2 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '41\n' > value.txt
+  LC_ALL="$loc" run cal planted s2 --seam unit --oracle-version 1 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s2 '.runs[-1].outcome')" = "target_failure" ]
+}
