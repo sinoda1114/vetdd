@@ -17,4 +17,4 @@ Each workspace is a copy of `fixtures/ts-kata` at the commit under evaluation, a
 
 1. Remove the placed files (`.claude/` and `CLAUDE.md`): the judge must not see which variant ran, and `principles.md` would show it.
 2. Write `diff.patch`: `git add -N` the new files outside `.vetdd/`, then `git diff --no-ext-diff --binary HEAD -- . ':(exclude).vetdd' ':(exclude)diff.patch' ':(exclude)reply.md'`, then `git reset -q` (only the intent-to-add entries change, and the parent removes them).
-3. Write `reply.md`: the candidate's final message, verbatim.
+3. Write `reply.md`: the candidate's reply as `references/reply-format.md` defines it, verbatim: the part of its final message from the `## Result` heading (or the same heading in the candidate's language) to the end of its `## Attention` section, without any summary placed before it or block placed after it (from 2026-10-17 19:40; earlier runs kept the whole message).
