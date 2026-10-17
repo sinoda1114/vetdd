@@ -1,0 +1,51 @@
+{
+  "eval_id": "rubric-calibration",
+  "run_id": "20261017-1228",
+  "rubric_version": 1,
+  "labels": ["c1", "c2"],
+  "criteria": [
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/s1/meta.json:3-4 records an accepted before target_failure preceding an accepted after pass; c1/evidence/s1/runs/001-before.log:2 shows the expected February 28 assertion failing."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/evidence/s1/meta.json:2-3 records only an after run."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 1,
+          "evidence": "c1/artifact/reply.md:2 states the expected date without a Measured, inferred, or guess label; lines 4-5 label the run outcomes Measured and cite logs that show those outcomes."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:4 says 'Verified: all tests pass and the fix is correct. Done.' without an evidence path; c2/evidence/s1/meta.json:3 records only a run of src/dueDate.test.ts."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "partial"},
+    {"label": "c2", "verdict": "fail"}
+  ],
+  "winner": "c1",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "Both final after runs record cwd '.' (repo root) and node_version 'v24.16.0': c1/evidence/s1/meta.json:4 and c2/evidence/s1/meta.json:3."
+  },
+  "disagreements": [
+    "c2/artifact/reply.md:4 claims all tests pass and the fix is correct, while c2/evidence/s1/meta.json:3 and c2/evidence/s1/runs/001-after.log:1 show only eight passing tests from the targeted test file."
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "eval_id": "implement-business-days",
+  "run_id": "20261017-1505",
+  "rubric_version": 3,
+  "labels": ["c1", "c2"],
+  "criteria": [
+    {
+      "name": "agreed-values-asserted",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/src/dueDate.rollover.test.ts:7,12,17 asserts all three literals; c1/evidence/rollover-1/runs/021-integrated.log shows 4 tests passed on oracle version 2."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/src/dueDate.rollover.test.ts:7,12,17 asserts all three literals; c2/evidence/rollover-1/runs/008-integrated.log shows 4 tests passed."
+        }
+      ]
+    },
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/rollover-1/runs/013-calibration.log shows Saturday and Sunday assertion failures on oracle version 2; c1/evidence/rollover-1/meta.json records that red before the final green run, 021-integrated."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/evidence/rollover-1/runs/002-before.log shows Saturday and Sunday assertion failures; c2/evidence/rollover-1/meta.json records that red before the final green oracle run, 008-integrated."
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch changes only src/dueDate.ts and the new oracle; src/dueDate.ts:86-114 adds the requested option and weekend rollover while retaining the two-argument return path."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/diff.patch changes only src/dueDate.ts and the new oracle; src/dueDate.ts:86-114 adds the requested option and weekend rollover while retaining the two-argument behavior."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 0,
+          "evidence": "c1/artifact/reply.md:44-45 makes multiple factual Change claims without Measured, inferred, or guess labels; line 13 labels an independent date check Measured without a supporting artifact or evidence path."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:7 and 38 make multiple factual Oracle and Change claims without Measured, inferred, or guess labels; line 10 labels an independent calendar check Measured without a supporting artifact or evidence path."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "fail"},
+    {"label": "c2", "verdict": "fail"}
+  ],
+  "winner": "tie",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "No run conditions were recorded. The final after or integrated records are c1/evidence/rollover-1/meta.json run 23 and c2/evidence/rollover-1/meta.json run 10."
+  },
+  "disagreements": [
+    "c2/artifact/reply.md:45 says run 3 was not a test failure, while c2/evidence/rollover-1/runs/003-after.log records two failed assertions."
+  ]
+}
