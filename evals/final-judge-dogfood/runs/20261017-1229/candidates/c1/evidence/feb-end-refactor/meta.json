@@ -1,0 +1,167 @@
+{
+  "slice_id": "feb-end-refactor",
+  "oracle": {
+    "seam": "full suite",
+    "version": "1",
+    "files": [
+      {
+        "path": "src/dueDate.test.ts",
+        "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+      },
+      {
+        "path": "src/invoice.test.ts",
+        "sha256": "c4137bfd54e681169d7a49e28a5398ec46736413e3cdc4a245510c29480d4350"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "seq": 1,
+      "kind": "calibration",
+      "cmd": [
+        "npm",
+        "test"
+      ],
+      "exit_code": 1,
+      "outcome": "target_failure",
+      "accepted": true,
+      "started_at": "2026-09-25T22:56:21Z",
+      "ended_at": "2026-09-25T22:56:21Z",
+      "log": "runs/001-calibration.log",
+      "tree": {
+        "head_sha": "8349247a2a924368ac674d3d3e947f9069e486da",
+        "tree_hash": "ff56a818ea3362c316227de0010e34d29fe5530d"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "full suite",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/dueDate.test.ts",
+            "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+          },
+          {
+            "path": "src/invoice.test.ts",
+            "sha256": "c4137bfd54e681169d7a49e28a5398ec46736413e3cdc4a245510c29480d4350"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 2,
+      "kind": "calibration",
+      "cmd": [
+        "npm",
+        "test"
+      ],
+      "exit_code": 1,
+      "outcome": "target_failure",
+      "accepted": true,
+      "started_at": "2026-09-25T22:56:38Z",
+      "ended_at": "2026-09-25T22:56:38Z",
+      "log": "runs/002-calibration.log",
+      "tree": {
+        "head_sha": "8349247a2a924368ac674d3d3e947f9069e486da",
+        "tree_hash": "c2350d95c6f488ee93a8a57a0698ab0275e731bd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "full suite",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/dueDate.test.ts",
+            "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+          },
+          {
+            "path": "src/invoice.test.ts",
+            "sha256": "c4137bfd54e681169d7a49e28a5398ec46736413e3cdc4a245510c29480d4350"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 3,
+      "kind": "after",
+      "cmd": [
+        "npm",
+        "test"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-09-25T22:57:09Z",
+      "ended_at": "2026-09-25T22:57:10Z",
+      "log": "runs/003-after.log",
+      "tree": {
+        "head_sha": "8349247a2a924368ac674d3d3e947f9069e486da",
+        "tree_hash": "0c905ce078e9b04c767c4f775d88532e5c4192dd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "full suite",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/dueDate.test.ts",
+            "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+          },
+          {
+            "path": "src/invoice.test.ts",
+            "sha256": "c4137bfd54e681169d7a49e28a5398ec46736413e3cdc4a245510c29480d4350"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 4,
+      "kind": "after",
+      "cmd": [
+        "npm",
+        "test"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-09-25T22:57:38Z",
+      "ended_at": "2026-09-25T22:57:39Z",
+      "log": "runs/004-after.log",
+      "tree": {
+        "head_sha": "8349247a2a924368ac674d3d3e947f9069e486da",
+        "tree_hash": "0c905ce078e9b04c767c4f775d88532e5c4192dd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "full suite",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/dueDate.test.ts",
+            "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+          },
+          {
+            "path": "src/invoice.test.ts",
+            "sha256": "c4137bfd54e681169d7a49e28a5398ec46736413e3cdc4a245510c29480d4350"
+          }
+        ]
+      }
+    }
+  ]
+}
