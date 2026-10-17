@@ -11,7 +11,7 @@ v4 (sha256 `75f3e1c5314dfa7b3365726bafe64c148c0d8e98e1a93a3086c161843df37f8c`, a
 | 20261017-1459-v4 | the first full / no-principles run | tie (2,2,2,0 each) |
 | 20261017-1505-v4 | the second | tie (2,2,2,0 each) |
 
-The two calibration run ids say 20261018 by the parent's mistake; they ran on 2026-10-17 at about 19:15. They are kept as recorded, since each judge.json holds its run id.
+The two calibration run ids say 20261018 by the parent's mistake; they ran on 2026-10-17 at 19:22 and 19:23 (their judge.json.meta.json invoked_at); index.tsv carries those times. They are kept as recorded, since each judge.json holds its run id.
 
 ## A/B: before-labels (main 3be3dab) against reply-labels (feat/reply-labels b9f3386)
 
@@ -41,4 +41,4 @@ The change raises the labeled share from about a tenth to about four fifths, and
 
 ## Decision
 
-By step 8 this is inconclusive: the judge's winner is a tie and my reading prefers reply-labels. The human accepted the change on the measured share and no regression (2026-10-17), so it ships; no baseline is set, since no run has a judge winner. Criterion 4's all-or-nothing levels go to an issue (a v5 that grades the share of labeled claims).
+By step 8 this is inconclusive: the judge's winner is a tie and my reading prefers reply-labels. The human accepted the change on the measured share and no regression (2026-10-17), so it ships; no baseline is set, since no run has a judge winner. Criterion 4's all-or-nothing levels go to an issue (#60, a v5 that grades the share of labeled claims). The reply-format edits made after the last run here (f859266 and the review fixes after it: the reply only goes to the judge, a not-run judge is a claim, Measured cites a file or a local log, never a command) are not measured by any run of this eval; the next run of it, with v5, measures them.
