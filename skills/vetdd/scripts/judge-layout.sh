@@ -151,9 +151,11 @@ for s in "${slices[@]}"; do
   # A malformed record stops here as malformed, before anything is written: read as empty, its oracle
   # files would be reported as unnamed new files to delete.
   # One JSON document: an empty file or two concatenated objects are malformed too.
-  # A path with a control character would split the NUL-separated list below; evidence.sh refuses one.
+  # A path with a control character (C0, DEL, C1) would split the NUL-separated list below; the same
+  # rule as evidence.sh's for an inherited path, whatever jq's regex library takes for a control.
   jq -e -s 'def files_ok: type == "array"
-           and all(.[]; type == "object" and (.path | type) == "string" and (.path | test("[[:cntrl:]]") | not));
+           and all(.[]; type == "object" and (.path | type) == "string"
+                        and (.path | explode | all(. > 31 and (. < 127 or . > 159))));
          length == 1 and (.[0] | type == "object" and (.runs | type) == "array" and all(.runs[]; type == "object")
          and (.oracle == null or ((.oracle | type) == "object" and (.oracle.files == null or (.oracle.files | files_ok)))))' \
     "$root/.vetdd/evidence/$s/meta.json" >/dev/null 2>&1 \

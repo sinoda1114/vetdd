@@ -752,7 +752,8 @@ user_codex_home() {
   run judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -qx 'VETDD_TEST_PROXY=p' "$FAKE_SEEN.env.exec"
-  for bad in CODEX_HOME HOME 'a-b' CODEX_X OPENAI_BASE_URL XDG_CONFIG_HOME MISE_GLOBAL_CONFIG_FILE NODE_OPTIONS DYLD_INSERT_LIBRARIES LD_PRELOAD BASH_ENV; do
+  for bad in CODEX_HOME HOME 'a-b' CODEX_X OPENAI_BASE_URL XDG_CONFIG_HOME MISE_GLOBAL_CONFIG_FILE NODE_OPTIONS DYLD_INSERT_LIBRARIES LD_PRELOAD BASH_ENV \
+             GIT_CONFIG_GLOBAL ZDOTDIR SHELLOPTS BASHOPTS PS4 PYTHONPATH PERL5LIB RUBYOPT; do
     VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV $bad" run judge
     [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
   done
@@ -799,4 +800,50 @@ WRAP
   FAKE_EXEC_FAIL=1 run judge
   [ "$status" -eq 6 ] || { echo "$output"; false; }
   [[ "$output" == *VETDD_JUDGE_KEEP_ENV* ]]
+}
+
+@test "pr52 r7: codex's CA bundle variable is kept, and VETDD_JUDGE_KEEP_ENV may list names on separate lines" {
+  export CODEX_CA_CERTIFICATE=/etc/corp-ca.pem VETDD_TEST_PROXY=p
+  VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV
+VETDD_TEST_PROXY" run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'CODEX_CA_CERTIFICATE=/etc/corp-ca.pem' "$FAKE_SEEN.env.exec"
+  grep -qx 'VETDD_TEST_PROXY=p' "$FAKE_SEEN.env.exec"
+}
+
+@test "pr52 r7: the caller exporting judge.sh's own names (codex, jhome, keep_names) changes nothing" {
+  export codex=x jhome=/nonexistent keep_names=x
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local h; h="$(awk '$1 == "exec" { print $2 }' "$FAKE_SEEN.homes")"
+  [ "$h" != /nonexistent ] && [ "$(cat "$FAKE_SEEN.home_env.exec")" = "$h" ]
+  grep -q '^PATH=' "$FAKE_SEEN.env.exec"
+}
+
+@test "pr52 r7: an exported function or a readonly exported variable of the caller never reaches codex" {
+  vetdd_test_fn() { :; }
+  export -f vetdd_test_fn
+  declare -rx VETDD_TEST_RO=1
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  ! grep -q 'vetdd_test_fn' "$FAKE_SEEN.env.exec" || false
+  ! grep -q '^VETDD_TEST_RO=' "$FAKE_SEEN.env.exec" || false
+}
+
+@test "pr52 r7: an environment entry codex's environment cannot drop (not a variable name) stops the judge with exit 3 before exec" {
+  run env 'vetdd.test=1' "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" \
+    --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" == *vetdd.test* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "pr52 r7: a refused VETDD_JUDGE_KEEP_ENV name is shown without control characters, and RUST_LOG or SSL_KEYLOGFILE are refused" {
+  VETDD_JUDGE_KEEP_ENV="$(printf 'CODEX_\033]0;x')" run judge
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" != *$'\033'* ]]
+  for bad in RUST_LOG SSL_KEYLOGFILE RUBYLIB PROMPT_COMMAND; do
+    VETDD_JUDGE_KEEP_ENV="$bad" run judge
+    [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
+  done
 }

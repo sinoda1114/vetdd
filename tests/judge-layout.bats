@@ -726,3 +726,15 @@ setup() {
     [ ! -e "$OUT" ]
   done
 }
+
+@test "pr52 r7: an oracle path with a format character evidence.sh accepts (ZWNJ, in the C locale) is not malformed" {
+  export LC_ALL=C
+  f="$(printf 't\342\200\214.sh')"
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > "$f"
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file "$f" -- sh "$f" >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh "$f" >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
