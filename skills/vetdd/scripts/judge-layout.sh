@@ -184,7 +184,8 @@ fi
 newfiles=(); unnamed=(); envs=()
 # The list: the untracked files, the staged ones, and each oracle file of a slice not in HEAD, even
 # when .gitignore matches it (#63), since the judge reads the tests in the diff; one ls-files call
-# per oracle path, so a bad one drops only itself. No comment inside the list: bash 3.2 misreads an
+# per oracle path, so a bad one drops only itself; only a regular file, so a directory never brings
+# the ignored files under it. No comment inside the list: bash 3.2 misreads an
 # apostrophe in a comment within a process substitution.
 while IFS= read -r -d '' f; do
   case "$f" in .vetdd|.vetdd/*) continue ;; esac
@@ -198,26 +199,29 @@ while IFS= read -r -d '' f; do
 done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-standard -z
            [ ${#staged[@]} -eq 0 ] || printf '%s\0' "${staged[@]}"
            for o in ${oracles[@]+"${oracles[@]}"}; do
+             [ -f "$root/$o" ] && [ ! -L "$root/$o" ] || continue
              GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others -z -- "$o" 2>/dev/null
            done; } | LC_ALL=C sort -zu)
 # An oracle file is copied whole, ignored or not: a .env among them is refused here too (once, when
 # the list above already took it).
 for o in ${oracles[@]+"${oracles[@]}"}; do
   is_env "$o" || continue
-  dup=0; for e in ${envs[@]+"${envs[@]}"}; do [ "$e" = "$o" ] && dup=1; done
+  # Compared as git spells it: a record may write a//.env for a/.env.
+  dup=0; for e in ${envs[@]+"${envs[@]}"}; do [ "$e" = "$(printf '%s' "$o" | sed 's#//*#/#g')" ] && dup=1; done
   [ "$dup" -eq 1 ] || envs+=("$o")
 done
 [ ${#envs[@]} -eq 0 ] \
   || die "$(printf 'a .env file may hold secrets and never goes to the judge:%s\nunstage it (git rm --cached <path>), or move it out of the repository or into .gitignore' \
     "$(printf ' %s' "${envs[@]}")" | vetdd_printable)"
 # A new oracle file git did not list (behind a symbolic link, say) would be copied to artifact/tests
-# but be missing from the diff, as in #63: stop instead.
+# but be missing from the diff, as in #63: stop instead. A path that is not a regular file of the
+# repository is left to the copy below, which refuses it as missing, a link, or outside.
 for o in ${oracles[@]+"${oracles[@]}"}; do
   case "$o" in .vetdd|.vetdd/*) continue ;; esac
-  [ -e "$root/$o" ] || continue
+  vetdd_inside_repo "$root" "$o" && [ -f "$root/$o" ] || continue
   GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$idx" git -C "$root" ls-files --error-unmatch -- "$o" >/dev/null 2>&1 && continue
   ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$o" ] && ok=1; done
-  [ "$ok" -eq 1 ] || die "$(printf 'oracle file %s is new, but git does not list it (behind a symbolic link, or in a nested repository), so the diff would leave it out; record it under its real path' "$o" | vetdd_printable)"
+  [ "$ok" -eq 1 ] || die "$(printf 'oracle file %s is new, but git does not list it as a file of this repository (it is behind a symbolic link, or inside a nested repository or a submodule), so the diff would leave it out' "$o" | vetdd_printable)"
 done
 for n in ${news[@]+"${news[@]}"}; do
   ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$n" ] && ok=1; done

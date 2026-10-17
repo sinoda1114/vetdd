@@ -792,7 +792,54 @@ setup() {
   local m=.vetdd/evidence/s2/meta.json
   jq '(.. | objects | select(has("path")) | .path) |= sub("^ignored/"; "lnk/")' "$m" > "$m.new" && mv "$m.new" "$m"
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new lnk s2
-  [ "$status" -ne 0 ] || { cat "$OUT/c1/artifact/diff.patch"; false; }
-  [[ "$output" == *"lnk/t2.sh"* ]] || { echo "$output"; false; }
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"lnk/t2.sh"*"git does not list it"* ]] || { echo "$output"; false; }
   [ ! -e "$OUT" ]
+}
+
+# A record edited by hand (tamper): the oracle path is rewritten after the runs.
+ignored_oracle_slice() {
+  mkdir -p ignored && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > ignored/t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file ignored/t2.sh -- sh ignored/t2.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh ignored/t2.sh >/dev/null 2>&1
+}
+rewrite_oracle_path() {
+  local m=.vetdd/evidence/s2/meta.json
+  jq --arg p "$1" '(.. | objects | select(has("path")) | .path) |= $p' "$m" > "$m.new" && mv "$m.new" "$m"
+}
+
+@test "#63 r2: an oracle path that is a directory lists none of the ignored files under it" {
+  ignored_oracle_slice
+  printf 'x\n' > ignored/other.txt
+  rewrite_oracle_path ignored
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" != *"--include-new"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"git does not list it"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"ignored/other.txt"* ]] || { echo "$output"; false; }
+}
+
+@test "#63 r2: an oracle path outside the repository is refused as outside, not as a file git does not list" {
+  ignored_oracle_slice
+  cp ignored/t2.sh "$BATS_TEST_TMPDIR/outside.sh"
+  rewrite_oracle_path ../outside.sh
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"outside the repository"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"git does not list it"* ]] || { echo "$output"; false; }
+}
+
+@test "#63 r2: an ignored .env oracle recorded as cfg//.env is still named once" {
+  printf '.env\n' >> .gitignore && git add .gitignore && git commit -qm ignore-env
+  mkdir -p cfg && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > cfg/.env
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file cfg/.env -- sh cfg/.env >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh cfg/.env >/dev/null 2>&1
+  rewrite_oracle_path cfg//.env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ "$(printf '%s\n' "$output" | grep 'never goes to the judge:' | sed 's/.*judge://')" = " cfg/.env" ] || { echo "$output"; false; }
 }
