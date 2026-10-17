@@ -51,7 +51,7 @@ env > "$FAKE_SEEN.env.$1"
 [ -z "${CODEX_HOME:-}" ] || { ls -A "$CODEX_HOME"; [ ! -e "$CODEX_HOME/auth.json" ] && [ ! -L "$CODEX_HOME/auth.json" ] || [ -r "$CODEX_HOME/auth.json" ] || echo unreadable-auth; } > "$FAKE_SEEN.home.$1" 2>/dev/null
 if [ "$1" = login ] && [ "$2" = status ]; then
   printf '%s\n' "$@" > "$FAKE_SEEN.login_args"
-  if [ -n "${FAKE_LOGGED_OUT:-}" ]; then echo "Not logged in"; exit 1; fi
+  if [ -n "${FAKE_LOGGED_OUT:-}" ]; then [ -z "${FAKE_LOGIN_ESC:-}" ] || printf '\033[31m'; echo "Not logged in"; exit 1; fi
   echo "Logged in using ChatGPT"; exit 0
 fi
 out=""; cdir=""; prev=""
@@ -81,7 +81,7 @@ FAKE
   chmod +x "$BATS_TEST_TMPDIR/fake/codex"
   export VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/fake/codex"
   # codex runs with an allowlisted environment: the fake's own variables are kept by name.
-  export VETDD_JUDGE_KEEP_ENV="FAKE_VERSION_READS FAKE_ARGS FAKE_EXEC_FAIL FAKE_LOGGED_OUT FAKE_OLD_CODEX FAKE_REFRESH FAKE_REPLY FAKE_SEEN FAKE_SHIM FAKE_STDIN FAKE_USER_AUTH"
+  export VETDD_JUDGE_KEEP_ENV="FAKE_LOGIN_ESC FAKE_VERSION_READS FAKE_ARGS FAKE_EXEC_FAIL FAKE_LOGGED_OUT FAKE_OLD_CODEX FAKE_REFRESH FAKE_REPLY FAKE_SEEN FAKE_SHIM FAKE_STDIN FAKE_USER_AUTH"
   unset VETDD_MODEL_JUDGE VETDD_MODEL_JUDGE_EFFORT CODEX_HOME
   # The user's file login (isolate_git set HOME to a private directory).
   mkdir -p "$HOME/.codex" && printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
@@ -842,8 +842,35 @@ VETDD_TEST_PROXY" run judge
   VETDD_JUDGE_KEEP_ENV="$(printf 'CODEX_\033]0;x')" run judge
   [ "$status" -eq 2 ] || { echo "$output"; false; }
   [[ "$output" != *$'\033'* ]]
-  for bad in RUST_LOG SSL_KEYLOGFILE RUBYLIB PROMPT_COMMAND; do
+  for bad in RUST_LOG SSLKEYLOGFILE SSL_KEYLOGFILE RUBYLIB PROMPT_COMMAND PERLLIB JAVA_TOOL_OPTIONS _JAVA_OPTIONS GCONV_PATH \
+             PYENV_VERSION RBENV_VERSION NODENV_VERSION FNM_DIR N_PREFIX COREPACK_HOME BUN_INSTALL npm_config_prefix NPM_CONFIG_PREFIX; do
     VETDD_JUDGE_KEEP_ENV="$bad" run judge
     [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
   done
+}
+
+@test "pr52 r8: the caller exporting the names the clearing loops use (n, f, e) changes nothing" {
+  export n=caller-n f=caller-f e=caller-e
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  for v in n f e; do
+    ! grep -q "^$v=" "$FAKE_SEEN.env.exec" || false
+    ! grep -q "^$v=" "$FAKE_SEEN.env.login" || false
+  done
+}
+
+@test "pr52 r8: when env -0 cannot list the environment, the judge stops (exit 1) instead of skipping the check" {
+  printf '#!/bin/sh\n[ "$1" != -0 ] || exit 0\nexec /usr/bin/env "$@"\n' > "$BATS_TEST_TMPDIR/guard/env"
+  chmod +x "$BATS_TEST_TMPDIR/guard/env"
+  run judge
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"env -0"* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "pr52 r8: codex's login status output is shown without control characters when it is not logged in" {
+  run env FAKE_LOGGED_OUT=1 FAKE_LOGIN_ESC=1 "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" \
+    --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" != *$'\033'* ]]
 }

@@ -153,11 +153,14 @@ for s in "${slices[@]}"; do
   # One JSON document: an empty file or two concatenated objects are malformed too.
   # A path with a control character (C0, DEL, C1) would split the NUL-separated list below; the same
   # rule as evidence.sh's for an inherited path, whatever jq's regex library takes for a control.
-  jq -e -s 'def files_ok: type == "array"
-           and all(.[]; type == "object" and (.path | type) == "string"
-                        and (.path | explode | all(. > 31 and (. < 127 or . > 159))));
-         length == 1 and (.[0] | type == "object" and (.runs | type) == "array" and all(.runs[]; type == "object")
-         and (.oracle == null or ((.oracle | type) == "object" and (.oracle.files == null or (.oracle.files | files_ok)))))' \
+  # A run's log and seq become lines of the list below too, so they get the same rule.
+  jq -e -s 'def plain: type == "string" and (explode | all(. > 31 and (. < 127 or . > 159)));
+         def files_ok: type == "array" and all(.[]; type == "object" and (.path | plain));
+         def oracle_ok: . == null or (type == "object" and (.files == null or (.files | files_ok)));
+         length == 1 and (.[0] | type == "object" and (.oracle | oracle_ok)
+           and (.runs | type) == "array"
+           and all(.runs[]; type == "object" and (.oracle | oracle_ok)
+                            and (.log == null or (.log | plain)) and (.seq == null or (.seq | type) == "number")))' \
     "$root/.vetdd/evidence/$s/meta.json" >/dev/null 2>&1 \
     || die "could not read the evidence of slice $s (its meta.json is malformed)" 1
   while IFS= read -r -d '' f; do oracles+=("$f"); done \

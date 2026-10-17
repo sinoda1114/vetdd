@@ -718,7 +718,7 @@ setup() {
   printf '42\n' > value.txt
   ev s2 after -- sh t2.sh >/dev/null 2>&1
   cp .vetdd/evidence/s2/meta.json "$BATS_TEST_TMPDIR/good.json"
-  for broken in '.oracle = "x"' '.oracle.files = [1]' '.oracle.files = "x"' '.oracle.files = [{"path": 1}]' '.oracle.files = false' '.runs = {}' '.runs = [1]' '.oracle.files[0].path = "t2\u0001.sh"' 'null' 'empty' '., .'; do
+  for broken in '.oracle = "x"' '.oracle.files = [1]' '.oracle.files = "x"' '.oracle.files = [{"path": 1}]' '.oracle.files = false' '.runs = {}' '.runs = [1]' '.runs[0].oracle.files = [1]' '.runs[0].log = "runs/001-before.log\nO\tx"' '.runs[0].seq = "1"' '.oracle.files[0].path = "t2\u0001.sh"' 'null' 'empty' '., .'; do
     jq "$broken" "$BATS_TEST_TMPDIR/good.json" > .vetdd/evidence/s2/meta.json
     run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
     [ "$status" -eq 1 ] || { echo "$broken: $output"; false; }
