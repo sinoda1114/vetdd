@@ -16,7 +16,7 @@ Variants: `full` (skills/vetdd at 7381e76, the same as main 6c3152c) and `no-pri
 - Criterion 1, my literal reading: the run-1 no-principles candidate split the three values across two files, which the letter "an oracle file ... asserts all three" does not cover; the judge read it as the intent (2). I agree the intent is met.
 - Criterion 4: every candidate followed reply-format.md's sections but left most Oracle and Change statements unlabeled, and two labeled a calendar check Measured with no path. I score all four 0, as the judge did.
 
-I agree with the judge on every score except my literal 1 noted above, and that one does change run 1: under the letter, the no-principles candidate totals 7 and the full one 8, so run 1 would go to `full` by one point instead of a tie. The judge read the intent and scored a tie; since the judge's winner and my reading then disagree for run 1, step 8 still gives inconclusive, and run 2 is a tie under either reading. The criterion's wording ("an oracle file") is a rubric gap for split oracles: a candidate rubric v4 would say "the oracle files together".
+I agree with the judge on every score except my literal 1 noted above, and that one does change run 1: under the letter, the no-principles candidate totals 5 and the full one 6 (the judge gave both 6), so run 1 would go to `full` by one point instead of a tie. The judge read the intent and scored a tie; since the judge's winner and my reading then disagree for run 1, step 8 still gives inconclusive, and run 2 is a tie under either reading. The criterion's wording ("an oracle file") is a rubric gap for split oracles: a candidate rubric v4 would say "the oracle files together".
 
 ## Decision
 
