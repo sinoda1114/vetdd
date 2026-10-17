@@ -104,8 +104,11 @@ hook_path() { echo "$REPO/.git/hooks/pre-commit"; }
 chain_line() { printf '%s\n' "$1" | grep -E '^ +vetdd_hook=' | sed 's/^ *//'; }
 
 # Puts the printed line into $HOME/hooks/pre-commit (core.hooksPath is set globally to $HOME/hooks).
+# Fails when the output holds no line, so a test never goes on with an empty hook.
 chain_into_global_hooks() {
-  printf '#!/bin/sh\n%s\n' "$(chain_line "$1")" > "$HOME/hooks/pre-commit" && chmod +x "$HOME/hooks/pre-commit"
+  local line; line="$(chain_line "$1")"
+  [ -n "$line" ] || { echo "no line in: $1"; return 1; }
+  printf '#!/bin/sh\n%s\n' "$line" > "$HOME/hooks/pre-commit" && chmod +x "$HOME/hooks/pre-commit"
 }
 
 global_hooks_path() { mkdir -p "$HOME/hooks" && git config --global core.hooksPath "$HOME/hooks"; }
@@ -206,6 +209,9 @@ global_hooks_path() { mkdir -p "$HOME/hooks" && git config --global core.hooksPa
   cp -R "$SCRIPTS" "$odd"
   run "$odd/setup-project.sh"
   chain_into_global_hooks "$output"
+  # The file holds the escaped path, and the second run finds it.
+  run "$odd/setup-project.sh"
+  [[ "$output" != *WARNING* ]] || { echo "$output"; false; }
   mkdir -p .vetdd/evidence
   printf 'x\n' > odd.txt && git add odd.txt
   run git commit -q -m odd
