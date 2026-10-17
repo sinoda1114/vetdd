@@ -16,3 +16,7 @@ Audits: empty candidate 0 on every criterion in every run (Measured); label swap
 Rubric revisions v2 and v3 were made before any candidate ran, each agreed by the human (2026-10-17), so principle 6 (never revise after a result) is not touched: both fixed a mismatch between the rubric and vetdd's own reply format (reply-format.md opens with an unlabeled result line, and replies cite workspace paths). The known-good's reply was edited once (labeling its seam and version) between 1430 and 1432: that changes the calibration artifact, not the oracle.
 
 Collection friction: package-lock.json holds "baseline" (baseline-browser-mapping), an origin word; sanitize-candidates.sh has no --allow-words, so every run used --strip baseline (#54). Model names and evaluation words in the placed skill, and "claude" in CLAUDE.md and the brief, were allowed in the candidate check by the human (Frame, 2026-10-17); the judge's copy holds no placed file.
+
+## Pruned before commit
+
+The sanitized copies kept in the repository leave out each candidate's artifact/package-lock.json (byte for byte the fixture's, which no candidate changed; the judge saw it with "baseline" redacted), and the candidates of the superseded calibration runs 1243-cal, 1246-cal2, 1430-cal3, and 1430-cal3-swap (the same three artifacts as 1432-cal4, but for one line of the known-good reply); their judge.json, rubric.md, and variants.json stay.
