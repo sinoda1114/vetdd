@@ -13,8 +13,8 @@
 # -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: CODEX_HOME
 # is a second private temporary directory holding only a link to the user's auth.json (from
 # $CODEX_HOME, else ~/.codex; a refreshed token is written back; a keyring login stops with exit 3),
-# also its HOME (a node version manager's directories, mise, asdf, Volta, are passed on so an npm codex
-# behind their shim still starts; a codex that cannot start there stops with exit 3 before exec), the
+# also its HOME (a codex that cannot start there, such as one behind a node version manager's shim,
+# stops with exit 3 before exec), the
 # login is kept in that file whatever codex's default store, and exec runs --ephemeral
 # --ignore-user-config --ignore-rules with web search off and the core environment only, so the user's
 # config (MCP servers, tools, a model provider of their own), AGENTS.md, personal skills, rules, and
@@ -155,25 +155,14 @@ keep_login() {
 trap 'keep_login; rm -rf "$jhome"' EXIT
 ln -s "$user_home/auth.json" "$jhome/auth.json" || die "cannot link the codex login into $jhome" 1
 export CODEX_HOME="$jhome"
-# Every codex call from here runs with the private HOME too. An npm codex starts through node, and a
-# version manager's shim finds its versions under $HOME unless told where: pass on the directories the
-# user's own HOME holds, when the caller has not set them. Then check codex starts there at all, so a
-# shim that still fails stops here with a clear message, not in exec as a judge failure.
-# mise keeps the trust of a project's mise.toml in its state directory; asdf reads the global versions
-# from ~/.tool-versions, which a link in the private HOME reaches.
-vm_env=()
-if [ -n "${HOME:-}" ]; then
-  for kv in "MISE_DATA_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/mise" "MISE_CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/mise" \
-            "MISE_STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/mise" "ASDF_DATA_DIR=$HOME/.asdf" "VOLTA_HOME=$HOME/.volta"; do
-    if [ -z "$(printenv "${kv%%=*}")" ] && [ -d "${kv#*=}" ]; then vm_env+=("$kv"); fi
-  done
-  if [ -f "$HOME/.tool-versions" ]; then
-    ln -s "$HOME/.tool-versions" "$jhome/.tool-versions" || die "cannot link ~/.tool-versions into $jhome" 1
-  fi
-fi
-codex_private() { ( export HOME="$jhome" ${vm_env[@]+"${vm_env[@]}"} && exec "$codex" "$@" ); }
+# Every codex call from here runs with the private HOME too, so codex is checked to start there before
+# exec. A codex that starts through a node version manager's shim (an npm install under mise, asdf,
+# Volta) looks for its versions under $HOME and fails there: it stops here with a clear message, not in
+# exec as a judge failure. Passing the manager's directories on is not done: the shim would then apply
+# the user's own settings, which may set CODEX_HOME or HOME and undo the isolation.
+codex_private() { ( export HOME="$jhome" && exec "$codex" "$@" ); }
 started="$(codex_private --version 2>&1)" \
-  || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); passed on: $(printf '%s ' ${vm_env[@]+"${vm_env[@]%%=*}"})~/.tool-versions when present. Set what else its node version manager reads from HOME in the environment, or install the standalone codex" 3
+  || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); a codex started through a node version manager's shim needs HOME. Install the standalone codex, or set VETDD_CODEX_BIN to a codex that starts without HOME" 3
 # The flags (codex 0.159 and later) are checked on the codex that runs, so an older one stops here, not in exec.
 help="$(codex_private exec --help 2>/dev/null)"; missing=""
 for f in --ephemeral --ignore-user-config --ignore-rules; do

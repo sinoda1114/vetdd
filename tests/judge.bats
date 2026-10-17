@@ -32,17 +32,10 @@ setup() {
 #!/bin/sh
 # Fake codex: `login status` honours FAKE_LOGGED_OUT; `exec` records argv and stdin, then writes FAKE_REPLY to -o.
 # `exec --help` lists the isolation flags unless FAKE_OLD_CODEX is set.
-# FAKE_SHIM=<dir under HOME>: codex behind a node version manager's shim (mise), which finds its
-# versions in MISE_DATA_DIR, else under $HOME, and fails without them on every call. FAKE_SHIM_STATE
-# also needs mise's state (trusted config files), FAKE_SHIM_TOOL_VERSIONS asdf's global ~/.tool-versions.
-if [ -n "${FAKE_SHIM:-}" ] && [ ! -d "${MISE_DATA_DIR:-${HOME:-/nonexistent}/$FAKE_SHIM}" ]; then
+# FAKE_SHIM=<dir under HOME>: codex behind a node version manager's shim, which finds its versions
+# under $HOME and fails without them on every call.
+if [ -n "${FAKE_SHIM:-}" ] && [ ! -d "${HOME:-/nonexistent}/$FAKE_SHIM" ]; then
   echo "mise ERROR No version is set for shim: codex" >&2; exit 1
-fi
-if [ -n "${FAKE_SHIM_STATE:-}" ] && [ ! -d "${MISE_STATE_DIR:-${HOME:-/nonexistent}/.local/state/mise}" ]; then
-  echo "mise ERROR Config files in mise.toml are not trusted" >&2; exit 1
-fi
-if [ -n "${FAKE_SHIM_TOOL_VERSIONS:-}" ] && [ ! -f "${HOME:-/nonexistent}/.tool-versions" ]; then
-  echo "No version is set for command node" >&2; exit 1
 fi
 [ "$1" != --version ] || { echo "codex-cli 0.0.0-fake"; exit 0; }
 if [ "$1" = exec ] && [ "${2:-}" = --help ]; then
@@ -86,8 +79,6 @@ FAKE
   chmod +x "$BATS_TEST_TMPDIR/fake/codex"
   export VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/fake/codex"
   unset VETDD_MODEL_JUDGE VETDD_MODEL_JUDGE_EFFORT CODEX_HOME
-  # The runner's own version managers must not decide what the private HOME passes on.
-  unset MISE_DATA_DIR MISE_CONFIG_DIR MISE_STATE_DIR ASDF_DATA_DIR VOLTA_HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME
   # The user's file login (isolate_git set HOME to a private directory).
   mkdir -p "$HOME/.codex" && printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
 }
@@ -713,18 +704,11 @@ user_codex_home() {
   [ -z "$(ls -A "$BATS_TEST_TMPDIR/dots" | grep -v '^auth.json$')" ]
 }
 
-@test "review r1: codex behind a version manager's shim (mise) runs with the private HOME: the manager's data directory is passed on" {
+@test "review r1: a codex behind a version manager's shim, which needs HOME, stops with exit 3 before exec and says what to do" {
   mkdir -p "$HOME/.local/share/mise"
   FAKE_SHIM=.local/share/mise run judge
-  [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ -s "$FAKE_ARGS" ]
-}
-
-@test "review r1: a codex that cannot start with the private HOME stops with exit 3 before exec, and says so" {
-  mkdir -p "$HOME/.other-manager"
-  FAKE_SHIM=.other-manager run judge
   [ "$status" -eq 3 ] || { echo "$output"; false; }
-  [[ "$output" == *"private HOME"* ]]
+  [[ "$output" == *"private HOME"* ]] && [[ "$output" == *standalone* ]] && [[ "$output" == *VETDD_CODEX_BIN* ]]
   [ ! -e "$FAKE_ARGS" ]
 }
 
@@ -733,19 +717,6 @@ user_codex_home() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -qx 'cli_auth_credentials_store="file"' "$FAKE_SEEN.login_args"
   grep -qx 'cli_auth_credentials_store="file"' "$FAKE_ARGS"
-}
-
-@test "review r1 round 2: mise's state (trusted config files) is passed on, so a project's mise.toml stays trusted" {
-  mkdir -p "$HOME/.local/share/mise" "$HOME/.local/state/mise"
-  FAKE_SHIM=.local/share/mise FAKE_SHIM_STATE=1 run judge
-  [ "$status" -eq 0 ] || { echo "$output"; false; }
-}
-
-@test "review r1 round 2: asdf's global ~/.tool-versions is reachable from the private HOME through a link, left as it was" {
-  printf 'nodejs 24.0.0\n' > "$HOME/.tool-versions"
-  FAKE_SHIM_TOOL_VERSIONS=1 run judge
-  [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "$(cat "$HOME/.tool-versions")" = 'nodejs 24.0.0' ]
 }
 
 @test "review r1 round 2: the isolation flags are checked on the codex that runs, with the private HOME" {
