@@ -99,3 +99,23 @@ rubric の 2 回の改訂は、どちらも rubric が vetdd 自身の返信の�
 4. **sanitize-candidates.sh に製品の語を許可する口が無い。** fixture の package-lock.json の `baseline-browser-mapping` が出所の語 `baseline` に当たり、集められませんでした。`--strip baseline` で回避しています（#54）。
 5. **候補も親と同じ摩擦を踏んだ。** グローバルの core.hooksPath の警告、zsh の単語分割、反映前の編集のまま走らせた after（accepted=false）です。
 6. **候補はユーザーのグローバル指示を引き継ぐ。** 2 体は日本語で返信し、📝 のまとめも付けていました。rubric は言語に依らないので、採点には影響していません。
+
+## Phase 5 の再現: verify skill の生成と、テスト免除の変更（B 手順）
+
+完了条件は「fixture に verify skill を生成し、Launch → Doctor → Drive → Evidence → Cleanup を 1 周して証拠を残す。テスト免除の変更（`.npmrc` の値変更）を verify で判定する流れを 1 回通す」です。前回は前者だけで、B 手順と最終判定は未実施でした。
+
+- 作業場所: fixture の複製（既存の `.claude/` は除外）。
+- 合意（前回と同じ）: CLI の 2 機能（due、usage）、due は 1 月の日付（2 月の月末はバグの教材）、node v24、サーバーなし。
+- A 手順（生成）: テンプレートから SKILL.md、features 3 本、scripts 5 本を書き、期待値は README の例と `src/cli.ts` の usage 定数から取りました。較正は `--expect "closing: 2026-02-01"` で target_failure、合意の期待値で pass、cleanup の後も成果物が残ることを確かめ、skill をコミットしました。
+- B 手順: `.npmrc` に `fund=false` を足しました。変更前の green（due、usage）、変更後の after、integrated はすべて pass です。変異テストと import の監査は「当てはまらない」として理由を記録しました。`check-evidence: ts-kata-verify: OK`。
+- 最終判定は 3 回とも partial でした。
+  1. 期待値の出どころ（README と src/cli.ts）を Measured と書いたが、そのファイルは判定者に渡っていない（返信の欠点。直した）。
+  2. 返信に `.agent/...` と書いたため、judge-layout.sh が `.claude` を `.agent2` にし、パスがずれた（摩擦 8）。
+  3. Attention の 1 行にパスが無い（返信の欠点）。あわせて red→green を 1 点とされた。verify の較正 red（期待値の上書き）を rubric の「合意した振る舞いの失敗」と読むかどうかが曖昧で、判定者の点が 2・2・1 と揺れた（#56）。
+- 時刻: 15:08:25 開始、15:09:44 に B 手順まで完了（約 1 分 20 秒、skill の執筆を含む）。判定 3 回で 15:12:58 まで。
+
+### 摩擦
+
+7. **設定変更の監査が手順書に無い。** 変異テストは JS/TS が対象で、表面が読まない設定ファイルには欠陥を植えられません（#56）。
+8. **返信に `.agent` と書くと `.agent2` になる。** 作者は最終的な名前を前もって知れないので、作業場所の名前で書くのが正解です。手順書に無い（#56）。
+9. **verify の判定入力の組み方。** 手順書は手で組むとしていますが、judge-layout.sh で土台を組み、verify の成果物の写しを足す方が安全でした（#56）。
