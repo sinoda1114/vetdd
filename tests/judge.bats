@@ -32,16 +32,26 @@ setup() {
 #!/bin/sh
 # Fake codex: `login status` honours FAKE_LOGGED_OUT; `exec` records argv and stdin, then writes FAKE_REPLY to -o.
 # `exec --help` lists the isolation flags unless FAKE_OLD_CODEX is set.
+# FAKE_SHIM=<dir under HOME>: codex behind a node version manager's shim, which finds its versions
+# in MISE_DATA_DIR, else under $HOME, and fails without them on every call.
+if [ -n "${FAKE_SHIM:-}" ] && [ ! -d "${MISE_DATA_DIR:-${HOME:-/nonexistent}/$FAKE_SHIM}" ]; then
+  echo "mise ERROR No version is set for shim: codex" >&2; exit 1
+fi
+# FAKE_VERSION_READS: a codex that reads stdin when asked its version (what it got is recorded).
+[ "$1" != --version ] || { [ -z "${FAKE_VERSION_READS:-}" ] || cat > "$FAKE_SEEN.version_stdin"; echo "codex-cli 0.0.0-fake"; exit 0; }
 if [ "$1" = exec ] && [ "${2:-}" = --help ]; then
+  printf '%s\n' "${HOME:-unset}" > "$FAKE_SEEN.home_env.help"
   [ -n "${FAKE_OLD_CODEX:-}" ] || printf '      --ephemeral\n      --ignore-user-config\n      --ignore-rules\n'
   exit 0
 fi
 # Which CODEX_HOME each call ran with, and what it held.
 printf '%s %s\n' "$1" "${CODEX_HOME:-unset}" >> "$FAKE_SEEN.homes"
 printf '%s\n' "${HOME:-unset}" > "$FAKE_SEEN.home_env.$1"
+env > "$FAKE_SEEN.env.$1"
 [ -z "${CODEX_HOME:-}" ] || { ls -A "$CODEX_HOME"; [ ! -e "$CODEX_HOME/auth.json" ] && [ ! -L "$CODEX_HOME/auth.json" ] || [ -r "$CODEX_HOME/auth.json" ] || echo unreadable-auth; } > "$FAKE_SEEN.home.$1" 2>/dev/null
 if [ "$1" = login ] && [ "$2" = status ]; then
-  if [ -n "${FAKE_LOGGED_OUT:-}" ]; then echo "Not logged in"; exit 1; fi
+  printf '%s\n' "$@" > "$FAKE_SEEN.login_args"
+  if [ -n "${FAKE_LOGGED_OUT:-}" ]; then [ -z "${FAKE_LOGIN_ESC:-}" ] || printf '\033[31m'; echo "Not logged in"; exit 1; fi
   echo "Logged in using ChatGPT"; exit 0
 fi
 out=""; cdir=""; prev=""
@@ -70,6 +80,8 @@ cp "$FAKE_REPLY" "$out"
 FAKE
   chmod +x "$BATS_TEST_TMPDIR/fake/codex"
   export VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/fake/codex"
+  # codex runs with an allowlisted environment: the fake's own variables are kept by name.
+  export VETDD_JUDGE_KEEP_ENV="FAKE_LOGIN_ESC FAKE_VERSION_READS FAKE_ARGS FAKE_EXEC_FAIL FAKE_LOGGED_OUT FAKE_OLD_CODEX FAKE_REFRESH FAKE_REPLY FAKE_SEEN FAKE_SHIM FAKE_STDIN FAKE_USER_AUTH"
   unset VETDD_MODEL_JUDGE VETDD_MODEL_JUDGE_EFFORT CODEX_HOME
   # The user's file login (isolate_git set HOME to a private directory).
   mkdir -p "$HOME/.codex" && printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
@@ -694,4 +706,189 @@ user_codex_home() {
   [ -L "$HOME/.codex/auth.json" ]
   [ "$(cat "$BATS_TEST_TMPDIR/dots/auth.json")" = '{"token":"refreshed"}' ]
   [ -z "$(ls -A "$BATS_TEST_TMPDIR/dots" | grep -v '^auth.json$')" ]
+}
+
+@test "review r1: a codex behind a version manager's shim, which needs HOME, stops with exit 3 before exec and says what to do" {
+  mkdir -p "$HOME/.local/share/mise"
+  FAKE_SHIM=.local/share/mise run judge
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" == *"private HOME"* ]] && [[ "$output" == *standalone* ]] && [[ "$output" == *VETDD_CODEX_BIN* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "review r2: login status and exec both keep the login in the file store, whatever codex's default" {
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'cli_auth_credentials_store="file"' "$FAKE_SEEN.login_args"
+  grep -qx 'cli_auth_credentials_store="file"' "$FAKE_ARGS"
+}
+
+@test "review r1 round 2: the isolation flags are checked on the codex that runs, with the private HOME" {
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat "$FAKE_SEEN.home_env.help")" = "$(cat "$FAKE_SEEN.home_env.exec")" ]
+}
+
+@test "review r4: a version manager's directory set in the caller's environment does not reach the private HOME either" {
+  mkdir -p "$HOME/.local/share/mise"
+  MISE_DATA_DIR="$HOME/.local/share/mise" FAKE_SHIM=.local/share/mise run judge
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "pr52: codex runs with an allowlisted environment: a mise config selector or any other variable of the caller never reaches it" {
+  export MISE_GLOBAL_CONFIG_FILE="$BATS_TEST_TMPDIR/mise.toml" MISE_CONFIG_FILE=x VETDD_TEST_CALLER_ONLY=1
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  for v in MISE_GLOBAL_CONFIG_FILE MISE_CONFIG_FILE VETDD_TEST_CALLER_ONLY; do
+    ! grep -q "^$v=" "$FAKE_SEEN.env.exec" || false
+    ! grep -q "^$v=" "$FAKE_SEEN.env.login" || false
+  done
+  grep -q '^PATH=' "$FAKE_SEEN.env.exec"
+}
+
+@test "pr52: VETDD_JUDGE_KEEP_ENV keeps a named variable, never HOME or CODEX_HOME, and refuses a name that is not one" {
+  export TEST_CORP_PROXY=p VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV TEST_CORP_PROXY"
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'TEST_CORP_PROXY=p' "$FAKE_SEEN.env.exec"
+  for bad in CODEX_HOME HOME 'a-b' CODEX_X OPENAI_BASE_URL XDG_CONFIG_HOME MISE_GLOBAL_CONFIG_FILE NODE_OPTIONS DYLD_INSERT_LIBRARIES LD_PRELOAD BASH_ENV \
+             GIT_CONFIG_GLOBAL ZDOTDIR SHELLOPTS BASHOPTS PS4 PYTHONPATH PERL5LIB RUBYOPT; do
+    VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV $bad" run judge
+    [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
+  done
+}
+
+@test "pr52: the start checks read nothing from the caller's stdin, so a codex that reads it cannot hang them" {
+  FAKE_VERSION_READS=1 run judge <<< "the caller's stdin"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -s "$FAKE_SEEN.version_stdin" ]
+}
+
+@test "pr52 r1: a kept variable's value goes to codex in its environment, never on a command line (ps, audit logs)" {
+  cat > "$BATS_TEST_TMPDIR/guard/env" <<WRAP
+#!/bin/sh
+printf '%s\\n' "\$@" >> "$BATS_TEST_TMPDIR/env-argv"
+exec /usr/bin/env "\$@"
+WRAP
+  chmod +x "$BATS_TEST_TMPDIR/guard/env"
+  export HTTPS_PROXY="http://u:s3cr3t-proxy@proxy.invalid:1"
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'HTTPS_PROXY=http://u:s3cr3t-proxy@proxy.invalid:1' "$FAKE_SEEN.env.exec"
+  [ ! -e "$BATS_TEST_TMPDIR/env-argv" ] || ! grep -q s3cr3t-proxy "$BATS_TEST_TMPDIR/env-argv" || false
+}
+
+@test "pr52 r1: VETDD_JUDGE_KEEP_ENV is split into names without pathname expansion" {
+  mkdir "$BATS_TEST_TMPDIR/only-readme" && cd "$BATS_TEST_TMPDIR/only-readme"
+  touch README
+  VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV *" run judge
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"holds *,"* ]]
+}
+
+@test "pr52 r1: a codex path with = in it still runs" {
+  mkdir -p "$BATS_TEST_TMPDIR/a=b"
+  cp "$VETDD_CODEX_BIN" "$BATS_TEST_TMPDIR/a=b/codex"
+  VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/a=b/codex" run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "pr52 r1: a bad VETDD_JUDGE_KEEP_ENV is a usage error before codex is looked for, and a failed exec points to it" {
+  VETDD_CODEX_BIN=vetdd-no-such-codex-binary VETDD_JUDGE_KEEP_ENV="a-b" run judge
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  FAKE_EXEC_FAIL=1 run judge
+  [ "$status" -eq 6 ] || { echo "$output"; false; }
+  [[ "$output" == *VETDD_JUDGE_KEEP_ENV* ]]
+}
+
+@test "pr52 r7: codex's CA bundle variable is kept, and VETDD_JUDGE_KEEP_ENV may list names on separate lines" {
+  export CODEX_CA_CERTIFICATE=/etc/corp-ca.pem TEST_CORP_PROXY=p
+  VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV
+TEST_CORP_PROXY" run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'CODEX_CA_CERTIFICATE=/etc/corp-ca.pem' "$FAKE_SEEN.env.exec"
+  grep -qx 'TEST_CORP_PROXY=p' "$FAKE_SEEN.env.exec"
+}
+
+@test "pr52 r7: the caller exporting judge.sh's own names (codex, jhome, keep_names) changes nothing" {
+  export codex=x jhome=/nonexistent keep_names=x
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local h; h="$(awk '$1 == "exec" { print $2 }' "$FAKE_SEEN.homes")"
+  [ "$h" != /nonexistent ] && [ "$(cat "$FAKE_SEEN.home_env.exec")" = "$h" ]
+  grep -q '^PATH=' "$FAKE_SEEN.env.exec"
+}
+
+@test "pr52 r7: an exported function or a readonly exported variable of the caller never reaches codex" {
+  vetdd_test_fn() { :; }
+  export -f vetdd_test_fn
+  declare -rx VETDD_TEST_RO=1
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  ! grep -q 'vetdd_test_fn' "$FAKE_SEEN.env.exec" || false
+  ! grep -q '^VETDD_TEST_RO=' "$FAKE_SEEN.env.exec" || false
+}
+
+@test "pr52 r7: an environment entry codex's environment cannot drop (not a variable name) stops the judge with exit 3 before exec" {
+  run env 'vetdd.test=1' "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" \
+    --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" == *vetdd.test* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "pr52 r7: a refused VETDD_JUDGE_KEEP_ENV name is shown without control characters, and RUST_LOG or SSL_KEYLOGFILE are refused" {
+  VETDD_JUDGE_KEEP_ENV="$(printf 'CODEX_\033]0;x')" run judge
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" != *$'\033'* ]]
+  for bad in RUST_LOG SSLKEYLOGFILE SSL_KEYLOGFILE RUBYLIB PROMPT_COMMAND PERLLIB JAVA_TOOL_OPTIONS _JAVA_OPTIONS GCONV_PATH \
+             GLIBC_TUNABLES LOCPATH MALLOC_CONF RES_OPTIONS HOSTALIASES LOCALDOMAIN OTEL_EXPORTER_OTLP_ENDPOINT \
+             PROTO_HOME PKGX_DIR VFOX_HOME SDKMAN_DIR RTX_DATA_DIR JDK_JAVA_OPTIONS \
+             PYENV_VERSION RBENV_VERSION NODENV_VERSION FNM_DIR N_PREFIX COREPACK_HOME BUN_INSTALL npm_config_prefix NPM_CONFIG_PREFIX; do
+    VETDD_JUDGE_KEEP_ENV="$bad" run judge
+    [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
+  done
+}
+
+@test "pr52 r8: the caller exporting the names the clearing loops use (n, f, e) changes nothing" {
+  export n=caller-n f=caller-f e=caller-e
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  for v in n f e; do
+    ! grep -q "^$v=" "$FAKE_SEEN.env.exec" || false
+    ! grep -q "^$v=" "$FAKE_SEEN.env.login" || false
+  done
+}
+
+@test "pr52 r8: when env -0 cannot list the environment, the judge stops (exit 1) instead of skipping the check" {
+  printf '#!/bin/sh\n[ "$1" != -0 ] || exit 0\nexec /usr/bin/env "$@"\n' > "$BATS_TEST_TMPDIR/guard/env"
+  chmod +x "$BATS_TEST_TMPDIR/guard/env"
+  run judge
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"env -0"* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "pr52 r8: codex's login status output is shown without control characters when it is not logged in" {
+  run env FAKE_LOGGED_OUT=1 FAKE_LOGIN_ESC=1 "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" \
+    --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" != *$'\033'* ]]
+}
+
+@test "pr52 r9: a kept name must be an upper-case one outside VETDD_*, so it never meets a variable judge.sh sets" {
+  for bad in log model out n VETDD_MODEL_JUDGE VETDD_CODEX_BIN; do
+    export "$bad=caller"
+    VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV $bad" run judge
+    [ "$status" -eq 2 ] || { echo "$bad: $output"; false; }
+    unset "$bad"
+  done
+}
+
+@test "pr52 r10: naming a variable codex keeps anyway (CODEX_CA_CERTIFICATE, HTTPS_PROXY) in VETDD_JUDGE_KEEP_ENV is fine" {
+  export CODEX_CA_CERTIFICATE=/etc/corp-ca.pem
+  VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV CODEX_CA_CERTIFICATE HTTPS_PROXY" run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'CODEX_CA_CERTIFICATE=/etc/corp-ca.pem' "$FAKE_SEEN.env.exec"
 }

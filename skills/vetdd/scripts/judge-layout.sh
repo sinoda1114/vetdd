@@ -148,6 +148,21 @@ is_env() {
 }
 oracles=()
 for s in "${slices[@]}"; do
+  # A malformed record stops here as malformed, before anything is written: read as empty, its oracle
+  # files would be reported as unnamed new files to delete.
+  # One JSON document: an empty file or two concatenated objects are malformed too.
+  # A path with a control character (C0, DEL, C1) would split the NUL-separated list below; the same
+  # rule as evidence.sh's for an inherited path, whatever jq's regex library takes for a control.
+  # A run's log and seq become lines of the list below too, so they get the same rule.
+  jq -e -s 'def plain: type == "string" and (explode | all(. > 31 and (. < 127 or . > 159)));
+         def files_ok: type == "array" and all(.[]; type == "object" and (.path | plain));
+         def oracle_ok: . == null or (type == "object" and (.files == null or (.files | files_ok)));
+         length == 1 and (.[0] | type == "object" and (.oracle | oracle_ok)
+           and (.runs | type) == "array"
+           and all(.runs[]; type == "object" and (.oracle | oracle_ok)
+                            and (.log == null or (.log | plain)) and (.seq == null or (.seq | type) == "number")))' \
+    "$root/.vetdd/evidence/$s/meta.json" >/dev/null 2>&1 \
+    || die "could not read the evidence of slice $s (its meta.json is malformed)" 1
   while IFS= read -r -d '' f; do oracles+=("$f"); done \
     < <(jq -j '[.oracle.files[]? | .path | strings] | .[] | . + "\u0000"' "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)
 done
@@ -251,6 +266,8 @@ printf 'exit %s\n' "$ce_rc" >> "$C/artifact/check-evidence.txt"
 SEND='
 def green: .kind == "after" or .kind == "integrated";
 def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
+# The check before anything is written (see oracle_ok there) already refuses a run whose oracle is
+# not null or an object; usable keeps also refusing one with no oracle, so the two stay in step.
 def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array";
 [.runs[] | select(.accepted != false)] as $all
 | [$all[] | select(usable)] as $acc

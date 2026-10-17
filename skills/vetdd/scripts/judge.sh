@@ -13,9 +13,12 @@
 # -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: CODEX_HOME
 # is a second private temporary directory holding only a link to the user's auth.json (from
 # $CODEX_HOME, else ~/.codex; a refreshed token is written back; a keyring login stops with exit 3),
-# also its HOME, and exec runs --ephemeral --ignore-user-config --ignore-rules with web search off and
-# the core environment only, so the user's config (MCP servers, tools, a model provider of their own),
-# AGENTS.md, personal skills, rules, and sessions never reach the judge; refuse the reply if it holds a secret-shaped
+# also its HOME (a codex that cannot start there, such as one behind a node version manager's shim,
+# stops with exit 3 before exec), the login is kept in that file whatever codex's default store, and
+# exec runs --ephemeral
+# --ignore-user-config --ignore-rules with web search off and the core environment only, so the user's
+# config (MCP servers, tools, a model provider of their own), AGENTS.md, personal skills, rules, and
+# sessions never reach the judge; refuse the reply if it holds a secret-shaped
 # string (lib/secret-patterns.sh, every kind: --allow-secrets covers input only); write the reply verbatim to
 # <out>, the judge metadata to <out>.meta.json, and codex's own output to
 # <git root>/.vetdd/judge-logs/<eval-id>-<run-id>.log (the git root of <out>'s directory, else of the
@@ -32,9 +35,13 @@
 # (no variants.json) also passes --final: the origin words (variant, baseline, winner) are product
 # words there.
 # Defaults: --model `models.sh judge`, --effort `models.sh judge-effort`; both are validated by
-# models.sh. VETDD_CODEX_BIN overrides the codex binary (tests use a fake).
+# models.sh. VETDD_CODEX_BIN overrides the codex binary (tests use a fake). codex runs with an
+# allowlisted environment (PATH, user, locale, terminal, proxy, and CA variables, plus the names in
+# VETDD_JUDGE_KEEP_ENV), with HOME and CODEX_HOME the private ones.
 # Exit: 0 verdict written and checked; 1 a local step failed (temporary directory, copy, write);
-#       2 usage error; 3 codex missing or not logged in; 4 the judge's input is not blind;
+#       2 usage error; 3 codex missing, unable to start with the private HOME, without the isolation
+#       flags, or not logged in, or an environment entry that cannot be cleared for it;
+#       4 the judge's input is not blind;
 #       5 the verdict failed its checks (left at <out>); 6 codex exec failed;
 #       7 check-verdict.sh could not run (the verdict is left at <out>, unchecked);
 #       8 the judge's reply holds a secret-shaped string (not written to <out>; read the judge log).
@@ -119,6 +126,34 @@ fi
 log="$root/.vetdd/judge-logs/$eval_id-$run_id.log"
 
 codex="${VETDD_CODEX_BIN:-codex}"
+# VETDD_JUDGE_KEEP_ENV names more variables codex keeps (a proxy or CA bundle of one's own): split
+# without pathname expansion (on spaces or new lines) and checked here, before anything about codex itself.
+read -r -d '' -a keep_extra <<< "${VETDD_JUDGE_KEEP_ENV:-}" || true
+# What codex keeps anyway: naming one of these again is fine.
+keep_default="PATH USER LOGNAME SHELL TMPDIR TERM LANG LC_ALL LC_CTYPE LC_MESSAGES TZ HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy SSL_CERT_FILE SSL_CERT_DIR CODEX_CA_CERTIFICATE"
+upper=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+for n in ${keep_extra[@]+"${keep_extra[@]}"}; do
+  case " $keep_default " in *" $n "*) continue ;; esac
+  # The shape first, so every name a message below shows is a plain one. Upper case only, and not
+  # VETDD_*: judge.sh's own variables are lower case or VETDD_*, and a kept name that met one would
+  # hand codex judge.sh's value, not the caller's. The letters are listed, not a range: a range
+  # follows the locale's collation, where a-z can fall inside A-Z. (bash's own variables, SECONDS or
+  # RANDOM, would also hand codex bash's value; keep none of them.)
+  case "$n" in
+    [!$upper]*|*[!${upper}0123456789_]*) die "VETDD_JUDGE_KEEP_ENV holds $(printf '%s' "$n" | vetdd_printable), which is not an upper-case variable name" 2 ;;
+    HOME|CODEX_HOME|VETDD_*) die "VETDD_JUDGE_KEEP_ENV cannot keep $n: judge.sh sets it itself" 2 ;;
+    # Names that would undo the isolation: codex's own settings, a model provider, a version manager's
+    # or git's settings, a shell's start-up, code loaded into a process or a loader's or libc's
+    # settings, name resolution, telemetry, or secrets written to logs. A deny list cannot be
+    # complete: keep only what codex needs (a proxy or a CA bundle).
+    CODEX_*|OPENAI_*|XDG_*|MISE_*|ASDF_*|VOLTA_*|NVM_*|NODE_*|PYENV_*|RBENV_*|NODENV_*|FNM_*|N_PREFIX|\
+    PROTO_*|PKGX_*|VFOX_*|SDKMAN_*|RTX_*|JDK_JAVA_OPTIONS|\
+    COREPACK_*|BUN_*|NPM_CONFIG_*|LD_*|DYLD_*|GCONV_PATH|GLIBC_TUNABLES|LOCPATH|MALLOC_*|GIT_*|PYTHON*|\
+    PERL5*|PERLLIB|RUBY*|JAVA_TOOL_OPTIONS|BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|\
+    RES_OPTIONS|HOSTALIASES|LOCALDOMAIN|OTEL_*|RUST_LOG|SSLKEYLOGFILE|SSL_KEYLOGFILE)
+      die "VETDD_JUDGE_KEEP_ENV cannot keep $n: it would undo the judge's isolation from your setup" 2 ;;
+  esac
+done
 command -v "$codex" >/dev/null 2>&1 \
   || die "codex CLI not found ($codex); install it (npm install -g @openai/codex) or set VETDD_CODEX_BIN" 3
 # The judge runs with a CODEX_HOME of its own that holds only a link to the user's auth.json: the
@@ -126,13 +161,6 @@ command -v "$codex" >/dev/null 2>&1 \
 # It keeps no secret from the judge: the read-only sandbox reads the whole disk, the link included, as
 # it could read the user's auth.json before; the reply's secret check covers what the judge quotes.
 # A login kept in the OS keyring is filed under the user's CODEX_HOME and cannot be lent this way.
-# The flags (codex 0.159 and later) are checked first, so an older codex stops here, not in exec.
-help="$("$codex" exec --help 2>/dev/null)"; missing=""
-for f in --ephemeral --ignore-user-config --ignore-rules; do
-  printf '%s\n' "$help" | grep -qe "$f" || missing="$missing $f"
-done
-[ -z "$missing" ] \
-  || die "codex ($codex) has no exec$missing, which the judge's isolation needs; update it (npm install -g @openai/codex)" 3
 user_home="${CODEX_HOME:-}"
 [ -n "$user_home" ] || { [ -n "${HOME:-}" ] || die "neither CODEX_HOME nor HOME is set; cannot find the codex login" 3; user_home="$HOME/.codex"; }
 case "$user_home" in /*) ;; *) user_home="$PWD/$user_home" ;; esac
@@ -159,8 +187,61 @@ keep_login() {
 trap 'keep_login; rm -rf "$jhome"' EXIT
 ln -s "$user_home/auth.json" "$jhome/auth.json" || die "cannot link the codex login into $jhome" 1
 export CODEX_HOME="$jhome"
-login="$("$codex" login status 2>&1)" \
-  || die "codex is not logged in ($login); run \`codex login\` first" 3
+# Every codex call from here runs with the private HOME too, so codex is checked to start there before
+# exec. A codex that starts through a node version manager's shim (an npm install under mise, asdf,
+# Volta) looks for its versions under $HOME and fails there: it stops here with a clear message, not in
+# exec as a judge failure. codex gets an allowlisted environment and nothing else of the caller's: a
+# variable that points a version manager at the user's settings (MISE_GLOBAL_CONFIG_FILE, XDG_*, ...)
+# would let its shim start and apply them, and they may set CODEX_HOME or HOME and undo the isolation.
+# Every other exported variable is unset in a subshell before exec, so the kept values stay in the
+# environment (never on a command line, where ps and audit logs read them) and a path with = in it
+# runs as it is. HOME and CODEX_HOME are always the private ones.
+keep_names=" $keep_default ${keep_extra[*]+${keep_extra[*]}} "
+compgen -e > /dev/null 2>&1 || die "this bash has no compgen, which judge.sh needs to clear codex's environment" 1
+# Run only in a subshell. export -n, not unset: judge.sh's own variables keep their values even when
+# the caller exported the same names (codex, jhome), and a readonly one leaves the environment too.
+# No local: a local name would hide a caller's exported variable of the same name (n, f, e), and
+# export -n would reach only the local. Both functions run in a subshell, so their globals stay there.
+clear_codex_env() {
+  set -f  # a name from compgen is never a pattern
+  for f in $(compgen -A function); do export -fn "$f"; done
+  for n in $(compgen -e); do
+    case "$keep_names" in *" $n "*) ;; *) export -n "$n" 2>/dev/null ;; esac
+  done
+  export HOME="$jhome" CODEX_HOME="$jhome"
+}
+# What a child would get, read from one (env -0): an entry bash cannot drop (a name that is not a
+# variable name passes through it) stops the judge here, before codex sees it. SHLVL, _, and PWD are a
+# shell's own, set for every child.
+# A function, not inline in $(...): bash 3.2 misreads a case pattern's ) inside a command substitution.
+# env -0 that lists nothing (one without -0) must not pass for a clean environment: HOME is always
+# there, so its absence fails the check (exit 1).
+codex_env_left() {
+  clear_codex_env
+  seen_home=0
+  while IFS= read -r -d '' e; do
+    n="${e%%=*}"
+    [ "$n" != HOME ] || seen_home=1
+    case " HOME CODEX_HOME SHLVL _ PWD$keep_names" in *" $n "*) ;; *) printf ' %s' "$n" ;; esac
+  done < <(env -0)
+  [ "$seen_home" = 1 ]
+}
+left="$(codex_env_left)" || die "cannot read what codex's environment would hold: env -0 listed no HOME (an env without -0?)" 1
+[ -z "$left" ] || die "judge.sh cannot take these out of codex's environment:$(printf '%s' "$left" | vetdd_printable); unset them first" 3
+codex_private() ( clear_codex_env && exec "$codex" "$@" )
+started="$(codex_private --version < /dev/null 2>&1)" \
+  || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); a codex started through a node version manager's shim needs HOME. Install the standalone codex, or set VETDD_CODEX_BIN to a codex that starts without HOME" 3
+# The flags (codex 0.159 and later) are checked on the codex that runs, so an older one stops here, not in exec.
+help="$(codex_private exec --help < /dev/null 2>/dev/null)"; missing=""
+for f in --ephemeral --ignore-user-config --ignore-rules; do
+  printf '%s\n' "$help" | grep -qe "$f" || missing="$missing $f"
+done
+[ -z "$missing" ] \
+  || die "codex ($codex) has no exec$missing, which the judge's isolation needs; update it (npm install -g @openai/codex)" 3
+# The login stays in the linked auth.json whatever codex's default store (keyring, auto): the user's
+# config.toml, where they chose the file store, is not read here.
+login="$(codex_private login status -c 'cli_auth_credentials_store="file"' < /dev/null 2>&1)" \
+  || die "codex is not logged in ($(printf '%s' "$login" | vetdd_printable)); run \`codex login\` first" 3
 
 # Every temporary file lives in one private directory. The judge's working directory is a copy
 # inside it, so a relative path from there reaches only the copy and this directory, never the
@@ -274,16 +355,17 @@ invoked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "${log%/*}" || die "cannot create ${log%/*}" 1
 # HOME is the private home too: codex finds personal skills under ~/.agents/skills. The judge's shell
 # gets the core variables only (HOME, PATH, USER, ...): CODEX_HOME and the caller's own stay out.
-# Both -c keys are read, not ignored: codex 0.159.1 refuses an unknown value of either (measured).
-HOME="$jhome" "$codex" exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effort=\"$effort\"" \
+# The -c keys are read, not ignored: codex 0.159.1 refuses an unknown value of each (measured).
+codex_private exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effort=\"$effort\"" \
   --ephemeral --ignore-user-config --ignore-rules -c 'web_search="disabled"' -c 'shell_environment_policy.inherit="core"' \
+  -c 'cli_auth_credentials_store="file"' \
   --skip-git-repo-check --output-schema "$skill/schemas/verdict.schema.json" -o "$work/reply.json" \
   < "$work/prompt.txt" > "$log" 2>&1
 rc=$?
 if [ "$rc" -ne 0 ]; then
   # The log is the judge's output; strip control characters so it cannot drive the terminal.
-  grep -v 'rmcp::transport' "$log" | tail -n 5 | LC_ALL=C tr -d '\000-\010\013-\037\177' >&2
-  die "codex exec failed (exit $rc); full output in $log" 6
+  grep -v 'rmcp::transport' "$log" | tail -n 5 | vetdd_printable >&2
+  die "codex exec failed (exit $rc); full output in $log. codex runs with an allowlisted environment (PATH, locale, proxy, SSL_CERT_FILE, CODEX_CA_CERTIFICATE): if it needs another variable of yours, name it in VETDD_JUDGE_KEEP_ENV" 6
 fi
 printf 'judge log: %s\n' "$log"
 

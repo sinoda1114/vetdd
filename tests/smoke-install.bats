@@ -11,11 +11,13 @@ setup() {
   export CLAUDE_CONFIG_DIR="$HOME/.claude"
   "$BATS_TEST_DIRNAME/../install.sh" > "$BATS_TEST_TMPDIR/install.log" 2>&1 || true
   V="$CLAUDE_CONFIG_DIR/skills/vetdd/scripts"
-  # A fake codex with a file login: the isolation flags, login status, and a verdict for one label.
+  # A fake codex with a file login: its version (judge.sh checks it starts), the isolation flags, login
+  # status, and a verdict for one label.
   mkdir -p "$BATS_TEST_TMPDIR/fake" "$HOME/.codex"
   printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
   cat > "$BATS_TEST_TMPDIR/fake/codex" <<'FAKE'
 #!/bin/sh
+[ "$1" != --version ] || { echo "codex-cli 0.0.0-fake"; exit 0; }
 if [ "$1" = exec ] && [ "${2:-}" = --help ]; then printf '  --ephemeral\n  --ignore-user-config\n  --ignore-rules\n'; exit 0; fi
 if [ "$1" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 out=""; prev=""

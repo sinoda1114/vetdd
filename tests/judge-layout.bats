@@ -695,3 +695,46 @@ setup() {
   [ "$status" -eq 2 ] || { echo "$output"; false; }
   [ ! -e "$OUT" ]
 }
+
+@test "review r3: a malformed meta.json stops the build as malformed (exit 1), never as an unnamed oracle file to delete" {
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file t2.sh -- sh t2.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh t2.sh >/dev/null 2>&1
+  printf '{' > .vetdd/evidence/s2/meta.json
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *malformed* ]]
+  [[ "$output" != *--include-new* ]]
+  [ ! -e "$OUT" ]
+  [ -f t2.sh ]
+}
+
+@test "review r3 round 2: a record whose oracle or oracle files are the wrong shape also stops as malformed (exit 1)" {
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > t2.sh
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file t2.sh -- sh t2.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh t2.sh >/dev/null 2>&1
+  cp .vetdd/evidence/s2/meta.json "$BATS_TEST_TMPDIR/good.json"
+  for broken in '.oracle = "x"' '.oracle.files = [1]' '.oracle.files = "x"' '.oracle.files = [{"path": 1}]' '.oracle.files = false' '.runs = {}' '.runs = [1]' '.runs[0].oracle.files = [1]' '.runs[0].log = "runs/001-before.log\nO\tx"' '.runs[0].seq = "1"' '.oracle.files[0].path = "t2\u0001.sh"' 'null' 'empty' '., .'; do
+    jq "$broken" "$BATS_TEST_TMPDIR/good.json" > .vetdd/evidence/s2/meta.json
+    run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+    [ "$status" -eq 1 ] || { echo "$broken: $output"; false; }
+    [[ "$output" == *malformed* ]]
+    [ ! -e "$OUT" ]
+  done
+}
+
+@test "pr52 r7: an oracle path with a format character evidence.sh accepts (ZWNJ, in the C locale) is not malformed" {
+  export LC_ALL=C
+  f="$(printf 't\342\200\214.sh')"
+  printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > "$f"
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file "$f" -- sh "$f" >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s2 after -- sh "$f" >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
