@@ -177,7 +177,8 @@ save_originals() {
     tag="$(g ls-files -v -- "$f" | cut -c1)"
     case "$tag" in
       S) die "$f is marked skip-worktree; clear the flag (git update-index --no-skip-worktree) first" ;;
-      [a-z]) die "$f is marked assume-unchanged; clear the flag (git update-index --no-assume-unchanged) first" ;;
+      # [[:lower:]], not [a-z]: bash 3.2 ranges follow the locale's collation, where [a-z] holds H too.
+      [[:lower:]]) die "$f is marked assume-unchanged; clear the flag (git update-index --no-assume-unchanged) first" ;;
     esac
   done
   : > "$state/index" && : > "$state/ita" || die "cannot write $state"
