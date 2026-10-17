@@ -885,3 +885,10 @@ TEST_CORP_PROXY" run judge
     unset "$bad"
   done
 }
+
+@test "pr52 r10: naming a variable codex keeps anyway (CODEX_CA_CERTIFICATE, HTTPS_PROXY) in VETDD_JUDGE_KEEP_ENV is fine" {
+  export CODEX_CA_CERTIFICATE=/etc/corp-ca.pem
+  VETDD_JUDGE_KEEP_ENV="$VETDD_JUDGE_KEEP_ENV CODEX_CA_CERTIFICATE HTTPS_PROXY" run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'CODEX_CA_CERTIFICATE=/etc/corp-ca.pem' "$FAKE_SEEN.env.exec"
+}

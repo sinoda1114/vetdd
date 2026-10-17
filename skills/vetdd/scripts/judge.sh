@@ -129,12 +129,18 @@ codex="${VETDD_CODEX_BIN:-codex}"
 # VETDD_JUDGE_KEEP_ENV names more variables codex keeps (a proxy or CA bundle of one's own): split
 # without pathname expansion (on spaces or new lines) and checked here, before anything about codex itself.
 read -r -d '' -a keep_extra <<< "${VETDD_JUDGE_KEEP_ENV:-}" || true
+# What codex keeps anyway: naming one of these again is fine.
+keep_default="PATH USER LOGNAME SHELL TMPDIR TERM LANG LC_ALL LC_CTYPE LC_MESSAGES TZ HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy SSL_CERT_FILE SSL_CERT_DIR CODEX_CA_CERTIFICATE"
+upper=ABCDEFGHIJKLMNOPQRSTUVWXYZ
 for n in ${keep_extra[@]+"${keep_extra[@]}"}; do
+  case " $keep_default " in *" $n "*) continue ;; esac
   # The shape first, so every name a message below shows is a plain one. Upper case only, and not
   # VETDD_*: judge.sh's own variables are lower case or VETDD_*, and a kept name that met one would
-  # hand codex judge.sh's value, not the caller's.
+  # hand codex judge.sh's value, not the caller's. The letters are listed, not a range: a range
+  # follows the locale's collation, where a-z can fall inside A-Z. (bash's own variables, SECONDS or
+  # RANDOM, would also hand codex bash's value; keep none of them.)
   case "$n" in
-    [!A-Z]*|*[!A-Z0-9_]*) die "VETDD_JUDGE_KEEP_ENV holds $(printf '%s' "$n" | vetdd_printable), which is not an upper-case variable name" 2 ;;
+    [!$upper]*|*[!${upper}0123456789_]*) die "VETDD_JUDGE_KEEP_ENV holds $(printf '%s' "$n" | vetdd_printable), which is not an upper-case variable name" 2 ;;
     HOME|CODEX_HOME|VETDD_*) die "VETDD_JUDGE_KEEP_ENV cannot keep $n: judge.sh sets it itself" 2 ;;
     # Names that would undo the isolation: codex's own settings, a model provider, a version manager's
     # or git's settings, a shell's start-up, code loaded into a process or a loader's or libc's
@@ -190,7 +196,7 @@ export CODEX_HOME="$jhome"
 # Every other exported variable is unset in a subshell before exec, so the kept values stay in the
 # environment (never on a command line, where ps and audit logs read them) and a path with = in it
 # runs as it is. HOME and CODEX_HOME are always the private ones.
-keep_names=" PATH USER LOGNAME SHELL TMPDIR TERM LANG LC_ALL LC_CTYPE LC_MESSAGES TZ HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy SSL_CERT_FILE SSL_CERT_DIR CODEX_CA_CERTIFICATE ${keep_extra[*]+${keep_extra[*]}} "
+keep_names=" $keep_default ${keep_extra[*]+${keep_extra[*]}} "
 compgen -e > /dev/null 2>&1 || die "this bash has no compgen, which judge.sh needs to clear codex's environment" 1
 # Run only in a subshell. export -n, not unset: judge.sh's own variables keep their values even when
 # the caller exported the same names (codex, jhome), and a readonly one leaves the environment too.
