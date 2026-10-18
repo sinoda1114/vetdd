@@ -76,7 +76,7 @@ while [ $# -gt 0 ]; do
       shift 2 ;;
     --rerun) rerun=1; shift ;;
     --) shift; break ;;
-    *) die "unexpected argument '$1' (put the command after --)" ;;
+    *) die "unexpected argument '$1' (put the command after --)$(vetdd_split_hint "$1")" ;;
   esac
 done
 if [ "$rerun" -eq 1 ]; then
@@ -123,7 +123,7 @@ fi
 rel_files=()
 for f in ${oracle_files[@]+"${oracle_files[@]}"}; do
   case "$f" in -*) f="./$f" ;; esac  # dirname would read it as an option
-  [ -f "$f" ] || die "oracle file not found: $f"
+  [ -f "$f" ] || die "oracle file not found: $f$(vetdd_split_hint "$f")"
   fdir="$(cd "$(dirname "$f")" && pwd -P)"
   # The on-disk spelling: an oracle is identified by its paths (check-evidence rule 8).
   abs="$fdir/$(vetdd_disk_name "$fdir" "$f")"
