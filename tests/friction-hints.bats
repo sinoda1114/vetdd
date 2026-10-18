@@ -54,3 +54,18 @@ split_hint='holds several words'
   [ "$status" -eq 2 ]
   [[ "$output" == *"nothing to unfix"*"plant"*"planted"* ]] || { echo "$output"; false; }
 }
+
+@test "#62 r1: the hint is worded as a condition, and a newline in a name is not taken for several words" {
+  run ev s1 before --seam unit --oracle-version v1 --oracle-file 'test.sh b.sh' -- sh test.sh
+  [[ "$output" == *"if you meant several arguments"* ]] || { echo "$output"; false; }
+  run ev s1 before --seam unit --oracle-version v1 --oracle-file $'a\nb.sh' -- sh test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" != *"$split_hint"* ]] || { echo "$output"; false; }
+}
+
+@test "#62 r1: a command passed as one argument with a space (zsh's \"\$CMD\") gets the hint when it is not found" {
+  run ev s1 before --seam unit --oracle-version v1 --oracle-file test.sh -- 'sh test.sh'
+  [[ "$output" == *"command not found"*"$split_hint"* ]] || { echo "$output"; false; }
+  run ev s2 before --seam unit --oracle-version v1 --oracle-file test.sh -- no-such-command-62
+  [[ "$output" != *"$split_hint"* ]] || { echo "$output"; false; }
+}

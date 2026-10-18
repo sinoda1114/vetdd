@@ -198,6 +198,10 @@ fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$@" 2>&1 | tee "$dir/$log_rel"
 exit_code=${PIPESTATUS[0]}
+# A one-word command with a space that was not found: zsh passed "$CMD" unsplit (#62). The record is as is.
+if [ "$exit_code" -eq 127 ] && [ $# -eq 1 ] && [ -n "$(vetdd_split_hint "$1")" ]; then
+  printf 'evidence.sh: command not found: %s%s\n' "$1" "$(vetdd_split_hint "$1")" | vetdd_printable >&2
+fi
 ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 outcome="$outcome_opt"

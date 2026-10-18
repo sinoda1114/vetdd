@@ -20,12 +20,13 @@ vetdd_is_slice_id() {
   return 0
 }
 
-# vetdd_split_hint <arg>: text to add to an error about <arg> when it holds several words. zsh does
+# vetdd_split_hint <arg>: text to add to an error about <arg> when it holds a space or a tab. zsh does
 # not split a variable, so "$OF" with "--oracle-file a --oracle-file b" in it, or "a.sh b.sh",
-# arrives as one argument (#62). A file name may hold a space, so this only explains a failure.
+# arrives as one argument (#62). A file name may hold a space too, so the text is a condition and
+# only explains a failure.
 vetdd_split_hint() {
   case "$1" in
-    *[[:space:]]*) printf '%s' " (that argument holds several words: the shell did not split it, as zsh does not split \$VAR; write each argument out, or use a bash array in a script file)" ;;
+    *[[:blank:]]*) printf '%s' " (if you meant several arguments: that one holds several words, which the shell did not split, as zsh does not split \$VAR; write each argument out, or use a bash array in a script file)" ;;
   esac
 }
 
