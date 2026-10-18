@@ -384,7 +384,7 @@ case "$cmd" in
       g add --intent-to-add -- "$f" || die "could not mark $f with intent-to-add"
     done
     fix_diff "${files[@]}" > "$state/fix.patch" || die "git diff failed"
-    [ -s "$state/fix.patch" ] || die "nothing to unfix: the files hold no change against HEAD (when the fix is already committed, as after a swarm or arena merge, take the red with calibrate.sh plant and planted: modes/test.md)"
+    [ -s "$state/fix.patch" ] || die "nothing to unfix: the files hold no change against HEAD (the fix may be in other files than --file names; when the fix is already committed, as after a swarm or arena merge, take the red with calibrate.sh plant and planted: modes/test.md)"
     g apply -R --whitespace=nowarn --binary "$state/fix.patch" || die "could not take the fix out; nothing was changed"
     run_oracle; finish $?
     ;;

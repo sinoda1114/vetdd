@@ -69,3 +69,14 @@ split_hint='holds several words'
   run ev s2 before --seam unit --oracle-version v1 --oracle-file test.sh -- no-such-command-62
   [[ "$output" != *"$split_hint"* ]] || { echo "$output"; false; }
 }
+
+@test "#62 r2: a found command with a space in its name that exits 127 gets no command-not-found hint" {
+  printf '#!/bin/sh\nno-such-tool-62\n' > 'run tests.sh' && chmod +x 'run tests.sh'
+  run ev s1 before --seam unit --oracle-version v1 --oracle-file test.sh -- './run tests.sh'
+  [[ "$output" != *"$split_hint"* ]] || { echo "$output"; false; }
+}
+
+@test "#62 r2: nothing to unfix also names files other than --file as a cause" {
+  run cal unfix s1 --file sub/keep.txt --oracle-file test.sh -- sh test.sh
+  [[ "$output" == *"nothing to unfix"*"other files than --file"* ]] || { echo "$output"; false; }
+}

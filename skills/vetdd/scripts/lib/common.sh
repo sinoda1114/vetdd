@@ -26,7 +26,7 @@ vetdd_is_slice_id() {
 # only explains a failure.
 vetdd_split_hint() {
   case "$1" in
-    *[[:blank:]]*) printf '%s' " (if you meant several arguments: that one holds several words, which the shell did not split, as zsh does not split \$VAR; write each argument out, or use a bash array in a script file)" ;;
+    *[$' \t']*) printf '%s' " (if you meant several arguments: that one holds several words, which the shell did not split, as zsh does not split \$VAR; write each argument out, or use a bash array in a script file)" ;;
   esac
 }
 
