@@ -713,7 +713,7 @@ lock_path() { printf '%s/vetdd-calib/.lock' "$(git rev-parse --git-dir)"; }
   [ ! -e "$(lock_path)" ] && [ ! -L "$(lock_path)" ]
 }
 
-@test "the working tree's lock is released after a run, a refusal, a plant, and a planted run (#1 R57)" {
+@test "the working tree's lock is released after a run, a refusal, and a planted run; plant leaves it to planted (#1 R57)" {
   run cal unfix s1 --file value.txt --oracle-file test.sh -- sh test.sh
   [ "$status" -eq 0 ]
   [ ! -L "$(lock_path)" ]
@@ -723,7 +723,8 @@ lock_path() { printf '%s/vetdd-calib/.lock' "$(git rev-parse --git-dir)"; }
   git add -A && git commit -q -m fixed
   run cal plant s2 --file value.txt --oracle-file test.sh
   [ "$status" -eq 0 ]
-  [ ! -L "$(lock_path)" ]
+  # Held for the planted run to come, by no live process.
+  [ "$(readlink "$(lock_path)")" = "plant:s2" ]
   printf '41\n' > value.txt
   run cal planted s2 --oracle-file test.sh -- sh test.sh
   [ "$status" -eq 0 ]
@@ -764,4 +765,79 @@ lock_path() { printf '%s/vetdd-calib/.lock' "$(git rev-parse --git-dir)"; }
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"lock"* ]]
   [ ! -L "$(lock_path)" ]
+}
+
+# --- review round 1 ----------------------------------------------------------------------------------
+
+@test "between plant and planted, another slice cannot plant, unfix, or stub the same tree (review 1 #2)" {
+  git add -A && git commit -q -m fixed
+  printf '42\n' > other.txt && git add other.txt && git commit -q -m other
+  cal plant s2 --file value.txt --oracle-file test.sh
+  printf '41\n' > value.txt
+  # s1 would save the mutation as its original and later write it over the fix.
+  run cal plant s1 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"slice s2"*"planted s2"* ]] || { echo "$output"; false; }
+  [ ! -e "$(state_dir s1)" ]
+  printf '7\n' > other.txt
+  run cal unfix s3 --file other.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ "$(cat other.txt)" = 7 ]
+  printf '7\n' > other.js
+  run cal stub s4 --file other.js --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ "$(cat other.js)" = 7 ]
+  # Put the tree outside s2's saved set back as it was at plant.
+  printf '42\n' > other.txt && rm -f other.js
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -L "$(lock_path)" ]
+  run cal plant s1 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 0 ]
+}
+
+@test "a planted run refused before it starts keeps the plant's hold on the tree (review 1 #2)" {
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --oracle-file test.sh
+  # Nothing planted yet: planted refuses, and the tree stays held for s2.
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ "$(readlink "$(lock_path)")" = "plant:s2" ]
+  run cal restore s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -L "$(lock_path)" ]
+}
+
+@test "restore never takes over a lock while another takeover is in progress (codex review 1)" {
+  export VETDD_TEST_HOOKS=1
+  printf '#!/bin/sh\nkill -9 "$VETDD_CALIBRATE_PID"\n' > killer.sh
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh killer.sh
+  ln -s "1:s1" "$(lock_path).takeover"
+  run cal restore s1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"taking over"* ]] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 0 ]
+  rm -f "$(lock_path).takeover"
+  run cal restore s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -L "$(lock_path).takeover" ]
+}
+
+@test "a lock naming pid 0 is unreadable, not a running calibration (review 1 D2)" {
+  mkdir -p "$(dirname "$(lock_path)")" && ln -s "0:s9" "$(lock_path)"
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unreadable"* ]] || { echo "$output"; false; }
+}
+
+@test "stub takes no --test-report: the audit is not a run to count (review 1 D1)" {
+  printf 'export const a = 1;\n' > a.js
+  report_oracle
+  run cal stub s1 --file a.js --oracle-file rtest.sh --test-report jest-json:.vetdd/reports/r.json -- sh rtest.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--test-report"* ]]
+  [ "$(cat a.js)" = "export const a = 1;" ]
+  [ ! -e .vetdd/evidence/s1/meta.json ]
 }

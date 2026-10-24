@@ -70,7 +70,7 @@ When the fix is already committed (a swarm or arena Close, after the merge), `un
 - `calibrate.sh` exits 0 only when the calibration ended `target_failure`, and 1 when it did not (the oracle does not see the defect: fix the test). Exit 0 is necessary, not sufficient: read the calibration log and confirm the red comes from the agreed assertion. A red from an import error (for example because a new module was parked), "no tests", a syntax error, or a crash of the runner is not a calibration; fix the setup and run it again. Then record the oracle as `after`; for a behavior-preserving change, record `after` before the change and again after it.
 - The known-good `calibration` pass in step 3 is recorded with `evidence.sh` directly; `calibrate.sh` is only for the red half.
 - Give the Bash call a timeout longer than the suite. If a calibration was interrupted anyway, the next `calibrate.sh` in that working tree refuses to start and names the slice; run `"$VETDD/scripts/calibrate.sh" restore <slice>` before anything else.
-- One calibration at a time changes a working tree: while one slice's `unfix`, `planted`, `stub`, or `restore` runs, another slice's `calibrate.sh` refuses (exit 2) and names the running slice; run them one after another (swarm workers each have their own worktree).
+- One calibration at a time changes a working tree: while one slice's `unfix`, `planted`, `stub`, or `restore` runs, and from its `plant` until its `planted` (or `restore`), another slice's `calibrate.sh` refuses (exit 2) and names that slice; run them one after another (swarm workers each have their own worktree).
 
 ## Audits
 
