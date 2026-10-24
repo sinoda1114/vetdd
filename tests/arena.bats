@@ -336,3 +336,11 @@ lane() {
   [ "$status" -eq 2 ]
   [[ "$output" != *$'\033'* ]] || { printf '%s' "$output" | od -c | head; false; }
 }
+
+@test "PR80: die filters what it prints (a C1 control that the C locale's [[:cntrl:]] lets through)" {
+  lane la-a1b2c3 42
+  LC_ALL=C run AL --out "$OUT" --base "$BASE" --allow-words $'c*/x:\xc2\x9b31mred' la-a1b2c3
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"is not a word"* ]] || { echo "$output"; false; }
+  [[ "$output" != *$'\xc2\x9b'* ]] || { printf '%s' "$output" | od -c | head; false; }
+}

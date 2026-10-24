@@ -882,3 +882,10 @@ rewrite_oracle_path() {
   [ "$status" -eq 2 ]
   [ "$output" = "judge-layout.sh: --allow-words has a control character or a new line" ] || { printf '%s' "$output" | od -c; false; }
 }
+
+@test "PR80: die filters what it prints (a C1 control that the C locale's [[:cntrl:]] lets through)" {
+  LC_ALL=C run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words $'c1/*:\xc2\x9b31mred' s1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"is not a word"* ]] || { echo "$output"; false; }
+  [[ "$output" != *$'\xc2\x9b'* ]] || { printf '%s' "$output" | od -c | head; false; }
+}
