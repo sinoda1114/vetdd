@@ -62,6 +62,43 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
   [ "$output" = "src/a.js:1-2,src/a.js:6-6" ]
 }
 
+@test "a later refactor that reorders functions or reindents keeps the slice's lines" {
+  printf '%s\n' 'function first() {' '  return "alpha beta gamma delta";' '}' 'function second() {' '  return "epsilon zeta eta theta";' '}' > src/f.js
+  git add -A && git commit -q -m f
+  red s1
+  printf '%s\n' 'function first() {' '  return "alpha beta gamma delta";' '}' 'function second() {' '  const value = "the slice computes this value here";' '  return value + "epsilon zeta eta theta";' '}' > src/f.js
+  green s1
+  # The refactor puts second() first and indents its body further.
+  printf '%s\n' 'function second() {' '    const value = "the slice computes this value here";' '    return value + "epsilon zeta eta theta";' '}' 'function first() {' '  return "alpha beta gamma delta";' '}' > src/f.js
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/f.js:2-3" ]
+}
+
+@test "a function a later refactor moved to a new file is followed with --file" {
+  printf '%s\n' 'export function keep() { return "unchanged line of the product"; }' > src/g.js
+  git add -A && git commit -q -m g
+  red s1
+  printf '%s\n' 'export function keep() { return "unchanged line of the product"; }' 'export function added() {' '  return "a line the slice wrote for its behavior";' '}' > src/g.js
+  green s1
+  printf '%s\n' 'export function keep() { return "unchanged line of the product"; }' > src/g.js
+  printf '%s\n' 'export function added() {' '  return "a line the slice wrote for its behavior";' '}' > src/h.js
+  run --separate-stderr mr s1 --file src/h.js
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/h.js:1-3" ]
+}
+
+@test "a textconv diff driver does not change the lines blame sees" {
+  printf 'src/*.js diff=up\n' > .gitattributes && git add .gitattributes && git commit -q -m attr
+  git config diff.up.textconv 'sh -c "echo converted"'
+  red s1
+  printf '%s\n' a1 a2 B3 a4 a5 > src/a.js
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:3-3" ]
+}
+
 # --- 3. two slices in one file, nothing committed -----------------------------------------------
 
 @test "two slices editing one file in single mode, uncommitted: each gets only its own lines" {
@@ -237,6 +274,14 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
   [[ "$stderr" == *"modes/test.md"* ]]
 }
 
+@test "a slice whose before and after trees are the same says so" {
+  red s1
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 3 ]
+  [[ "$stderr" == *"same tree"* ]] || { echo "$stderr"; false; }
+}
+
 # --- 8. errors ----------------------------------------------------------------------------------
 
 @test "a slice without evidence, without a before, or without a passing after: exit 2" {
@@ -355,7 +400,8 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
 
 @test "a path Stryker would split or read as a pattern is refused with a message: exit 2" {
   local p
-  for p in 'src/a,b.js' 'src/[x].js' 'src/x*.js' 'src/x:1-2.js' 'src/{x}.js' '!x.js'; do
+  for p in 'src/a,b.js' 'src/[x].js' 'src/x*.js' 'src/x:1-2.js' 'src/{x}.js' '!x.js' \
+    "src/a';id;'.js" 'src/a"b.js' 'src/a`b.js' 'src/a$b.js' 'src/a;b.js' 'src/a&b.js' 'src/a|b.js' 'src/a<b.js' 'src/a>b.js'; do
     rm -rf "$REPO/.vetdd"
     red s1
     printf '%s\n' q1 > "$p"
@@ -364,6 +410,18 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
     [ "$status" -eq 2 ] || { echo "$p: $status $output $stderr"; false; }
     [ -z "$output" ]
     [[ "$stderr" == *"$p"* ]] || { echo "$stderr"; false; }
+    rm -f -- "$REPO/$p"
+  done
+  # A bidirectional control or a zero-width space: named with its bytes shown as ?.
+  for p in "src/a$(printf '\342\200\256')b.js" "src/a$(printf '\342\200\213')b.js"; do
+    rm -rf "$REPO/.vetdd"
+    red s1
+    printf '%s\n' q1 > "$p"
+    green s1
+    run --separate-stderr mr s1
+    [ "$status" -eq 2 ] || { echo "$status $output $stderr"; false; }
+    [ -z "$output" ]
+    [[ "$stderr" == *"src/a???b.js"* ]] || { echo "$stderr"; false; }
     rm -f -- "$REPO/$p"
   done
   rm -rf "$REPO/.vetdd"

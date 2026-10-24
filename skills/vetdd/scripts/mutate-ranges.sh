@@ -8,8 +8,9 @@
 # c0 of the tree of the slice's first `before` run, c1 of the tree of its last accepted `after` run with
 # outcome pass (parent c0), and c2 of the working tree now (parent c1, with untracked files, as
 # evidence.sh hashes it), and the lines `git blame c2` gives to c1 are the slice's. So a later slice or
-# a refactor moves them without adding its own lines, and two slices in one file each get only their
-# own. The commits are never referenced by a ref (unreachable objects); HEAD, the index, and the
+# a refactor moves them without adding its own lines (blame -w -M -C: a line only moved, reindented,
+# or moved to another file named with --file stays the slice's), and two slices in one file each get
+# only their own. The commits are never referenced by a ref (unreachable objects); HEAD, the index, and the
 # working tree are not touched.
 # Without --file: every file the slice changed except its oracle files (every oracle file its evidence
 # names) and .vetdd/. --file (relative to the current directory, repeatable) limits the output to
@@ -18,7 +19,8 @@
 # (modes/test.md, Audits › Mutation). A file the slice deleted, or in which it only removed lines,
 # has nothing to mutate: it is named on stderr and left out, as is a changed file outside the current
 # directory. A path Stryker would split or read as a pattern (a comma, : * ? [ ] { } ( ) \, a leading
-# !) or with a control character is refused.
+# !), one a shell reads (' " ` $ ; & | < >), or one with a control, bidirectional, or zero-width
+# character is refused (exit 2), so the value is safe inside single quotes.
 # Exit 0 when ranges were printed; 2 on usage errors and when the evidence cannot be attributed (no
 # before run, no passing after, a tree object git gc removed); 3 when there is nothing to mutate
 # (nothing printed: a slice that changed only its oracle files, or no line of the slice is left).
@@ -161,6 +163,7 @@ EOF
 done < "$tmp/changed"
 
 if [ "$product" -eq 0 ]; then
+  [ "$t0" != "$t1" ] || say "the before run (run $s0) and the after run (run $s1) of slice '$slice' recorded the same tree"
   say "slice '$slice' changed no product file (only its oracle files): there is nothing to mutate; record why with audit-note.sh $slice --kind mutation --not-applicable --reason-file <path> (modes/test.md, Audits › Mutation: a slice that only adds tests)"
   exit 3
 fi
@@ -178,14 +181,19 @@ else
 fi
 
 # A path Stryker reads safely: its --mutate is split at commas, a range is the last :a-b, and the
-# file part is a minimatch pattern (a leading ! negates it).
+# file part is a minimatch pattern (a leading ! negates it). A path that a shell would read (a quote,
+# $, ;, &, |, <, >) is refused too, so the value can be pasted into a quoted command line, and so is
+# one with a character that hides or reorders text (bidirectional controls, zero-width characters).
 stryker_safe() {
   case "$1" in
     *,*) die "$1: the path holds a comma, which splits Stryker's --mutate list; rename the file or mutate it on its own config" ;;
     *:*|*\**|*\?*|*\[*|*\]*|*\{*|*\}*|*\(*|*\)*|*\\*|!*) die "$1: Stryker reads the file part of --mutate as a glob pattern (: * ? [ ] { } ( ) \\ and a leading ! are special); rename the file or name it in the Stryker config" ;;
+    *\'*|*\"*|*\`*|*\$*|*\;*|*\&*|*\|*|*\<*|*\>*) die "$1: the path holds a character a shell reads (' \" \` \$ ; & | < >); rename the file" ;;
   esac
+  # By byte: C0 and DEL, the UTF-8 C1 controls, U+200B-U+200F, U+202A-U+202E, U+2066-U+2069.
   printf '%s' "$1" | LC_ALL=C grep -q -e "$(printf '[\001-\037\177]')" -e "$(printf '\302[\200-\237]')" \
-    && die "a changed path holds a control character; rename it"
+      -e "$(printf '\342\200[\213-\217\252-\256]')" -e "$(printf '\342\201[\246-\251]')" \
+    && die "$(printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' '?'): the path holds a control, bidirectional, or zero-width character (shown as ?); rename it"
   return 0
 }
 
@@ -203,7 +211,7 @@ for r in ${targets[@]+"${targets[@]}"}; do
     '') say "$r: the slice changed it, but it is no longer in the working tree at this path (moved or deleted since); name its current path with --file"; continue ;;
     *) say "$r: no longer a regular file: left out"; continue ;;
   esac
-  git blame --porcelain --no-ignore-revs-file "$c2" -- "$r" > "$tmp/blame" 2> "$tmp/blame.err" \
+  git blame --porcelain --no-textconv --no-ignore-revs-file -w -M -C "$c2" -- "$r" > "$tmp/blame" 2> "$tmp/blame.err" \
     || die "git blame failed on $r: $(head -n 1 "$tmp/blame.err")"
   ranges="$(awk -v c="$c1" '
     substr($0, 1, 1) == "\t" { next }
