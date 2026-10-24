@@ -159,6 +159,45 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/a.js:1-1" ]
 }
 
+@test "a later version starts at its red: a passing calibration before it does not" {
+  red s1
+  printf '%s\n' a1 X2 a3 a4 a5 > src/a.js
+  green s1
+  ev s1 calibration --oracle-version v2 -- true >/dev/null 2>&1
+  red s2
+  printf '%s\n' a1 X2 a3 X4 a5 > src/a.js
+  green s2
+  ev s1 calibration --oracle-version v2 -- false >/dev/null 2>&1
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+}
+
+@test "a red calibration that is not an unfix: the slice is taken as a refactor, and stderr says why" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  printf '%s\n' z1 > src/z.js
+  # The fix is in a.js and z.js; unfix names only a.js, so z.js keeps its uncommitted change.
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf '%s\n' z1 z2 > src/z.js
+  green s1
+  green s1
+  run --separate-stderr mr s1
+  [[ "$stderr" == *"src/z.js"*"HEAD"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"refactor"* ]] || { echo "$stderr"; false; }
+}
+
+@test "a source file whose name git quotes is named on stderr, not dropped silently" {
+  printf '%s\n' a1 > 'src/q"x.js' && git add -A && git commit -q -m q
+  red s1
+  printf '%s\n' a1 'const valueTheSliceAdded = computeSomething(1);' > 'src/q"x.js'
+  green s1
+  printf '%s\n' a1 > 'src/q"x.js'
+  printf '%s\n' 'const valueTheSliceAdded = computeSomething(1);' > src/moved.js
+  run --separate-stderr mr s1 --file src/moved.js
+  [[ "$stderr" == *'q"x.js'* || "$stderr" == *'q\"x.js'* ]] || { echo "$status $output $stderr"; false; }
+}
+
 # --- 2. a later slice moves the lines -----------------------------------------------------------
 
 @test "a later slice adds lines above and inside: the first slice's ranges move and leave its lines out" {

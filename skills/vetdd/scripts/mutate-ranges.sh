@@ -119,17 +119,22 @@ entry_in() {
 # unfix_red <red tree> <after tree> <head commit>: true when every product file that differs between
 # the red and the after holds in the red what HEAD held (calibrate.sh unfix puts HEAD's content back;
 # a planted defect is new content), and at least one does.
+# Sets unfix_why to the reason when it is not.
 unfix_red() {
   local rec p n=0
+  unfix_why="its HEAD commit is not in the repository"
   case "$3" in *[!0-9a-f]*|'') return 1 ;; esac
   [ "$(git cat-file -t "$3" 2>/dev/null)" = commit ] || return 1
+  unfix_why="the trees cannot be compared"
   git diff-tree -r -z --no-renames --raw "$1" "$2" > "$tmp/unfix" || return 1
   while IFS= read -r -d '' rec && IFS= read -r -d '' p; do
     case "$p" in .vetdd/*) continue ;; esac
     is_oracle "$p" && continue
+    unfix_why="$p differs from HEAD in it"
     [ "$(entry_in "$1" "$p")" = "$(entry_in "$3" "$p")" ] || return 1
     n=$((n + 1))
   done < "$tmp/unfix"
+  unfix_why="no product file differs between it and the first passing after"
   [ "$n" -gt 0 ]
 }
 
@@ -159,7 +164,8 @@ else
     check_tree "$ct" "red calibration (run $cs)"
     check_tree "$a0t" "after run (run $a0s)"
     # The after that follows the red: the first passing after.
-    if unfix_red "$ct" "$a0t" "$ch"; then first="$cs"; fi
+    if unfix_red "$ct" "$a0t" "$ch"; then first="$cs"
+    else say "the red calibration (run $cs) of slice '$slice' is not an unfix red ($unfix_why): the slice is taken as a refactor, from its first passing after to its last"; fi
   fi
   if [ -z "$first" ]; then
     [ "$n_after" -ge 2 ] || die "slice '$slice' has no before run and fewer than two passing after runs: a slice without a before (a refactor, a behavior-preserving change) needs a passing after before its change and another after it; a slice whose red came from calibrate.sh unfix needs a passing after after it"
@@ -178,13 +184,15 @@ else
   segments="$(jq -r --argjson first "$first" '
     def ok: .kind == "after" and .accepted != false and .outcome == "pass";
     def ver: .oracle.version | tojson;
+    def red: (.kind == "before" and .accepted != false)
+      or (.kind == "calibration" and .accepted != false and .outcome == "target_failure" and .audit == null);
     def line($s; $e): "\($s.tree.tree_hash | tostring) \($s.seq | tostring) \($e.tree.tree_hash | tostring) \($e.seq | tostring)";
     [.runs | sort_by(.seq)[] | select(.seq >= $first)] as $rs
     | $rs[0] as $b
     | (reduce ($rs[] | ver) as $v ([]; if any(.[]; . == $v) then . else . + [$v] end)) as $vs
     | (reduce $vs[] as $v ({pending: null, out: []};
         (if .pending != null then .pending elif $v == ($b | ver) then $b
-         else ([$rs[] | select(ver == $v)] | first) end) as $start
+         else (([$rs[] | select(ver == $v and red)] | first) // ([$rs[] | select(ver == $v)] | first)) end) as $start
         | ([$rs[] | select(ok and ver == $v and .seq > $start.seq)] | first) as $end
         | if $end == null then .pending = $start
           else .out += [line($start; $end)] | .pending = null end)) as $st
@@ -316,11 +324,12 @@ stryker_safe() {
 # Exact: plain blame (no -w, -M, or -C), so a whitespace change inside a literal or a line the slice
 # copied from existing code counts as the slice's.
 owned() {
-  git blame --line-porcelain --no-textconv --no-ignore-revs-file "$last_end" -- "$1" 2> "$tmp/own.err" |
-    awk -v ends="$ends" '
+  git blame --line-porcelain --no-textconv --no-ignore-revs-file "$last_end" -- "$1" > "$tmp/own" 2> "$tmp/own.err" \
+    || die "git blame failed on $1: $(head -n 1 "$tmp/own.err")"
+  awk -v ends="$ends" '
       BEGIN { n = split(ends, e, " "); for (k = 1; k <= n; k++) mine[e[k]] = 1 }
       substr($0, 1, 1) == "\t" { next }
-      NF >= 3 && ($1 in mine) && !seen[$3]++ { print $3 + 0 }'
+      NF >= 3 && ($1 in mine) && !seen[$3]++ { print $3 + 0 }' "$tmp/own"
 }
 # slice_lines <path>: the slice's lines in the working tree as ranges "a-b", one per line. Later
 # edits (the working-tree commit) are followed with -w -M10 -C10, so a line a later change only
@@ -338,8 +347,12 @@ slice_lines() {
   : > "$tmp/owned"
   cut -f 3 "$tmp/map" | LC_ALL=C sort -u > "$tmp/sources"
   while IFS= read -r src; do
-    case "$src" in '"'*|'') continue ;; esac  # a quoted name: not one git can be asked about as is
-    owned "$src" | while IFS= read -r n; do printf '%s\t%s\n' "$src" "$n"; done >> "$tmp/owned"
+    case "$src" in
+      '') continue ;;
+      '"'*) say "$1: some of its lines come from $src, a name git quotes (a quote, a backslash, or a control character): they are left out"; continue ;;
+    esac
+    owned "$src" > "$tmp/own.lines" || exit 2
+    while IFS= read -r n; do printf '%s\t%s\n' "$src" "$n"; done < "$tmp/own.lines" >> "$tmp/owned"
   done < "$tmp/sources"
   awk -F '\t' 'NR == FNR { own[$1 "\t" $2] = 1; next } (($3 "\t" $2) in own) { print $1 }' "$tmp/owned" "$tmp/map" |
     sort -n | awk '
