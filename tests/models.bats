@@ -140,3 +140,10 @@ m() { "$SCRIPTS/models.sh" "$@"; }
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$output" = "gpt-6-sol" ]
 }
+
+@test "#50: models.sh run away from lib/common.sh (a copy alone) stops with exit 2 and says why" {
+  cp "$SCRIPTS/models.sh" "$BATS_TEST_TMPDIR/models.sh"
+  run "$BATS_TEST_TMPDIR/models.sh" judge
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"cannot find lib/common.sh"* ]] || { echo "$output"; false; }
+}

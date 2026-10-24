@@ -543,3 +543,17 @@ took a-b.c_9" ] || { printf '%s\n' "$output" | od -c | head; false; }
   [ "$status" -eq 1 ] || { echo "$output"; false; }
   [[ "$output" == *".gitattributes"* ]] || { echo "$output"; false; }
 }
+
+@test "#50: check still finds a submodule listed after a path that is not UTF-8, with core.quotePath=false, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  git config core.quotePath false
+  WT add sa >/dev/null
+  # "!" sorts before "z", so the path with the byte comes first in diff --raw.
+  (cd "$WTROOT/sa" && blob="$(git hash-object -w --stdin < /dev/null)" \
+    && git update-index --add --cacheinfo "100644,$blob,!$(printf '\377')x" \
+    && git update-index --add --cacheinfo "160000,$(git rev-parse HEAD),zsub" && git commit -qm sub)
+  LC_ALL="$loc" run WT check sa
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"zsub"* ]] || { echo "$output"; false; }
+}

@@ -17,7 +17,10 @@
 # e.g. VETDD_MODEL_JUDGE=gpt-6-astra. Invalid overrides exit 2.
 
 set -euo pipefail
+unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
 case "${BASH_SOURCE[0]}" in */*) here="${BASH_SOURCE[0]%/*}" ;; *) here=. ;; esac
+here="$(cd "$here" && pwd)" && [ -f "$here/lib/common.sh" ] \
+  || { echo "models.sh: cannot find lib/common.sh beside it" >&2; exit 2; }
 # shellcheck source=lib/common.sh
 . "$here/lib/common.sh"
 

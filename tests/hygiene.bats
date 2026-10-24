@@ -24,7 +24,8 @@ load test_helper
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   printf '#!/bin/sh\necho C\necho POSIX\n' > "$BATS_TEST_TMPDIR/bin/locale"
   chmod +x "$BATS_TEST_TMPDIR/bin/locale"
-  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run utf8_locale
+  # Cleared here: the macOS job runs every test with it set.
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" VETDD_REQUIRE_UTF8_LOCALE= run utf8_locale
   [ "$status" -eq 0 ]
   [ -z "$output" ]
   PATH="$BATS_TEST_TMPDIR/bin:$PATH" VETDD_REQUIRE_UTF8_LOCALE=1 run utf8_locale
