@@ -77,10 +77,17 @@ real_root="$(cd "$root" && pwd -P)"
 # repository in any letter case, or is in the superproject's when this is a submodule. A hooks dir
 # there (husky's .husky or .husky/_, a .githooks) may be shared with the team.
 in_work_tree() {
-  local d="$1" phys top their super
+  local d="$1" pd p top their super
   while [ ! -d "$d" ]; do d="${d%/*}"; [ -n "$d" ] || d=/; done
-  phys="$(cd "$d" 2>/dev/null && pwd -P)${1#"$d"}"
-  case "$phys/" in "$common"/*) ;; "$real_root"/*) return 0 ;; esac
+  pd="$(cd "$d" 2>/dev/null && pwd -P)" || return 1
+  # Inside the git dir, in any letter case (-ef): a local hooks dir, never shared.
+  p="$pd"
+  while [ -n "$p" ]; do
+    [ ! "$p" -ef "$common" ] || return 1
+    [ "$p" != / ] || break
+    p="${p%/*}"; [ -n "$p" ] || p=/
+  done
+  case "$pd${1#"$d"}/" in "$real_root"/*) return 0 ;; esac
   top="$(git -c core.fsmonitor= -C "$d" rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ] || return 1
   [ "$top" -ef "$root" ] && return 0
   their="$(cd "$d" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" && [ "$their" -ef "$common" ] && return 0
@@ -94,7 +101,8 @@ path_rc=$?
 raw_hooks_path=""
 if [ "$path_rc" -gt 1 ]; then
   while IFS= read -r v; do
-    case "$v" in '~'*|':(optional)~'*) raw_hooks_path="$v"; break ;; esac
+    # A ~user is the one that can fail; ~ and ~/ expand from $HOME.
+    case "$v" in '~'[!/]*|':(optional)~'[!/]*) raw_hooks_path="$v"; break ;; esac
   done <<HOOKS_PATHS
 $(git -C "$root" config --get-all core.hooksPath 2>/dev/null)
 HOOKS_PATHS

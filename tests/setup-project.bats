@@ -418,3 +418,33 @@ in_tree_hooks_path_gets_no_line() {
   git config core.hooksPath frontend/.husky/_
   in_tree_hooks_path_gets_no_line frontend/.husky/_
 }
+
+# #64 review round 3 (regressions of round 2)
+@test "#64: with ~/ and an unexpandable ~user among the values, the warning names the ~user one" {
+  mkdir -p "$HOME/hooks"
+  git config --global core.hooksPath '~/hooks'
+  git config core.hooksPath '~vetdd-no-such-user-64/hooks'
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*"cannot expand"*"'~vetdd-no-such-user-64/hooks'"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"'~/hooks'"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: the git dir written in another letter case (.GIT/myhooks) still gets the line" {
+  mkdir -p .git/myhooks
+  [ -d "$REPO/.GIT/myhooks" ] || skip "case-sensitive file system"
+  git config core.hooksPath .GIT/myhooks
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"inside the work tree"* ]] || { echo "$output"; false; }
+  [ -n "$(chain_line "$output")" ] || { echo "$output"; false; }
+}
+
+@test "#64: a hooksPath that links into the git dir still gets the line" {
+  mkdir -p .git/myhooks
+  ln -s "$REPO/.git/myhooks" "$BATS_TEST_TMPDIR/gitlink"
+  git config --global core.hooksPath "$BATS_TEST_TMPDIR/gitlink"
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -n "$(chain_line "$output")" ] || { echo "$output"; false; }
+}
