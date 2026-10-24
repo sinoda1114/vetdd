@@ -317,3 +317,69 @@ in_tree_hooks_path_gets_no_line() {
   [[ "$output" == *WARNING*"$HOME/hooks/pre-commit"*"not executable"* ]] || { echo "$output"; false; }
   [ -z "$(chain_line "$output")" ] || { echo "$output"; false; }
 }
+
+# #64 review round 1
+@test "#64: an :(optional) hooksPath that does not exist is not reported as unexpandable" {
+  git config core.hooksPath ':(optional)~/no-such-hooks'
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"cannot expand"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: a .githooks hooksPath that does not exist yet still prints no line, and promises none" {
+  git config core.hooksPath .githooks
+  in_tree_hooks_path_gets_no_line .githooks
+  [[ "$output" != *"run setup-project.sh again"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: a hooksPath in the work tree written in another letter case prints no line" {
+  mkdir -p .githooks
+  [ -d "$REPO/.GITHOOKS" ] || skip "case-sensitive file system"
+  git config --global core.hooksPath "$REPO/.GITHOOKS"
+  in_tree_hooks_path_gets_no_line .GITHOOKS
+}
+
+@test "#64: from a linked worktree, a hooksPath in the main work tree prints no line" {
+  mkdir -p .githooks
+  git worktree add -q "$BATS_TEST_TMPDIR/wt" -b wt
+  git config core.hooksPath "$REPO/.githooks"
+  cd "$BATS_TEST_TMPDIR/wt"
+  in_tree_hooks_path_gets_no_line .githooks
+}
+
+@test "#64: in a submodule, a hooksPath in the superproject's work tree prints no line" {
+  git init -q "$BATS_TEST_TMPDIR/sub-src"
+  git -C "$BATS_TEST_TMPDIR/sub-src" commit -q --allow-empty -m init
+  git -c protocol.file.allow=always submodule add -q "$BATS_TEST_TMPDIR/sub-src" sm
+  mkdir -p .githooks
+  cd "$REPO/sm"
+  git config core.hooksPath "$REPO/.githooks"
+  in_tree_hooks_path_gets_no_line .githooks
+}
+
+@test "#64: a line already put in a hook inside the work tree is pointed out for removal" {
+  mkdir -p .githooks
+  git config core.hooksPath .githooks
+  local quoted; quoted="$(printf '%s' "$SCRIPTS/hooks/pre-commit")"
+  printf '#!/bin/sh\nvetdd_hook="%s"; true\n' "$quoted" > .githooks/pre-commit
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*".githooks/pre-commit"*"take it out"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: control characters in core.hooksPath are not printed" {
+  local esc; esc="$(printf '\033')"
+  git config --global core.hooksPath "$HOME/a${esc}[31mb"
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"core.hooksPath"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"$esc"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: an exported CDPATH does not move the hook to another .git" {
+  mkdir -p "$BATS_TEST_TMPDIR/decoy/.git/hooks"
+  CDPATH="$BATS_TEST_TMPDIR/decoy" run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -x "$(hook_path)" ] || { echo "$output"; false; }
+  [ ! -e "$BATS_TEST_TMPDIR/decoy/.git/hooks/pre-commit" ]
+}

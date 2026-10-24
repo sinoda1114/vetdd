@@ -6,6 +6,7 @@
 # - installs the vetdd pre-commit hook into the repository's own hooks dir
 #   (a foreign hook is backed up as pre-commit.before-vetdd; core.hooksPath is never changed)
 set -u
+unset CDPATH
 
 die() { printf 'setup-project.sh: %s\n' "$1" >&2; exit 1; }
 say() { printf 'setup-project.sh: %s\n' "$1"; }
@@ -65,34 +66,56 @@ fi
 # could carry any hook. The line skips with a warning when the install is gone or not executable, so
 # a removed vetdd blocks no commit; the hook does nothing in a repository without .vetdd/evidence.
 # git expands ~ (--type=path). core.hooksPath is never changed.
+
+# Drops control characters from a config value before it goes to the terminal.
+printable() { printf '%s' "$1" | tr -d '[:cntrl:]'; }
+
+# Succeeds when the path (or, while it does not exist, the nearest directory above it) is in a work
+# tree of this repository, in any letter case, or in the superproject's when this is a submodule.
+# A hooks dir there (husky's .husky or .husky/_, a .githooks) is shared with the team.
+in_work_tree() {
+  local d="$1" top their super
+  while [ ! -d "$d" ]; do d="${d%/*}"; [ -n "$d" ] || d=/; done
+  top="$(git -c core.fsmonitor= -C "$d" rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ] || return 1
+  [ "$top" -ef "$root" ] && return 0
+  their="$(cd "$d" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" && [ "$their" -ef "$common" ] && return 0
+  super="$(git -C "$root" rev-parse --show-superproject-working-tree 2>/dev/null)"
+  [ -n "$super" ] && [ "$top" -ef "$super" ]
+}
+
 raw_hooks_path="$(git -C "$root" config --get core.hooksPath 2>/dev/null || true)"
-hooks_path="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null || true)"
-if [ -n "$raw_hooks_path" ] && [ -z "$hooks_path" ]; then
-  say "WARNING: git cannot expand core.hooksPath '$raw_hooks_path' (an unknown ~user?), and git commit fails on it the same way. Fix or unset core.hooksPath, then run setup-project.sh again."
+hooks_path="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null)"
+path_rc=$?
+case "$raw_hooks_path" in '~'*|':(optional)~'*) unexpandable=1 ;; *) unexpandable=0 ;; esac
+if [ "$path_rc" -gt 1 ] && [ "$unexpandable" -eq 1 ]; then
+  say "WARNING: git cannot expand core.hooksPath '$(printable "$raw_hooks_path")' (an unknown ~user?), and git commit fails on it the same way. Fix or unset core.hooksPath, then run setup-project.sh again."
 elif [ -n "$hooks_path" ]; then
   case "$hooks_path" in /*) ;; *) hooks_path="$root/$hooks_path" ;; esac
-  real_hooks="$(cd "$hooks_path" 2>/dev/null && pwd -P || true)"
-  real_root="$(cd "$root" && pwd -P)"
+  shown="$(printable "$hooks_path")"
   # The path goes between double quotes in sh, with \ " $ ` escaped.
   quoted="$(printf '%s' "$hook_src" | sed 's/[\\"$`]/\\&/g')"
   chain="vetdd_hook=\"$quoted\"; if [ -x \"\$vetdd_hook\" ]; then \"\$vetdd_hook\" \"\$@\" || exit \$?; elif [ -e \"\$vetdd_hook\" ]; then echo \"vetdd: \$vetdd_hook not executable; skipped\" >&2; else echo \"vetdd: \$vetdd_hook not found; skipped\" >&2; fi"
-  if [ -n "$real_hooks" ] && [ "$real_hooks" = "$common/hooks" ]; then
+  if [ "$hooks_path" -ef "$common/hooks" ]; then
     : # hooksPath is this repository's own hooks directory: git runs the hook as installed.
-  elif [ -z "$real_hooks" ]; then
-    # In a linked worktree a relative .git/hooks lands under the .git file: no line can name it.
-    say "WARNING: core.hooksPath is '$hooks_path', which is not a directory, so git runs no hook from it and ignores $hook_dst. Make it a directory (or fix or unset core.hooksPath), then run setup-project.sh again for the line to put in its pre-commit."
-  elif case "$real_hooks/" in "$common"/*) false ;; "$real_root"/*) true ;; *) false ;; esac; then
-    # A hooks dir in the work tree (husky's .husky or .husky/_, a .githooks) is shared with the team;
-    # this machine's install path does not belong there.
-    say "WARNING: core.hooksPath ('$hooks_path') is inside the work tree, so git ignores $hook_dst. vetdd prints no line for a hook there (husky's or a tracked hooks dir, shared with the team); run check-evidence.sh before committing instead."
+  elif in_work_tree "$hooks_path"; then
+    # This machine's install path does not belong in a file shared with the team. A linked
+    # worktree's relative .git/hooks lands here too, under the .git file, and is not a directory.
+    note=""; [ -d "$hooks_path" ] || note=" and is not a directory (git runs no hook from it)"
+    say "WARNING: core.hooksPath ('$shown') is inside the work tree$note, so git ignores $hook_dst. vetdd prints no line for a hook there (husky's or a tracked hooks dir is shared with the team); run check-evidence.sh before committing instead."
+    if grep -qF -- "$quoted" "$hooks_path/pre-commit" 2>/dev/null; then
+      say "WARNING: $shown/pre-commit holds a vetdd line with this machine's install path; take it out of that shared file."
+    fi
+  elif ! (cd "$hooks_path" 2>/dev/null); then
+    what="not a directory"; [ ! -d "$hooks_path" ] || what="a directory this user cannot enter"
+    say "WARNING: core.hooksPath is '$shown', which is $what, so git runs no hook from it and ignores $hook_dst. Fix that (or fix or unset core.hooksPath), then run setup-project.sh again for the line to put in its pre-commit."
   elif grep -qF -- "$quoted" "$hooks_path/pre-commit" 2>/dev/null; then
     if [ -x "$hooks_path/pre-commit" ]; then
-      say "core.hooksPath is '$hooks_path'; $hooks_path/pre-commit mentions the vetdd hook (check that the line comes before any exit)"
+      say "core.hooksPath is '$shown'; $shown/pre-commit mentions the vetdd hook (check that the line comes before any exit)"
     else
-      say "WARNING: core.hooksPath is '$hooks_path'; $hooks_path/pre-commit mentions the vetdd hook but is not executable, so git does not run it (chmod +x it)"
+      say "WARNING: core.hooksPath is '$shown'; $shown/pre-commit mentions the vetdd hook but is not executable, so git does not run it (chmod +x it)"
     fi
   else
-    say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run vetdd's check, put this line in $hooks_path/pre-commit, before any exit in that file (create it with #!/bin/sh first and make it executable if it does not exist; core.hooksPath was not changed):"
+    say "WARNING: core.hooksPath is set to '$shown', so git ignores $hook_dst. To run vetdd's check, put this line in $shown/pre-commit, before any exit in that file (create it with #!/bin/sh first and make it executable if it does not exist; core.hooksPath was not changed):"
     printf '    %s\n' "$chain"
   fi
 fi
