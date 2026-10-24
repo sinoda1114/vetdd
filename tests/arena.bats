@@ -419,7 +419,7 @@ sneak() {
 @test "#40: arena.md says the allowances cover every lane, and merges the commit gate.txt names" {
   local ar="$SCRIPTS/../parallel/arena.md"
   grep -q 'cover every lane' "$ar"
-  grep -q 'merge --no-ff --no-overwrite-ignore -m "Merge vetdd/<lane>" <the commit gate.txt names>' "$ar"
+  grep -q 'merge --no-ff --no-edit --no-overwrite-ignore -m "Merge vetdd/<lane>" <the commit gate.txt names>' "$ar"
 }
 
 # --- PR review round 1 (#40) -----------------------------------------------------------------------
@@ -453,4 +453,25 @@ sneak() {
   grep -q 'review "$l" --at "$sha"' "$SCRIPTS/arena-layout.sh"
   grep -q 'remove <lane> --keep-branch --at <the commit check printed>' "$SCRIPTS/../parallel/arena.md"
   grep -q 'remove <slice> --keep-branch --at <the commit check printed>' "$SCRIPTS/../parallel/swarm.md"
+}
+
+# --- PR review round 3 (#40) -----------------------------------------------------------------------
+
+@test "#40 r3: a build that stops after a runner rewrote its branch still takes the review worktree away" {
+  lane ar-a1b2c3 42
+  local fake="$BATS_TEST_TMPDIR/fakescripts"
+  cp -R "$SCRIPTS" "$fake"
+  # judge-layout fails after the branch is rewritten to a commit that is not a child of the reviewed one.
+  printf '#!/bin/sh\nc="$(git -C %s commit-tree "vetdd/ar-a1b2c3^{tree}" -m rewritten)"\ngit -C %s update-ref refs/heads/vetdd/ar-a1b2c3 "$c"\nexit 3\n' "$REPO" "$REPO" > "$fake/judge-layout.sh"
+  chmod +x "$fake/judge-layout.sh"
+  run "$fake/arena-layout.sh" --out "$OUT" --base "$BASE" ar-a1b2c3
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ ! -e "$WTROOT/ar-a1b2c3" ]
+  [ -z "$(git worktree list --porcelain | grep "$WTROOT/ar-a1b2c3")" ]
+}
+
+@test "#40 r3: the merges keep --no-edit, and arena.md says what to do when remove --at refuses" {
+  grep -q 'merge --no-ff --no-edit --no-overwrite-ignore -m "Merge vetdd/<slice>" <the commit check printed>' "$SCRIPTS/../parallel/swarm.md"
+  grep -q 'merge --no-ff --no-edit --no-overwrite-ignore -m "Merge vetdd/<lane>" <the commit gate.txt names>' "$SCRIPTS/../parallel/arena.md"
+  grep -q 'If `remove --at` stops because the branch moved' "$SCRIPTS/../parallel/arena.md"
 }

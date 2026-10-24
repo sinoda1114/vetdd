@@ -439,7 +439,7 @@ b"; do
 
 @test "#38: swarm.md merges the commit check printed, and reinstalls a linked directory" {
   local sw="$SCRIPTS/../parallel/swarm.md"
-  grep -q 'merge --no-ff --no-overwrite-ignore -m "Merge vetdd/<slice>" <the commit check printed>' "$sw"
+  grep -q 'merge --no-ff --no-edit --no-overwrite-ignore -m "Merge vetdd/<slice>" <the commit check printed>' "$sw"
   grep -q 'npm ci' "$sw"
 }
 

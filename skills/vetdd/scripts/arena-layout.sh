@@ -104,7 +104,9 @@ out="$abs"
 mkdir -m 700 -- "$out/lanes" "$out/errs" || die "cannot create the work directories in $(p "$out")" 1
 # A review worktree left by a stop is removed on the way out.
 cur=""
-trap 'if [ -n "$cur" ]; then "$here/worktree.sh" remove "$cur" --keep-branch >/dev/null 2>&1; fi' EXIT
+# It holds only copies: when remove refuses it (a runner rewrote its branch meanwhile), it goes by force.
+trap 'if [ -n "$cur" ]; then "$here/worktree.sh" remove "$cur" --keep-branch >/dev/null 2>&1 \
+  || git -c core.hooksPath=/dev/null -c core.fsmonitor= -C "$root" worktree remove --force "$wtroot/$cur" >/dev/null 2>&1; fi' EXIT
 
 : > "$out/gate.txt"
 green=()
