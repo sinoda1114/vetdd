@@ -75,7 +75,7 @@ rel() {
   case "$p" in -*) p="./$p" ;; esac  # dirname and basename would read it as an option
   case "$p" in *$'\n'*) die "a file name containing a newline cannot be parked" ;; esac
   [ ! -L "$p" ] || die "$p is a symlink; pass the file it points to"
-  [ -f "$p" ] || die "$p is not a regular file (directories are refused)"
+  [ -f "$p" ] || die "$p is not a regular file (directories are refused)$(vetdd_split_hint "$1")"
   d="$(cd "$(dirname -- "$p")" && pwd -P)" || die "cannot resolve $p"
   case "$d/" in "$top"/*) ;; *) die "$p is outside the repository" ;; esac
   # Use the name as it is on disk, so a different letter case on a case-insensitive file system is
@@ -116,7 +116,7 @@ parse() {
         vetdd_is_slice_id "$2" || die "--oracle-version takes letters, digits, and . _ -"
         pass+=("$1" "$2"); shift 2 ;;
       --) shift; argv=("$@"); have_cmd=1; return ;;
-      *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit)" ;;
+      *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit)$(vetdd_split_hint "$1")" ;;
     esac
   done
 }
@@ -384,7 +384,7 @@ case "$cmd" in
       g add --intent-to-add -- "$f" || die "could not mark $f with intent-to-add"
     done
     fix_diff "${files[@]}" > "$state/fix.patch" || die "git diff failed"
-    [ -s "$state/fix.patch" ] || die "nothing to unfix: the files hold no change against HEAD"
+    [ -s "$state/fix.patch" ] || die "nothing to unfix: the files hold no change against HEAD (the fix may be in other files than --file names; when the fix is already committed, as after a swarm or arena merge, take the red with calibrate.sh plant and planted: modes/test.md)"
     g apply -R --whitespace=nowarn --binary "$state/fix.patch" || die "could not take the fix out; nothing was changed"
     run_oracle; finish $?
     ;;
