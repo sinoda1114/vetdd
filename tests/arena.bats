@@ -329,3 +329,10 @@ lane() {
     [ ! -e "$OUT" ]
   done
 }
+
+@test "PR80: an --allow-words error is printed without control characters" {
+  lane la-a1b2c3 42
+  run AL --out "$OUT" --base "$BASE" --allow-words $'c*/x:\033[31mred' la-a1b2c3
+  [ "$status" -eq 2 ]
+  [[ "$output" != *$'\033'* ]] || { printf '%s' "$output" | od -c | head; false; }
+}

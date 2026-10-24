@@ -131,3 +131,11 @@ alpha-lane" ]
   run vetdd_allow_words_error 'c1/*:Feature-X' 'feature-x'
   [ "$status" -eq 0 ]
 }
+
+@test "PR80: an --allow-words value with a new line is refused (read and grep see one line, check-blind every line)" {
+  local v
+  for v in $'c1/*:openai\nclaude' $'c1/*:openai\n claude' $'c1/*:openai\n!!' $'c1/*\nx:openai'; do
+    run vetdd_allow_words_error "$v"
+    [ "$status" -eq 1 ] || { echo "$v: $output"; false; }
+  done
+}

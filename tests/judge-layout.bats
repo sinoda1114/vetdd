@@ -870,3 +870,9 @@ rewrite_oracle_path() {
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+@test "PR80: an --allow-words error is printed without control characters" {
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-words $'c1/*:\033[31mred' s1
+  [ "$status" -eq 2 ]
+  [[ "$output" != *$'\033'* ]] || { printf '%s' "$output" | od -c | head; false; }
+}

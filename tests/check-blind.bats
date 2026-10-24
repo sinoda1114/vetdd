@@ -866,3 +866,9 @@ c1/transcript.jsonl:3: secret: assignment" ]
   run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --extra-words "$BATS_TEST_TMPDIR/extra.txt" --allow-words 'c1/*:feature-x'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+@test "PR80: a new line in --allow-words cannot smuggle a second word past the check" {
+  mkdir -p "$BATS_TEST_TMPDIR/f/c1" && printf 'written by claude\n' > "$BATS_TEST_TMPDIR/f/c1/a"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words $'c1/*:openai\n claude'
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+}
