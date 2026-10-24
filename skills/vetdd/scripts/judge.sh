@@ -3,6 +3,7 @@
 # Usage: judge.sh --rubric <file> --candidates <dir> --out <json> --eval-id <id> --run-id <id>
 #                 --rubric-version <n> [--conditions <file>] [--model <m>] [--effort <e>]
 #                 [--extra-layout <text>] [--extra-words <file>] [--allow-secrets <glob>[:<kind>,...]]...
+#                 [--allow-words <glob>:<word>[,<word>]...]...
 # Steps: copy the label directories (c1/, c2/, ...) of <candidates> and the rubric (as rubric.md)
 # into a fresh private temporary directory outside any repository; refuse unless check-blind.sh
 # (judge profile, plus --extra-words and, in an A/B eval (variants.json in the run directory above
@@ -31,9 +32,13 @@
 # Use it only for test data a human confirmed, naming only the kinds confirmed; the values are
 # recorded in <out>.meta.json (allowed_secrets).
 # --allow-words <glob>:<word>[,<word>]... is passed to check-blind.sh: product words a human confirmed
-# (an SDK named after a model's maker), recorded in <out>.meta.json (allowed_words). A final verdict
-# (no variants.json) also passes --final: the origin words (variant, baseline, winner) are product
-# words there.
+# (an SDK named after a model's maker), recorded in <out>.meta.json (allowed_words). The glob is
+# relative to the copy, as for --allow-secrets (c1/artifact/..., or c*/... for every label). A value
+# that vetdd_allow_words_error (lib/blind-words.sh) refuses is a usage error (exit 2) before
+# anything is written. A final verdict
+# (no variants.json) also passes --final: variant and baseline are product words there; winner
+# is still checked (it can steer the judge), and a product that uses it passes it with
+# --allow-words <glob>:winner.
 # Defaults: --model `models.sh judge`, --effort `models.sh judge-effort`; both are validated by
 # models.sh. VETDD_CODEX_BIN overrides the codex binary (tests use a fake). codex runs with an
 # allowlisted environment (PATH, user, locale, terminal, proxy, and CA variables, plus the names in
@@ -54,6 +59,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 skill="${here%/*}"
 . "$here/lib/common.sh"
 . "$here/lib/secret-patterns.sh"
+. "$here/lib/blind-words.sh"
 vetdd_require_jq judge.sh
 
 rubric=""; cand=""; out=""; eval_id=""; run_id=""; version=""; conditions=""; model=""; effort=""
@@ -90,6 +96,22 @@ vetdd_is_slice_id "$run_id" || die "--run-id must be letters, digits, . _ - (got
 [ -d "$cand" ] || die "candidates directory not found: $cand"
 [ -z "$conditions" ] || [ -f "$conditions" ] || die "conditions file not found: $conditions"
 [ -z "$extra_words" ] || [ -f "$extra_words" ] || die "extra words file not found: $extra_words"
+# --allow-words: checked here as the layout scripts check it (the words of --extra-words known too),
+# so a typo is a usage error before anything is written or codex is asked; check-blind.sh checks
+# it again on the copy.
+if [ ${#allow_words[@]} -gt 0 ]; then
+  known_words=()
+  if [ -n "$extra_words" ]; then
+    lines="$(vetdd_word_lines "$extra_words")" || die "cannot read the extra words file: $extra_words"
+    while IFS= read -r w; do
+      [ -z "$w" ] || known_words+=("$w")
+    done <<< "$lines"
+  fi
+  for v in "${allow_words[@]}"; do
+    err="$(vetdd_allow_words_error "$v" ${known_words[@]+"${known_words[@]}"})" \
+      || die "$(printf '%s\n' "$err" | vetdd_printable)"
+  done
+fi
 if [ -n "$model" ]; then
   model="$(VETDD_MODEL_JUDGE="$model" "$here/models.sh" judge)" || die "invalid --model"
 else
@@ -313,7 +335,7 @@ set -- "$jdir" --profile judge \
 for g in ${allow_secrets[@]+"${allow_secrets[@]}"}; do set -- "$@" --allow-secrets "$g"; done
 for g in ${allow_words[@]+"${allow_words[@]}"}; do set -- "$@" --allow-words "$g"; done
 # A final verdict (no variants.json) has no variant to hide: product words such as a button variant
-# or a CSS baseline do not stop it; model names still do.
+# or a CSS baseline do not stop it; winner and model names still do.
 # Only one label and no variants.json is a final verdict: a hand-made pair (a calibration) keeps the
 # origin words checked.
 jrun="${cand%/*}"; [ -n "$jrun" ] || jrun="/"

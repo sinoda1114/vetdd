@@ -316,3 +316,16 @@ lane() {
   [ "$status" -eq 2 ]
   [ ! -e "$OUT" ]
 }
+
+@test "#44: an --allow-words or --allow-secrets glob written for one label (c1/...) is a usage error; c*/... is the form" {
+  lane la-a1b2c3 42
+  local f
+  for f in --allow-words --allow-secrets; do
+    local v='c1/artifact/diff.patch:variant'
+    [ "$f" = --allow-words ] || v='c12/artifact/tests/*:email'
+    run AL --out "$OUT" --base "$BASE" "$f" "$v" la-a1b2c3
+    [ "$status" -eq 2 ] || { echo "$f $v: $output"; false; }
+    [[ "$output" == *"c*/"* ]] || { echo "$f $v: $output"; false; }
+    [ ! -e "$OUT" ]
+  done
+}
