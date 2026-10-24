@@ -534,3 +534,45 @@ EOF
   [ "$(mq s1 '.runs[-1].audit.report.path')" = .vetdd/reports/m.json ]
   [ "$(mq s1 '.runs[-1].audit.report.files[0].path')" = pkg/src/dueDate.ts ]
 }
+
+# --- #14 and #23 follow-ups, review round 1 -------------------------------------------------------
+
+@test "a range whose file holds ! inside its name is taken, as mutate-ranges.sh takes it; a leading ! is not (r1)" {
+  REPORT="$(report '.config.mutate = ["src/hey!.ts:1-5"]')" run mut
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ] || { echo "$output"; false; }
+  rm -rf .vetdd
+  REPORT="$(report '.config.mutate = ["!src/x.ts:1-5"]')" run mut
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ]
+}
+
+@test "the other invisible characters (soft hyphen, tags, variation selectors, fillers) make a kept string invalid (r1)" {
+  local c
+  for c in '­' '᠎' '️' '󠁁' '󠄀' 'ㅤ' 'ﾠ' '￹'; do
+    rm -rf .vetdd
+    REPORT="$(report ".files = {\"src/due${c}Date.ts\": .files[\"src/dueDate.ts\"]}")" run mut
+    [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "accepted: $c"; false; }
+  done
+}
+
+@test "a report that gets another hard link while it is read is invalid (r1)" {
+  local shim="$BATS_TEST_TMPDIR/shim" realhead
+  realhead="$(command -v head)"
+  mkdir -p "$shim"
+  # The head that reads the report: once it has read, another name for the report appears.
+  printf '#!/bin/sh\n"%s" "$@"\nln "%s/%s" "%s/second-name" 2>/dev/null\nexit 0\n' "$realhead" "$REPO" "$R" "$BATS_TEST_TMPDIR" > "$shim/head"
+  chmod +x "$shim/head"
+  PATH="$shim:$PATH" REPORT="$(report)" run mut
+  [ -e "$BATS_TEST_TMPDIR/second-name" ]
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "$output"; false; }
+  [[ "$output" == *"hard link"* ]]
+}
+
+@test "the import keeps its signal handling to itself: a caller's trap is still there after it (r1)" {
+  REPORT="$(report)" sh mrun.sh
+  mkdir -p .vetdd/evidence/s1/runs
+  run bash -c '. "$1/lib/common.sh"; . "$1/lib/tree-hash.sh"; . "$1/lib/mutation-report.sh"
+    trap "echo mine" TERM
+    vetdd_mutation_report_import "$2" "$3" "$2/.vetdd/evidence/s1/runs/001-mutation.json" runs/001-mutation.json >/dev/null 2>&1
+    trap -p TERM' sh "$SCRIPTS" "$(pwd -P)" "$R"
+  [[ "$output" == *"echo mine"* ]] || { echo "$output"; false; }
+}

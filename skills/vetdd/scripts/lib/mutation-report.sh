@@ -6,11 +6,16 @@
 VETDD_MUTATION_REPORT_MAX_BYTES=67108864
 
 # jq: clean is true for a string with no control character (C0, DEL, C1), no bidirectional control
-# (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), and no invisible format character (U+200B-U+200D,
-# U+2028, U+2029, U+2060-U+2065, U+FEFF), so text that reaches the judge or a terminal reads as it shows.
+# (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), and no character that shows as nothing: the
+# soft hyphen U+00AD, U+180E, U+200B-U+200D, U+2028, U+2029, U+2060-U+2065, the Hangul fillers U+3164
+# and U+FFA0, the variation selectors U+FE00-U+FE0F and U+E0100-U+E01EF, U+FEFF, U+FFF9-U+FFFB, and
+# the tag characters U+E0000-U+E007F (text hidden from a reader, not from a model). So text that
+# reaches the judge or a terminal reads as it shows. A superset of what mutate-ranges.sh refuses.
 VETDD_JQ_CLEAN='
-  def clean: explode | all(. > 31 and (. < 127 or . > 159) and . != 1564 and (. < 8203 or . > 8207)
-    and (. < 8232 or . > 8238) and (. < 8288 or . > 8297) and . != 65279);'
+  def clean: explode | all(. > 31 and (. < 127 or . > 159) and . != 173 and . != 1564 and . != 6158
+    and (. < 8203 or . > 8207) and (. < 8232 or . > 8238) and (. < 8288 or . > 8297) and . != 12644
+    and (. < 65024 or . > 65039) and . != 65279 and . != 65440 and (. < 65529 or . > 65531)
+    and (. < 917504 or . > 917631) and (. < 917760 or . > 917999));'
 
 # jq: a stryker-json report -> {projectRoot, keys, counts}. Errors (status invalid) when the shape is
 # not schema 1.x, projectRoot is not absolute, a file key is not a plain relative path (no empty, . or
@@ -30,9 +35,10 @@ VETDD_STRYKER_JSON="$VETDD_JQ_CLEAN"'
     and (.location | type) == "object" and (.location.start | pos) and (.location.end | pos);
   def plain: type == "string" and . != "" and clean and (split("/") | all(. != "" and . != "." and . != ".."));
   # A --mutate range: <file>:<first line>-<last line>, or with columns (<line>:<column>), the file a plain
-  # relative path with none of the characters Stryker reads as a glob or a list (mutate-ranges.sh).
+  # relative path with none of the characters Stryker reads as a glob or a list, and no leading ! (a
+  # negation), as mutate-ranges.sh prints it.
   def range: type == "string" and length <= 4096
-    and test("^[^:*?\\[\\]{}()\\\\!,]+:[0-9]+(:[0-9]+)?-[0-9]+(:[0-9]+)?$")
+    and test("^[^:*?\\[\\]{}()\\\\!,][^:*?\\[\\]{}()\\\\,]*:[0-9]+(:[0-9]+)?-[0-9]+(:[0-9]+)?$")
     and (sub(":[0-9]+(:[0-9]+)?-[0-9]+(:[0-9]+)?$"; "") | plain);
   def check(c; why): if c then . else error("vetdd: " + why) end;
   check(type == "object"; "it is not one JSON object")
@@ -122,8 +128,8 @@ vetdd_mutation_files() {
 # have swapped it). A report with another hard link, or larger than VETDD_MUTATION_REPORT_MAX_BYTES, is
 # not read. The temp files go when a signal cuts the import short.
 # When the report is missing or not usable, status is missing or invalid, with a warning on stderr
-# that says why in fixed words.
-vetdd_mutation_report_import() {
+# that says why in fixed words. The body runs in a subshell, so its trap never replaces the caller's.
+vetdd_mutation_report_import() (
   local root="$1" rel="$2" copy="$3" copy_rel="$4" status="" why="" summary="" files sum k keys=()
   local raw="" norm="" src="" runs prel rc got=0
   runs="$(dirname -- "$copy")"
@@ -150,6 +156,8 @@ vetdd_mutation_report_import() {
     elif ! head -c "$((VETDD_MUTATION_REPORT_MAX_BYTES + 1))" < "$root/$rel" > "$raw" 2>/dev/null \
          || [ -L "$root/$rel" ] || [ ! -f "$root/$rel" ]; then
       status=invalid; why="it could not be read, or became a link while it was read"
+    elif [ -z "$(find "$root/$rel" -prune -type f -links 1 2>/dev/null)" ]; then
+      status=invalid; why="it got another hard link, a name of a file elsewhere, while it was read"
     elif [ "$(wc -c < "$raw" | tr -d ' ')" -gt "$VETDD_MUTATION_REPORT_MAX_BYTES" ]; then
       status=invalid; why="it is larger than 64 MiB"
     else
@@ -201,4 +209,4 @@ vetdd_mutation_report_import() {
   printf '%s' "$summary" | jq --arg p "$rel" --arg sum "$sum" --arg c "$copy_rel" --argjson files "$files" \
     '{format: "stryker-json", path: $p, status: "ok", sha256: $sum, copy: $c, counts, files: $files}' \
     || { rm -f -- "$copy"; return 1; }
-}
+)

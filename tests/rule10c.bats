@@ -485,7 +485,8 @@ fake_npx() {
   mkdir -p "$d"
   cat > "$d/npx" <<'EOF'
 #!/bin/sh
-[ -z "${FAKE_NPX_SLEEP:-}" ] || exec sleep "$FAKE_NPX_SLEEP"
+# A hang as npx has one: the tool runs in a child of npx, which holds the output open.
+if [ -n "${FAKE_NPX_SLEEP:-}" ]; then sleep "$FAKE_NPX_SLEEP" & echo $! > "$BATS_TEST_TMPDIR/fake-npx-child"; wait; exit 0; fi
 if [ -f "$4" ]; then jq -n --arg f "$(pwd -P)/$4" '[{file: $f}]'; else printf '[]\n'; fi
 EOF
   chmod +x "$d/npx"
@@ -850,7 +851,12 @@ jsts_slice() {
 @test "the ts-kata config gives each vitest list a time limit (#23)" {
   command -v node >/dev/null || skip "node not installed"
   local b; b="$(fake_npx)"
-  FAKE_NPX_SLEEP=5 VETDD_MUTATION_LIST_TIMEOUT_MS=500 PATH="$b:$PATH" run kata_cfg 'src/a.test.ts'
+  local t0=$SECONDS
+  FAKE_NPX_SLEEP=8 VETDD_MUTATION_LIST_TIMEOUT_MS=500 PATH="$b:$PATH" run kata_cfg 'src/a.test.ts'
+  [ $((SECONDS - t0)) -lt 5 ] || { echo "took $((SECONDS - t0)) s"; false; }
+  # The whole process group is stopped: the child of npx (the hung vitest) is not left running.
+  local child; child="$(cat "$BATS_TEST_TMPDIR/fake-npx-child")"
+  if kill -0 "$child" 2>/dev/null; then kill "$child"; echo "left running: $child"; false; fi
   [ "$status" -ne 0 ]
   [[ "$output" == *"did not finish within 500 ms"* ]] || { echo "$output"; false; }
   local v
@@ -871,4 +877,27 @@ jsts_slice() {
   # A sandbox inside the project is still left out.
   KATA_CFG_EXTRA='.stryker-tmp/sandbox-1/src/a.test.ts' PATH="$(fake_npx):$PATH" run kata_cfg '.stryker-tmp/sandbox-1/src/a.test.ts'
   [[ "$output" == *"selects 0 test files"* ]] || { echo "$output"; false; }
+}
+
+@test "10c reads a filter as the end of an oracle file path, whole components, however it names the slice's own file (r1)" {
+  local c
+  # Too short to name the slice's file: the end of no oracle path at a component boundary.
+  for c in "npx --no-install vitest run 's'" "npx --no-install vitest run 'est.sh'" "npx --no-install vitest run '/elsewhere/other.sh'" \
+           "npx --no-install vitest run '/'"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [[ "$output" == *"s1: FAIL (10c: mutation run 3 ran its mutants against"* ]] || { echo "accepted: $c"; echo "$output"; false; }
+  done
+  # An absolute path under the repository, ./ repeated, and syntax the check does not read
+  # (double quotes, a non-ASCII letter, whose case vitest folds and jq cannot) pass.
+  for c in "npx --no-install vitest run '$REPO/test.sh'" "npx --no-install vitest run '././test.sh'" \
+           'npx --no-install vitest run \"test.sh\"' "npx --no-install vitest run 'TËST.sh'"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [ "$output" = "s1: OK" ] || { echo "refused: $c"; echo "$output"; false; }
+  done
 }

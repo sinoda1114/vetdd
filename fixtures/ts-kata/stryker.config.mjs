@@ -1,5 +1,5 @@
 // StrykerJS for vetdd's mutation audit (modes/test.md "Audits" › "Mutation", run in Close step 2).
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { relative } from "node:path";
 
@@ -39,12 +39,42 @@ const real = (p) => {
   }
 };
 const project = real(process.cwd());
+// vitest list <p> --filesOnly --json, its standard output. It runs in a process group of its own, so on
+// the time limit the whole group is stopped: npx runs vitest in a child, which a signal to npx alone
+// would leave running.
+const list = (p) =>
+  new Promise((resolve, reject) => {
+    // The filter goes before the flags: --json takes an optional value and would read a path after it
+    // as the file to write. With nothing after it, the list goes to standard output.
+    const child = spawn("npx", ["--no-install", "vitest", "list", p, "--filesOnly", "--json"], { stdio: ["ignore", "pipe", "pipe"], detached: true });
+    let out = "";
+    let err = "";
+    let late = false;
+    child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
+    child.stderr.setEncoding("utf8").on("data", (d) => (err += d));
+    const timer = setTimeout(() => {
+      late = true;
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // The group is already gone.
+      }
+    }, listTimeout);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (late) reject(Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }));
+      else if (code !== 0) reject(new Error(`exit ${code ?? signal}: ${err.trim()}`));
+      else resolve(out);
+    });
+  });
 for (const p of tests) {
   let listed;
   try {
-    // The filter goes before the flags: --json takes an optional value and would read a path after it
-    // as the file to write. With nothing after it, the list goes to standard output.
-    listed = execFileSync("npx", ["--no-install", "vitest", "list", p, "--filesOnly", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: listTimeout });
+    listed = await list(p);
   } catch (e) {
     if (e.code === "ETIMEDOUT") {
       throw new Error(`VETDD_MUTATION_TESTS: vitest list for ${JSON.stringify(p)} did not finish within ${listTimeout} ms (a vitest config or globalSetup that hangs?); fix it, or allow more with VETDD_MUTATION_LIST_TIMEOUT_MS`);
