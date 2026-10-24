@@ -22,9 +22,11 @@
 #   replacement, rename, and checks as the rest. A file that is not text (a screenshot: the judge's blind
 #   check reads text only) stays on the machine and is named on stderr; a link, a file that is not
 #   regular, or a .env file in it stops the build (exit 2, nothing written).
-#   --allow-secrets: the glob names paths of the layout under c1/artifact/ or c1/evidence/ (c*/ for an
-#   arena lane) and something below them other than only *, so the secret check never stops for the
-#   whole layout or a whole half of it (exit 2 otherwise, nothing written).
+#   --allow-secrets: the glob names paths of the layout under c1/artifact/ or c1/evidence/ (c*/ only
+#   for an arena lane, --lane, as arena-layout.sh passes it) and starts below them with a literal name
+#   (tests, diff.patch, a slice), so the secret check never stops for the whole layout or a whole half
+#   of it (exit 2 otherwise, nothing written). check-blind's * crosses "/": a c*/ glob can still reach
+#   further into a lane than its text says.
 #   --before-close: check-evidence.sh runs with it (an arena lane, laid out before its Close: the
 #   mutation audit is not due yet), as arena-layout.sh's gate does
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
@@ -108,13 +110,16 @@ for a in ${allow[@]+"${allow[@]}"}; do
   # "/", so "*", "c1/artifact/*", "c1/artifact/?*", or "c1/artifact/*/*" would stop the secret check
   # for all of it.
   g="$a"; case "$a" in *:*) g="${a%:*}" ;; esac
+  # c*/ is the form arena-layout.sh passes to each lane (--lane); for one delivered change its * could
+  # reach anywhere in c1 (c1/artifact/verify-artifacts/x/evidence/...), so only c1/ is taken there.
   case "$g" in
-    c1/artifact/?*|c1/evidence/?*|'c*/artifact/'?*|'c*/evidence/'?*) ;;
+    c1/artifact/?*|c1/evidence/?*) ;;
+    'c*/artifact/'?*|'c*/evidence/'?*) [ "$lane" -eq 1 ] || g="" ;;
     *) g="" ;;
   esac
   first="${g#*/*/}"; first="${first%%/*}"
   case "$first" in ""|*'*'*|*'?'*|*'['*) g="" ;; esac
-  [ -n "$g" ] || die "--allow-secrets $(printf '%s' "$a" | vetdd_printable): the glob must name paths under c1/artifact/ or c1/evidence/ (c*/... for an arena lane) and start below them with a literal name, no * ? or [ (e.g. c1/artifact/tests/*:email)"
+  [ -n "$g" ] || die "--allow-secrets $(printf '%s' "$a" | vetdd_printable): the glob must name paths under c1/artifact/ or c1/evidence/ (c*/... only for an arena lane, --lane) and start below them with a literal name, no * ? or [ (e.g. c1/artifact/tests/*:email)"
 done
 # The .claude rename, also applied to the globs (see below). An arena lane (--lane): arena-layout.sh
 # repeats each glob as given for the judge, and each lane picks its free name on its own, so a glob
@@ -326,6 +331,17 @@ done < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --numstat -z
 # path at or under .vetdd/artifacts/ (where the verify scripts write them), inside the repository with
 # no link on the way; every entry below it must be a directory or a regular file, and no .env file.
 # A file that is not text stays: check-blind would stop the layout on it, unread (a screenshot).
+# first_link <rel>: print the first component of <rel> (a path from the repository root) that is a
+# symbolic link, and succeed; fail when none is.
+first_link() {
+  local c="" rest="$1/"
+  while [ -n "$rest" ]; do
+    c="$c${rest%%/*}"; rest="${rest#*/}"
+    [ ! -L "$root/$c" ] || { printf '%s' "$c"; return 0; }
+    c="$c/"
+  done
+  return 1
+}
 vsrc=()
 for v in ${varts[@]+"${varts[@]}"}; do
   vp="--verify-artifacts $(printf '%s' "$v" | vetdd_printable)"
@@ -333,12 +349,9 @@ for v in ${varts[@]+"${varts[@]}"}; do
   case "/$v/" in *//*|*/./*|*/../*) die "$vp: give a plain path at or under .vetdd/artifacts/ (no //, ./, ../, or trailing /)" ;; esac
   # No link on the way, not even one that stays inside the repository (latest -> ../../src): what is
   # sent is what lies under .vetdd/artifacts/ by name.
-  c=""; rest="$v/"
-  while [ -n "$rest" ]; do
-    c="$c${rest%%/*}"; rest="${rest#*/}"
-    [ ! -L "$root/$c" ] || die "$vp: $(printf '%s' "$c" | vetdd_printable) is a symbolic link; give the directory it names, under .vetdd/artifacts/"
-    c="$c/"
-  done
+  if c="$(first_link "$v")"; then
+    die "$vp: $(printf '%s' "$c" | vetdd_printable) is a symbolic link; give the directory it names, under .vetdd/artifacts/"
+  fi
   vetdd_inside_repo "$root" "$v" && { [ -d "$root/$v" ] || { [ -f "$root/$v" ] && [ "$v" != .vetdd/artifacts ]; }; } \
     || die "$vp: not a directory or regular file under .vetdd/artifacts/ of this repository (missing, or outside)"
   while IFS= read -r -d '' f; do
@@ -349,6 +362,10 @@ for v in ${varts[@]+"${varts[@]}"}; do
     # A name with a control character (a newline) would split the lists below: the oracle files' rule.
     vetdd_inside_repo "$root" "$rel" \
       || die "$vp: $(printf '%s' "$rel" | vetdd_printable) has a control character in its name; rename it"
+    # check-blind refuses these names in a judge input (exit 4, after the layout is written): stop here.
+    case "$(printf '%s' "${rel##*/}" | tr '[:upper:]' '[:lower:]')" in
+      .git|node_modules) die "$vp: $(printf '%s' "$rel" | vetdd_printable) is named .git or node_modules, which never goes to the judge; give the artifact paths below it that matter" ;;
+    esac
     [ -f "$f" ] || continue
     ! is_env "$rel" || die "$vp: $(printf '%s' "$rel" | vetdd_printable) is a .env file, which may hold secrets and never goes to the judge"
     if vetdd_is_text "$f"; then
@@ -377,8 +394,8 @@ for f in ${vsrc[@]+"${vsrc[@]}"}; do
   dst="$C/artifact/verify-artifacts/${f#.vetdd/artifacts/}"
   # Checked again right before the copy (the app may still write there); -P copies a link as a link,
   # which check-blind then refuses, never the file it points to.
-  [ -f "$root/$f" ] && [ ! -L "$root/$f" ] \
-    || die "the verify artifact $(printf '%s' "$f" | vetdd_printable) changed since it was checked (now missing, a link, or not a regular file)" 1
+  ! first_link "$f" >/dev/null && vetdd_inside_repo "$root" "$f" && [ -f "$root/$f" ] \
+    || die "the verify artifact $(printf '%s' "$f" | vetdd_printable) changed since it was checked (now missing, behind a link, or not a regular file)" 1
   mkdir -p -- "$(dirname -- "$dst")" && cp -P -- "$root/$f" "$dst" || die "cannot copy the verify artifact $(printf '%s' "$f" | vetdd_printable)" 1
 done
 

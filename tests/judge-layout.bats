@@ -1027,14 +1027,19 @@ VERIFY_MD="$BATS_TEST_DIRNAME/../skills/vetdd/modes/verify.md"
   local v
   for v in '*:email' '*' 'c1/*:email' 'c1/artifact/*:email' 'c1/evidence/**:email' 'artifact/tests/*:email' \
            'c2/artifact/tests/*:email' '**/tests/*:email' 'c1/other/x:email' 'c1/artifact/?*:email' 'c1/artifact/*/*:email' \
-           'c1/artifact/[!.]*:email' 'c1/evidence/?/runs/*:email' 'c1/artifact/tests*:email' 'c*/artifact/*/x:email'; do
+           'c1/artifact/[!.]*:email' 'c1/evidence/?/runs/*:email' 'c1/artifact/tests*:email' 'c*/artifact/*/x:email' \
+           'c*/artifact/tests/*:email'; do
     run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets "$v" s1
     [ "$status" -eq 2 ] || { echo "$v: $output"; false; }
     [[ "$output" == *"--allow-secrets"* ]] || { echo "$v: $output"; false; }
     [ ! -e "$OUT" ]
   done
-  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets 'c*/artifact/tests/*:email' \
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets 'c1/artifact/tests/*:email' \
     --allow-secrets 'c1/artifact/diff.patch:email' --allow-secrets 'c1/evidence/s1/runs/*:email' s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # c*/ is an arena lane's form (arena-layout.sh passes it on): only with --lane, where * would otherwise
+  # reach as deep as it likes into one label's layout.
+  run JL --lane --before-close --out "$OUT.2" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets 'c*/artifact/tests/*:email' s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
@@ -1148,6 +1153,19 @@ VERIFY_MD="$BATS_TEST_DIRNAME/../skills/vetdd/modes/verify.md"
     run JL --lane --before-close --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD $f s1
     [ "$status" -eq 2 ] || { echo "$f: $output"; false; }
     [[ "$output" == *".agent"* ]] || { echo "$f: $output"; false; }
+    [ ! -e "$OUT" ]
+  done
+}
+
+# --- review round 2 (fix/judge-layout-verify) -------------------------------------------------------
+
+@test "r2: a verify artifact under a .git or node_modules name (any case) is refused before anything is written (exit 2), not left for exit 4" {
+  local d
+  for d in node_modules .GIT .git Node_Modules; do
+    rm -rf .vetdd/artifacts && mkdir -p ".vetdd/artifacts/due/$d" && printf 'x\n' > ".vetdd/artifacts/due/$d/x.txt"
+    run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due s1
+    [ "$status" -eq 2 ] || { echo "$d: $output"; false; }
+    [[ "$output" == *"$d"* ]] || { echo "$d: $output"; false; }
     [ ! -e "$OUT" ]
   done
 }
