@@ -4,14 +4,17 @@
 #   npx --no-install stryker run <config> --mutate "$(mutate-ranges.sh <slice>)"
 # Prints one line, `file:a-b,file:c-d` (each range a run of contiguous lines; one line is `a-a`), with
 # paths relative to the current directory, where Stryker runs.
-# The lines are attributed with git blame, not a diff from a base: three throwaway commits are made,
-# c0 of the tree of the slice's first `before` run, c1 of the tree of its last accepted `after` run with
-# outcome pass (parent c0), and c2 of the working tree now (parent c1, with untracked files, as
-# evidence.sh hashes it), and the lines `git blame c2` gives to c1 are the slice's. So a later slice or
-# a refactor moves them without adding its own lines (blame -w -M -C: a line only moved, reindented,
-# or moved to another file named with --file stays the slice's), and two slices in one file each get
-# only their own. The commits are never referenced by a ref (unreachable objects); HEAD, the index, and the
-# working tree are not touched.
+# The lines are attributed with git blame, not a diff from a base, over a chain of throwaway commits:
+# for each oracle version of the slice in seq order, the tree of the version's earliest run (the first
+# `before`; for a later version, its red calibration), then the tree of its first accepted passing
+# `after`; last the working tree now (with untracked files, as evidence.sh hashes it). The lines
+# `git blame` gives to an `after` commit are the slice's; lines that arrived between versions or since
+# are not, and an `after` recorded again within a version moves nothing. A slice without a `before`
+# (a refactor, a behavior-preserving change) has one step, its first passing `after` to its last. So a
+# later slice or a refactor moves the lines without adding its own (blame -w -M -C: a line only moved,
+# reindented, or moved to another file named with --file stays the slice's), and two slices in one
+# file each get only their own. The commits are never referenced by a ref (unreachable objects);
+# HEAD, the index, and the working tree are not touched.
 # Without --file: every file the slice changed except its oracle files (every oracle file its evidence
 # names) and .vetdd/. --file (relative to the current directory, repeatable) limits the output to
 # the files named, in that order; name a file's new path with it when a later change moved the file.
@@ -22,8 +25,9 @@
 # !), one a shell reads (' " ` $ ; & | < >), or one with a control, bidirectional, or zero-width
 # character is refused (exit 2), so the value is safe inside single quotes.
 # Exit 0 when ranges were printed; 2 on usage errors and when the evidence cannot be attributed (no
-# before run, no passing after, a tree object git gc removed); 3 when there is nothing to mutate
-# (nothing printed: a slice that changed only its oracle files, or no line of the slice is left).
+# before run and fewer than two passing afters, no passing after after the red, a tree object git gc
+# removed); 3 when there is nothing to mutate (nothing printed: a slice that changed only its oracle
+# files, or no line of the slice is left).
 set -u
 
 unset CDPATH
@@ -61,13 +65,34 @@ meta="$root/$rel"
 jq -e --arg s "$slice" '(.slice_id == $s) and (.runs | type == "array") and all(.runs[]; type == "object")' \
   "$meta" >/dev/null 2>&1 || die "$rel is not valid evidence for slice '$slice'"
 
-# tree_of <jq filter of a run> first|last: "<tree hash> <seq>" of the first or last run it selects, empty when none (check_tree checks the hash).
-tree_of() {
-  local t
-  t="$(jq -r "[.runs[] | select($1)] | $2 | if . == null then \"\" else (.tree.tree_hash | tostring) + \" \" + (.seq | tostring) end" "$meta")" \
-    || die "cannot read the runs of $rel"
-  printf '%s\n' "$t"
-}
+# The segments that bound the slice's own change, one "<start tree> <start seq> <end tree> <end seq>"
+# line each, in seq order. With a before: one per oracle version, from the version's earliest run (the
+# first before for the first version, the red calibration for a later one) to its first accepted
+# passing after; a version with no such after yet has none. Without a before (a refactor or a
+# behavior-preserving slice): one, from the first accepted passing after to the last. A first line
+# "none" or "nobefore" says why there is none.
+segments="$(jq -r '
+  def ok: .kind == "after" and .accepted != false and .outcome == "pass";
+  def ver: .oracle.version | tojson;
+  def line($s; $e): "\($s.tree.tree_hash | tostring) \($s.seq | tostring) \($e.tree.tree_hash | tostring) \($e.seq | tostring)";
+  (.runs | sort_by(.seq)) as $r
+  | ([$r[] | select(.kind == "before")] | first) as $b
+  | if $b == null then
+      [$r[] | select(ok)] as $a
+      | if ($a | length) < 2 then "nobefore" else line($a[0]; $a[-1]) end
+    else
+      [$r[] | select(.seq >= $b.seq)] as $rs
+      | (reduce ($rs[] | ver) as $v ([]; if any(.[]; . == $v) then . else . + [$v] end)) as $vs
+      | [ $vs[] as $v
+          | (if $v == ($b | ver) then $b else ([$rs[] | select(ver == $v)] | first) end) as $start
+          | ([$rs[] | select(ok and ver == $v and .seq > $start.seq)] | first) as $end
+          | select($end != null) | line($start; $end) ]
+      | if length == 0 then "none" else .[] end
+    end' "$meta")" || die "cannot read the runs of $rel"
+case "$segments" in
+  nobefore) die "slice '$slice' has no before run and fewer than two passing after runs: a slice without a before (a refactor, a behavior-preserving change) needs a passing after before its change and another after it" ;;
+  none) die "slice '$slice' has no accepted after run with outcome pass after its red: its change is not on file" ;;
+esac
 check_tree() {  # <hash> <run description>
   case "$1" in
     *[!0-9a-f]*|'') die "the $2 of slice '$slice' has no usable tree hash; record the run again with evidence.sh" ;;
@@ -76,18 +101,14 @@ check_tree() {  # <hash> <run description>
   [ "$(git -C "$root" cat-file -t "$1" 2>/dev/null)" = tree ] \
     || die "tree $1 of the $2 of slice '$slice' is not in the repository (removed by git gc?): its lines cannot be attributed"
 }
-run0="$(tree_of '.kind == "before"' 'first')" || exit 2
-read -r t0 s0 <<EOF
-$run0
+seg_start=(); seg_sseq=(); seg_end=(); seg_eseq=()
+while read -r st ss et es; do
+  check_tree "$st" "run $ss"
+  check_tree "$et" "run $es"
+  seg_start+=("$st"); seg_sseq+=("$ss"); seg_end+=("$et"); seg_eseq+=("$es")
+done <<EOF
+$segments
 EOF
-[ -n "${s0:-}" ] || die "slice '$slice' has no before run: nothing to attribute the lines against"
-run1="$(tree_of '.kind == "after" and .accepted != false and .outcome == "pass"' 'last')" || exit 2
-read -r t1 s1 <<EOF
-$run1
-EOF
-[ -n "${s1:-}" ] || die "slice '$slice' has no accepted after run with outcome pass: its change is not on file"
-check_tree "$t0" "before run (run $s0)"
-check_tree "$t1" "after run (run $s1)"
 
 # Every oracle file the evidence names, of any version: tests are not mutated.
 oracles=()
@@ -131,9 +152,19 @@ throwaway() {
   GIT_COMMITTER_NAME=vetdd GIT_COMMITTER_EMAIL=vetdd@invalid GIT_COMMITTER_DATE='1000000000 +0000' \
     git -c commit.gpgsign=false commit-tree --no-gpg-sign "$@" < /dev/null
 }
-c0="$(throwaway -m "vetdd mutate-ranges $slice: before (run $s0)" "$t0")" || die "could not make the before commit"
-c1="$(throwaway -p "$c0" -m "vetdd mutate-ranges $slice: after (run $s1)" "$t1")" || die "could not make the after commit"
-c2="$(throwaway -p "$c1" -m "vetdd mutate-ranges $slice: working tree" "$t2")" || die "could not make the working-tree commit"
+# The chain start_1 -> end_1 -> start_2 -> end_2 -> ... -> the working tree. A line blamed on an end
+# commit changed inside a red-to-green of the slice; one that arrived between them (another slice, a
+# merge) is blamed on a start commit, and one added since on the last commit.
+parent=(); ends=""
+i=0
+while [ "$i" -lt ${#seg_start[@]} ]; do
+  c="$(throwaway ${parent[@]+"${parent[@]}"} -m "vetdd mutate-ranges $slice: start (run ${seg_sseq[$i]})" "${seg_start[$i]}")" \
+    || die "could not make a throwaway commit"
+  c="$(throwaway -p "$c" -m "vetdd mutate-ranges $slice: end (run ${seg_eseq[$i]})" "${seg_end[$i]}")" \
+    || die "could not make a throwaway commit"
+  ends="$ends $c"; parent=(-p "$c"); i=$((i + 1))
+done
+c2="$(throwaway "${parent[@]}" -m "vetdd mutate-ranges $slice: working tree" "$t2")" || die "could not make the working-tree commit"
 
 # mode_in <tree-ish> <path>: the entry's mode, empty when the path is not in it.
 mode_in() {
@@ -142,28 +173,52 @@ mode_in() {
   cut -d' ' -f1 < "$tmp/ls" | head -n 1
 }
 
-# The files the slice changed (c0 to c1), without its oracle files and .vetdd/.
-git diff-tree -r -z --no-renames --raw "$t0" "$t1" > "$tmp/changed" || die "could not compare the slice's trees"
+# The files the slice changed (each start to its end), without its oracle files and .vetdd/; a path
+# changed in several segments counts once, with the status of its last change.
+: > "$tmp/changed"
+same=1
+i=0
+while [ "$i" -lt ${#seg_start[@]} ]; do
+  [ "${seg_start[$i]}" = "${seg_end[$i]}" ] || same=0
+  git diff-tree -r -z --no-renames --raw "${seg_start[$i]}" "${seg_end[$i]}" >> "$tmp/changed" \
+    || die "could not compare the slice's trees"
+  i=$((i + 1))
+done
 product=0
-changed=()
+cpath=(); cstat=(); cmode=()
 while IFS= read -r -d '' rec && IFS= read -r -d '' p; do
   case "$p" in .vetdd/*) continue ;; esac
   is_oracle "$p" && continue
-  product=$((product + 1))
   read -r _ nmode _ _ st <<EOF
 $rec
 EOF
-  case "$st" in
+  j=0; found=-1
+  while [ "$j" -lt ${#cpath[@]} ]; do [ "${cpath[$j]}" = "$p" ] && found=$j; j=$((j + 1)); done
+  if [ "$found" -ge 0 ]; then cstat[$found]="$st"; cmode[$found]="$nmode"
+  else cpath+=("$p"); cstat+=("$st"); cmode+=("$nmode"); product=$((product + 1)); fi
+done < "$tmp/changed"
+changed=()
+j=0
+while [ "$j" -lt ${#cpath[@]} ]; do
+  p="${cpath[$j]}"
+  case "${cstat[$j]}" in
     D) say "$p: the slice deleted it, so there is nothing to mutate there" ;;
-    *) case "$nmode" in
+    *) case "${cmode[$j]}" in
          100644|100755) changed+=("$p") ;;
          *) say "$p: not a regular file in the slice's tree (a symbolic link or a submodule): left out" ;;
        esac ;;
   esac
-done < "$tmp/changed"
+  j=$((j + 1))
+done
+# One order whatever the segments: by byte, as git sorts paths.
+if [ ${#changed[@]} -gt 1 ]; then
+  sorted=()
+  while IFS= read -r -d '' p; do sorted+=("$p"); done < <(printf '%s\0' "${changed[@]}" | LC_ALL=C sort -z)
+  changed=("${sorted[@]}")
+fi
 
 if [ "$product" -eq 0 ]; then
-  [ "$t0" != "$t1" ] || say "the before run (run $s0) and the after run (run $s1) of slice '$slice' recorded the same tree"
+  [ "$same" -eq 0 ] || say "each red-to-green of slice '$slice' recorded the same tree at its start and its end"
   say "slice '$slice' changed no product file (only its oracle files): there is nothing to mutate; record why with audit-note.sh $slice --kind mutation --not-applicable --reason-file <path> (modes/test.md, Audits › Mutation: a slice that only adds tests)"
   exit 3
 fi
@@ -213,9 +268,10 @@ for r in ${targets[@]+"${targets[@]}"}; do
   esac
   git blame --porcelain --no-textconv --no-ignore-revs-file -w -M -C "$c2" -- "$r" > "$tmp/blame" 2> "$tmp/blame.err" \
     || die "git blame failed on $r: $(head -n 1 "$tmp/blame.err")"
-  ranges="$(awk -v c="$c1" '
+  ranges="$(awk -v ends="$ends" '
+    BEGIN { n = split(ends, e, " "); for (k = 1; k <= n; k++) mine[e[k]] = 1 }
     substr($0, 1, 1) == "\t" { next }
-    $1 == c && NF >= 3 {
+    NF >= 3 && ($1 in mine) {
       n = $3 + 0
       if (have && n == last + 1) { last = n }
       else { if (have) printf "%d-%d\n", first, last; first = n; last = n; have = 1 }

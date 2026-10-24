@@ -30,17 +30,55 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
   [ "$output" = "src/a.js:3-5" ]
 }
 
-@test "the last accepted passing after counts: a later rejected after and later edits do not" {
+@test "the first passing after of a version ends it: a rejected after before it, later afters of the version, and later edits do not" {
   red s1
   printf '%s\n' a1 X2 a3 a4 a5 > src/a.js
+  ev s1 after -- false >/dev/null 2>&1 || true
+  printf '%s\n' a1 X2 X3 a4 a5 > src/a.js
   green s1
-  printf '%s\n' a1 X2 a3 X4 a5 > src/a.js
+  printf '%s\n' a1 X2 X3 X4 a5 > src/a.js
   green s1
-  printf '%s\n' a1 X2 a3 X4 X5 > src/a.js
+  printf '%s\n' a1 X2 X3 X4 X5 > src/a.js
   ev s1 after -- false >/dev/null 2>&1 || true
   run --separate-stderr mr s1
   [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
-  [ "$output" = "src/a.js:2-2,src/a.js:4-4" ]
+  [ "$output" = "src/a.js:2-3" ]
+}
+
+@test "a version bump after a later slice: the lines between versions are not the slice's, its own change in the new version is" {
+  red s1
+  printf '%s\n' a1 X2 a3 a4 a5 > src/a.js
+  green s1
+  red s2
+  printf '%s\n' a1 X2 a3 X4 a5 > src/a.js
+  green s2
+  # s1's test is strengthened: v2's red, then its green on the tree that holds s2's line.
+  printf 'echo stronger\n' >> test.sh
+  ev s1 calibration --oracle-version v2 -- false >/dev/null 2>&1
+  run --separate-stderr mr s1
+  [ "$output" = "src/a.js:2-2" ] || { echo "before v2 is green: $output $stderr"; false; }
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  # v3: s1 changes a line of its own between v3's red and green.
+  ev s1 calibration --oracle-version v3 -- false >/dev/null 2>&1
+  printf '%s\n' a1 X2 a3 X4 Y5 > src/a.js
+  green s1
+  run --separate-stderr mr s1
+  [ "$output" = "src/a.js:2-2,src/a.js:5-5" ] || { echo "$output $stderr"; false; }
+  run --separate-stderr mr s2
+  [ "$output" = "src/a.js:4-4" ]
+}
+
+@test "a slice without a before (a refactor): its first passing after to its last" {
+  ev s1-refactor calibration --oracle-file test.sh -- false >/dev/null 2>&1
+  green s1-refactor
+  printf '%s\n' a1 a2 R3 a4 a5 > src/a.js
+  green s1-refactor
+  run --separate-stderr mr s1-refactor
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:3-3" ]
 }
 
 # --- 2. a later slice moves the lines -----------------------------------------------------------
@@ -147,8 +185,9 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
   printf 'echo t2\n' > t2.sh && git add t2.sh && git commit -q -m t2
   ev s1 before --seam unit --oracle-version v1 --oracle-file t2.sh -- false >/dev/null 2>&1
   printf 'echo t2 changed\n' > t2.sh
-  printf '%s\n' X1 a2 a3 a4 a5 > src/a.js
   ev s1 calibration --oracle-version v2 --oracle-file test.sh -- false >/dev/null 2>&1
+  printf 'echo t2 changed again\n' > t2.sh
+  printf '%s\n' X1 a2 a3 a4 a5 > src/a.js
   green s1
   run --separate-stderr mr s1
   [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
@@ -284,14 +323,14 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
 
 # --- 8. errors ----------------------------------------------------------------------------------
 
-@test "a slice without evidence, without a before, or without a passing after: exit 2" {
+@test "a slice without evidence, without a before and two passing afters, or without a passing after: exit 2" {
   run --separate-stderr mr s1
   [ "$status" -eq 2 ]
   [[ "$stderr" == *"s1"* ]]
   green s1
   run --separate-stderr mr s1
   [ "$status" -eq 2 ]
-  [[ "$stderr" == *"before"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"no before run and fewer than two passing after runs"* ]] || { echo "$stderr"; false; }
   red s2
   ev s2 after -- false >/dev/null 2>&1 || true
   run --separate-stderr mr s2
