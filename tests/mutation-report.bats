@@ -574,12 +574,12 @@ EOF
   [[ "$output" == *"is invalid ("*"clean absolute path"* ]] || { echo "$output"; false; }
 }
 
-@test "a replacement is clean text: new lines and tabs, but no bidirectional or invisible character (r2)" {
+@test "a replacement is code text: new lines and tabs, but no control or bidirectional control (r2, r3)" {
   local M='.files["src/dueDate.ts"].mutants[0]'
   REPORT="$(report "$M.replacement = \"a\\n\\tb\"")" run mut
   [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ] || { echo "$output"; false; }
   local c
-  for c in '‮' '​' '󠁁' '\u0007'; do
+  for c in '‮' '⁦' '‏' '\u0007'; do
     rm -rf .vetdd
     REPORT="$(report "$M.replacement = \"a${c}b\"")" run mut
     [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "accepted: $c"; false; }
@@ -618,4 +618,13 @@ EOF
   run ev s1 calibration --audit mutation --mutation-report "stryker-json:$nfd" --test-report "jest-json:$nfc" -- sh both.sh
   [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "$output"; false; }
   [[ "$output" == *"the same file as the test report"* ]] || { echo "$output"; false; }
+}
+
+@test "a replacement with an emoji (a variation selector, a joiner) or a ZWNJ is taken; only controls and bidirectional ones are not (r3)" {
+  local M='.files["src/dueDate.ts"].mutants[0]' c
+  for c in '❤️' '👨‍💻' 'a‌b' '🏴󠁧󠁢󠁿'; do
+    rm -rf .vetdd
+    REPORT="$(report "$M.replacement = \"x === \\\"${c}\\\"\"")" run mut
+    [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ] || { echo "refused: $c"; echo "$output"; false; }
+  done
 }

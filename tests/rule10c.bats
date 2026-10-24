@@ -946,7 +946,7 @@ jsts_slice() {
   [[ "$output" == *"more than 16 MiB"* ]] || { echo "${output:0:400}"; false; }
 }
 
-@test "a mutated file whose source holds a bidirectional or invisible character is a WARN: the judge reads it as it shows (r2)" {
+@test "a mutated file whose source holds a bidirectional control character is a WARN: the judge reads it as it shows (r2)" {
   printf 'const a = "x\342\200\256y";\n' > src/b.ts
   git add -A && git commit -q -m bidi
   record_good_slice s1
@@ -955,5 +955,21 @@ jsts_slice() {
   [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ]
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [[ "$output" == *"s1: WARN (10c: mutation run 3 mutated a file whose source holds a bidirectional or invisible character"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (10c: mutation run 3 mutated a file whose source holds a bidirectional or other control character"* ]] || { echo "$output"; false; }
+}
+
+@test "a source with an emoji joiner is no WARN; a leading ~ in a plain filter is unread, as the shell expands it (r3)" {
+  printf 'const a = "\360\237\221\250\342\200\215\360\237\222\273";\n' > src/b.ts
+  git add -A && git commit -q -m emoji
+  record_good_slice s1
+  jq --arg r "$REPO" --rawfile src src/b.ts '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run test.sh" | .files = {"src/b.ts": (.files["src/dueDate.ts"] | .source = $src | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/emoji.json"
+  mutation s1 "$BATS_TEST_TMPDIR/emoji.json"
+  run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+  rm -rf .vetdd
+  record_good_slice s1
+  mutation s1 "$(killed '.config.commandRunner.command = "npx --no-install vitest run ~/repo/test.sh"')"
+  run check s1
+  [ "${lines[0]}" = "s1: OK" ] || { echo "$output"; false; }
+  [[ "$output" == *"WARN (10c: mutation run 3 ran a vitest command that 10c cannot read"* ]] || { echo "$output"; false; }
 }

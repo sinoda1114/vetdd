@@ -81,7 +81,7 @@
 #               double quotes, a non-ASCII, // or .. path) is a WARN, a command without vitest (a verify
 #               wrapper) is not read, a filter that matches can still select more files (the ts-kata
 #               config refuses that), and the ranges are the judge's to check. A mutated source with a
-#               bidirectional or invisible character is a WARN.
+#               bidirectional or other control character is a WARN.
 # Stall:    (11) every handover file (.vetdd/evidence/<slice>/handover-<n>.md, handover.sh: the mark of
 #               a redesign) has each heading. A record that holds more stalls (lib/stall.sh with the
 #               default K = 2) than handovers is a WARN, not a FAIL: the agreement can change K, and
@@ -385,7 +385,7 @@ COMMAND_FILTERS='
     or (split("/") | any(.[]; . == "." or . == ".."));
   (.config.command // null) as $c
   | if ($c | type) != "string" or ($c | test("vitest") | not) then "skip"
-    else (($c | capture("^npx (--no-install )?vitest run(?<rest>( +([A-Za-z0-9._/@+=:,%~^][A-Za-z0-9._/@+=:,%~^-]*|\u0027([^\u0027]|\u0027\\\\\u0027\u0027)*\u0027))*) *$"))? // null) as $m
+    else (($c | capture("^npx (--no-install )?vitest run(?<rest>( +([A-Za-z0-9._/@+=:,%^][A-Za-z0-9._/@+=:,%~^-]*|\u0027([^\u0027]|\u0027\\\\\u0027\u0027)*\u0027))*) *$"))? // null) as $m
       | if $m == null then "unread"
         else [$m.rest | scan("\u0027((?:[^\u0027]|\u0027\\\\\u0027\u0027)*)\u0027|([^ \u0027]+)") | (.[0] // .[1])
               | gsub("\u0027\\\\\u0027\u0027"; "\u0027") | {r: ., n: (ltrimstr($root + "/") | nodots)}] as $t
@@ -641,9 +641,10 @@ check_mutation() {
       elif [ -n "$tr" ] && [ "$tr" != command ]; then
         printf '%s\n' "10c: mutation run $seq ran Stryker's $tr runner, not the command runner; Stryker's vitest runner reported killable mutants as Survived with vitest 5 (vetdd #20), so read its survivors before trusting them" >> "$warn_file"
       fi
-      # A source with a character that hides or reorders text reads otherwise to the judge than to the toolchain.
+      # A source with a control or a bidirectional control (Trojan Source) reads otherwise to the judge than
+      # to the toolchain; emoji joiners and variation selectors are not warned about.
       if ! jq -e "$VETDD_JQ_CLEAN"' all(.files[]?.source; type != "string" or cleantext)' "$root/$rel" >/dev/null 2>&1; then
-        printf '%s\n' "10c: mutation run $seq mutated a file whose source holds a bidirectional or invisible character; it may read otherwise than it runs, so look at that file's bytes" >> "$warn_file"
+        printf '%s\n' "10c: mutation run $seq mutated a file whose source holds a bidirectional or other control character; it may read otherwise than it runs, so look at that file's bytes" >> "$warn_file"
       fi
       # The tests that faced the mutants are the slice's own (#16): a mutant another test kills is not the slice's.
       case "$(jq -r --arg root "$root" --argjson o "$(printf '%s' "$out" | jq -c '.copy.oracle // []')" "$COMMAND_FILTERS" "$root/$rel" 2>/dev/null || echo error)" in

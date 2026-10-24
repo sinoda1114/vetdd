@@ -11,14 +11,18 @@ VETDD_MUTATION_REPORT_MAX_BYTES=67108864
 # and U+FFA0, the variation selectors U+FE00-U+FE0F and U+E0100-U+E01EF, U+FEFF, U+FFF9-U+FFFB, and
 # the tag characters U+E0000-U+E007F (text hidden from a reader, not from a model). So text that
 # reaches the judge or a terminal reads as it shows. A superset of what mutate-ranges.sh refuses.
-# cleantext is the same with new lines and tabs allowed (a replacement, a source file).
+# cleantext is for code (a replacement, a source file): new lines and tabs allowed, and of the rest only
+# the controls and the bidirectional controls refused (Trojan Source), since joiners, variation
+# selectors, and tags are parts of emoji and of scripts that code holds as is.
 VETDD_JQ_CLEAN='
   def shows: . > 31 and (. < 127 or . > 159) and . != 173 and . != 1564 and . != 6158
     and (. < 8203 or . > 8207) and (. < 8232 or . > 8238) and (. < 8288 or . > 8297) and . != 12644
     and (. < 65024 or . > 65039) and . != 65279 and . != 65440 and (. < 65529 or . > 65531)
     and (. < 917504 or . > 917631) and (. < 917760 or . > 917999);
   def clean: explode | all(shows);
-  def cleantext: explode | all(. == 9 or . == 10 or . == 13 or shows);'
+  def cleantext: explode | all(. == 9 or . == 10 or . == 13
+    or (. > 31 and (. < 127 or . > 159) and . != 1564 and . != 8206 and . != 8207
+        and (. < 8234 or . > 8238) and (. < 8294 or . > 8297)));'
 
 # jq: a stryker-json report -> {projectRoot, keys, counts}. Errors (status invalid) when the shape is
 # not schema 1.x, projectRoot is not absolute, a file key is not a plain relative path (no empty, . or
@@ -70,7 +74,7 @@ VETDD_STRYKER_JSON="$VETDD_JQ_CLEAN"'
   | check(all(.files[].mutants[]; type == "object" and (.status | type) == "string" and (.status | final));
           "a mutant has a status that is not final (Pending means the run did not finish)")
   | check(all(.files[].mutants[]; mutant);
-          "a mutant has no numeric id, letters-only mutator name, line and column location, or clean replacement text as Stryker writes them")
+          "a mutant has no numeric id, letters-only mutator name, line and column location, or replacement text without controls or bidirectional controls, as Stryker writes them")
   | [.files[].mutants[].status] as $st
   | def n($s): [$st[] | select(. == $s)] | length;
   {projectRoot, keys: (.files | keys),
