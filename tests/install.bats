@@ -604,6 +604,43 @@ fake_linux_acl() {
   [ ! -e "$CLAUDE_CONFIG_DIR/skills-backup" ]
 }
 
+@test "i48: elsewhere than Linux and macOS a getfacl of another kind does not refuse every directory" {
+  local fb="$BATS_TEST_TMPDIR/bsdbin"
+  mkdir -p "$fb"
+  printf '#!/bin/sh\necho FreeBSD\n' > "$fb/uname"
+  printf '#!/bin/sh\necho "getfacl: illegal option -- p" >&2\nexit 1\n' > "$fb/getfacl"
+  chmod +x "$fb/uname" "$fb/getfacl"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/bsd/vetdd"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "i48: a second Ctrl-C while the old install is put back does not cut the putting back short" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local fb="$BATS_TEST_TMPDIR/twicebin" realmv realperl; realmv="$(command -v mv)"; realperl="$(command -v perl)"
+  mkdir -p "$fb"
+  printf '#!/bin/sh\ncase "$*" in */.vetdd-backup.*) kill -INT $PPID ;; esac\nexec "%s" "$@"\n' "$realmv" > "$fb/mv"
+  printf '#!/bin/sh\ncase "$3" in */skills-backup/vetdd-*) kill -INT $PPID ;; esac\nexec "%s" "$@"\n' "$realperl" > "$fb/perl"
+  chmod +x "$fb/mv" "$fb/perl"
+  PATH="$fb:$PATH" run "$INSTALL"
+  [ "$status" -eq 130 ] || { echo "$output"; false; }
+  grep -qx old "$DEST/SKILL.md"
+  [[ "$output" == *"moved the old install back"* ]]
+  [ -z "$(ls -A "$CLAUDE_CONFIG_DIR/skills" | grep -v '^vetdd$')" ]
+}
+
+@test "i48: a backup mv that fails part way does not report its partial copy as the old install" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local fb="$BATS_TEST_TMPDIR/partbin"
+  mkdir -p "$fb"
+  printf '#!/bin/sh\ncase "$*" in */.vetdd-backup.*) mkdir -p "$2" && : > "$2/partial"; exit 1 ;; esac\nexec "%s" "$@"\n' "$(command -v mv)" > "$fb/mv"
+  chmod +x "$fb/mv"
+  PATH="$fb:$PATH" run "$INSTALL"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  grep -qx old "$DEST/SKILL.md"
+  [[ "$output" != *"the old install stays at"* ]]
+  [[ "$output" == *"partial copy"* ]]
+}
+
 # fake_upg <members> <other primary user, or empty>: an id that reports a group named after the user
 # (the gid of $BATS_TEST_TMPDIR/grp), and a getent that lists <members> in it and, if given, another
 # user whose primary group it is.

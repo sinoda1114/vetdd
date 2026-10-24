@@ -83,8 +83,8 @@ if [ "$(id -gn)" = "$me" ] && command -v getent >/dev/null 2>&1; then
 fi
 # acl_ok <dir>: no access-control list entry on <dir> lets anyone but the user (or root, or
 # own_group) add, delete, write, or take over entries, now or (default entries) in what is made
-# inside it; on Linux the mask is applied. An ACL that cannot be read is not ok. Elsewhere than
-# macOS, without getfacl, only an ls that marks an ACL with + can show one.
+# inside it; on Linux the mask is applied. An ACL that cannot be read is not ok. Elsewhere (and on
+# Linux without getfacl) only an ls that marks an ACL with + can show one, and then it is refused.
 acl_ok() {
   local out
   if [ "$os" = Darwin ]; then
@@ -95,7 +95,7 @@ acl_ok() {
       NR > 1 && / allow / && /add_file|add_subdirectory|delete_child|write|append|chown/ \
         && $2 != me && $2 != "user:root" { found = 1 }
       END { exit found }'
-  elif command -v getfacl >/dev/null 2>&1; then
+  elif [ "$os" = Linux ] && command -v getfacl >/dev/null 2>&1; then
     out="$(getfacl -pn "$1" 2>/dev/null)" || return 1
     printf '%s\n' "$out" | awk -F: -v u="$uid" -v g="$own_group" '
       /^# group: / { dg = substr($0, 10); next }
@@ -167,8 +167,9 @@ prepare_dir() {
   real="$(cd -P "$1" 2>/dev/null && pwd -P)" || die "cannot enter $1"
   safe_dir "$real" || die "$bad $unsafe"
 }
-# move <from> <to>: rename(2), which never moves <from> into a directory already at <to> (mv would)
-# and fails on a link there; both must be on the same file system.
+# move <from> <to>: rename(2), which never moves <from> into a directory already at <to> (mv would):
+# it fails on a directory that is not empty, and on a link or file there when <from> is a directory
+# (a link or file <from> replaces one, and a directory replaces an empty one). Same file system only.
 move() { perl -e 'rename($ARGV[0], $ARGV[1]) or die "install.sh: cannot move $ARGV[0] to $ARGV[1]: $!\n"' "$1" "$2"; }
 # went <from> <to>: <from> is gone and <to> is there. A Ctrl-C also reaches the mv or perl doing a
 # move, which can then fail after the move was made: the paths, not the exit status, say what happened.
@@ -190,6 +191,8 @@ tmp="$(mktemp -d "$parent/.vetdd-install.XXXXXX")" || die "cannot create a tempo
 moved=""
 put_back() {
   local t=""
+  # A second Ctrl-C must not cut this short (and the mv or perl below ignores it too).
+  trap '' HUP INT TERM
   { [ -n "$moved" ] && { [ -e "$moved" ] || [ -L "$moved" ]; }; } || { moved=""; return 0; }
   if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
     { move "$moved" "$dest" 2>/dev/null || went "$moved" "$dest"; } && moved=""
@@ -261,9 +264,13 @@ else
     # waiting there), then renamed to the first free vetdd-<time>[-n] beside it.
     hold="$(mktemp -d "$backups/.vetdd-backup.XXXXXX")" || die "cannot create a directory in $backups"
     held=1; moved="$hold/vetdd"
-    # A failed mv (not even partly made) leaves $dest whole; put_back then finds nothing at $moved.
-    mv "$dest" "$moved" || went "$dest" "$moved" \
-      || { rmdir "$hold" 2>/dev/null; die "cannot move the existing install to $hold"; }
+    # A failed mv leaves $dest in place; across file systems it may also leave a partial copy in
+    # $hold, which is then not the old install: put_back must not take it for one.
+    if ! { mv "$dest" "$moved" || went "$dest" "$moved"; }; then
+      moved=""
+      rmdir "$hold" 2>/dev/null || say "a partial copy of the existing install may be left in $hold"
+      die "cannot move the existing install to $hold; it stays at $dest as mv left it"
+    fi
     stamp="$backups/vetdd-$(date +%Y%m%d-%H%M%S)"; b="$stamp"; n=0
     while [ -e "$b" ] || [ -L "$b" ] || ! { move "$moved" "$b" 2>/dev/null || went "$moved" "$b"; }; do
       n=$((n + 1)); [ "$n" -le 99 ] || { b=""; break; }
