@@ -360,7 +360,7 @@ in_tree_hooks_path_gets_no_line() {
 @test "#64: a line already put in a hook inside the work tree is pointed out for removal" {
   mkdir -p .githooks
   git config core.hooksPath .githooks
-  local quoted; quoted="$(printf '%s' "$SCRIPTS/hooks/pre-commit")"
+  local quoted; quoted="$(printf '%s' "$SCRIPTS/hooks/pre-commit" | sed 's/[\\"$`]/\\&/g')"
   printf '#!/bin/sh\nvetdd_hook="%s"; true\n' "$quoted" > .githooks/pre-commit
   run setup_project
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -382,4 +382,39 @@ in_tree_hooks_path_gets_no_line() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ -x "$(hook_path)" ] || { echo "$output"; false; }
   [ ! -e "$BATS_TEST_TMPDIR/decoy/.git/hooks/pre-commit" ]
+}
+
+# #64 review round 2
+@test "#64: a hooksPath with a byte that is not UTF-8 is printed whole, not cut at that byte" {
+  git config --global core.hooksPath "$HOME/no-dir-a$(printf '\377')b-64"
+  LC_ALL=en_US.UTF-8 run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"no-dir-a"*"b-64"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: C1 control characters in core.hooksPath are not printed, in the C locale either" {
+  local c1; c1="$(printf '\302\233')"
+  git config --global core.hooksPath "$HOME/c${c1}d"
+  LC_ALL=C run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"core.hooksPath"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"$(printf '\233')"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: an unexpandable ~user before a good hooksPath value still gets the warning" {
+  mkdir -p "$BATS_TEST_TMPDIR/ok-hooks"
+  git config core.hooksPath "$BATS_TEST_TMPDIR/ok-hooks"
+  git config --global core.hooksPath '~vetdd-no-such-user-64/hooks'
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*"cannot expand"*"~vetdd-no-such-user-64/hooks"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: a hooksPath in a submodule's work tree (husky in frontend/) prints no line" {
+  git init -q "$BATS_TEST_TMPDIR/fe-src"
+  git -C "$BATS_TEST_TMPDIR/fe-src" commit -q --allow-empty -m init
+  git -c protocol.file.allow=always submodule add -q "$BATS_TEST_TMPDIR/fe-src" frontend
+  mkdir -p frontend/.husky/_
+  git config core.hooksPath frontend/.husky/_
+  in_tree_hooks_path_gets_no_line frontend/.husky/_
 }

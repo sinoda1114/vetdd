@@ -22,6 +22,7 @@ done
 root="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null)" || die "not a git repository: $repo"
 common="$(cd "$root" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" || die "cannot find the git dir"
 scripts_dir="$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)"
+. "$scripts_dir/lib/common.sh"
 hook_src="$scripts_dir/hooks/pre-commit"
 hook_dst="$common/hooks/pre-commit"
 backup="$hook_dst.before-vetdd"
@@ -67,15 +68,19 @@ fi
 # a removed vetdd blocks no commit; the hook does nothing in a repository without .vetdd/evidence.
 # git expands ~ (--type=path). core.hooksPath is never changed.
 
-# Drops control characters from a config value before it goes to the terminal.
-printable() { printf '%s' "$1" | tr -d '[:cntrl:]'; }
+# Drops control characters (C0, DEL, C1) from a config value before it goes to the terminal.
+printable() { printf '%s' "$1" | vetdd_printable; }
+real_root="$(cd "$root" && pwd -P)"
 
-# Succeeds when the path (or, while it does not exist, the nearest directory above it) is in a work
-# tree of this repository, in any letter case, or in the superproject's when this is a submodule.
-# A hooks dir there (husky's .husky or .husky/_, a .githooks) is shared with the team.
+# Succeeds when the path (or, while it does not exist, the nearest directory above it) is under this
+# work tree and outside the git dir (a submodule's work tree in it too), is in a work tree of this
+# repository in any letter case, or is in the superproject's when this is a submodule. A hooks dir
+# there (husky's .husky or .husky/_, a .githooks) may be shared with the team.
 in_work_tree() {
-  local d="$1" top their super
+  local d="$1" phys top their super
   while [ ! -d "$d" ]; do d="${d%/*}"; [ -n "$d" ] || d=/; done
+  phys="$(cd "$d" 2>/dev/null && pwd -P)${1#"$d"}"
+  case "$phys/" in "$common"/*) ;; "$real_root"/*) return 0 ;; esac
   top="$(git -c core.fsmonitor= -C "$d" rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ] || return 1
   [ "$top" -ef "$root" ] && return 0
   their="$(cd "$d" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" && [ "$their" -ef "$common" ] && return 0
@@ -83,11 +88,18 @@ in_work_tree() {
   [ -n "$super" ] && [ "$top" -ef "$super" ]
 }
 
-raw_hooks_path="$(git -C "$root" config --get core.hooksPath 2>/dev/null || true)"
 hooks_path="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null)"
 path_rc=$?
-case "$raw_hooks_path" in '~'*|':(optional)~'*) unexpandable=1 ;; *) unexpandable=0 ;; esac
-if [ "$path_rc" -gt 1 ] && [ "$unexpandable" -eq 1 ]; then
+# git reads every value (global, then local), so a ~ in any of them can be the one that fails.
+raw_hooks_path=""
+if [ "$path_rc" -gt 1 ]; then
+  while IFS= read -r v; do
+    case "$v" in '~'*|':(optional)~'*) raw_hooks_path="$v"; break ;; esac
+  done <<HOOKS_PATHS
+$(git -C "$root" config --get-all core.hooksPath 2>/dev/null)
+HOOKS_PATHS
+fi
+if [ -n "$raw_hooks_path" ]; then
   say "WARNING: git cannot expand core.hooksPath '$(printable "$raw_hooks_path")' (an unknown ~user?), and git commit fails on it the same way. Fix or unset core.hooksPath, then run setup-project.sh again."
 elif [ -n "$hooks_path" ]; then
   case "$hooks_path" in /*) ;; *) hooks_path="$root/$hooks_path" ;; esac
@@ -101,7 +113,7 @@ elif [ -n "$hooks_path" ]; then
     # This machine's install path does not belong in a file shared with the team. A linked
     # worktree's relative .git/hooks lands here too, under the .git file, and is not a directory.
     note=""; [ -d "$hooks_path" ] || note=" and is not a directory (git runs no hook from it)"
-    say "WARNING: core.hooksPath ('$shown') is inside the work tree$note, so git ignores $hook_dst. vetdd prints no line for a hook there (husky's or a tracked hooks dir is shared with the team); run check-evidence.sh before committing instead."
+    say "WARNING: core.hooksPath ('$shown') is inside the work tree$note, so git ignores $hook_dst. vetdd prints no line for a hook there (husky's or a tracked hooks dir may be shared with the team); run check-evidence.sh before committing instead."
     if grep -qF -- "$quoted" "$hooks_path/pre-commit" 2>/dev/null; then
       say "WARNING: $shown/pre-commit holds a vetdd line with this machine's install path; take it out of that shared file."
     fi
