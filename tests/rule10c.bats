@@ -882,16 +882,15 @@ jsts_slice() {
 @test "10c reads a filter as the end of an oracle file path, whole components, however it names the slice's own file (r1)" {
   local c
   # Too short to name the slice's file: the end of no oracle path at a component boundary.
-  for c in "npx --no-install vitest run 's'" "npx --no-install vitest run 'est.sh'" "npx --no-install vitest run '/elsewhere/other.sh'" \
-           "npx --no-install vitest run '/'"; do
+  for c in "npx --no-install vitest run 's'" "npx --no-install vitest run 'est.sh'"; do
     rm -rf .vetdd
     record_good_slice s1
     mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
     run check s1
     [[ "$output" == *"s1: FAIL (10c: mutation run 3 ran its mutants against"* ]] || { echo "accepted: $c"; echo "$output"; false; }
   done
-  # An absolute path under the repository and ./ repeated pass.
-  for c in "npx --no-install vitest run '$REPO/test.sh'" "npx --no-install vitest run '././test.sh'"; do
+  # An absolute path under the repository (as git spells its root) and ./ repeated pass.
+  for c in "npx --no-install vitest run '$(git rev-parse --show-toplevel)/test.sh'" "npx --no-install vitest run '././test.sh'"; do
     rm -rf .vetdd
     record_good_slice s1
     mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
@@ -972,4 +971,17 @@ jsts_slice() {
   run check s1
   [ "${lines[0]}" = "s1: OK" ] || { echo "$output"; false; }
   [[ "$output" == *"WARN (10c: mutation run 3 ran a vitest command that 10c cannot read"* ]] || { echo "$output"; false; }
+}
+
+@test "an absolute filter outside the repository, and a quoted option with its value, are unread: a WARN, never ok or a FAIL (PR #100 bots)" {
+  local c
+  for c in "npx --no-install vitest run '/elsewhere/test.sh'" "npx --no-install vitest run '/'" \
+           "npx --no-install vitest run 'test.sh' '--reporter' 'dot'"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [ "${lines[0]}" = "s1: OK" ] || { echo "$c: $output"; false; }
+    [[ "$output" == *"s1: WARN (10c: mutation run 3 ran a vitest command that 10c cannot read"* ]] || { echo "no warning: $c"; echo "$output"; false; }
+  done
 }

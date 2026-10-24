@@ -369,10 +369,12 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
 
 # Rule 10c, on the copy of the judged run (its sha256 checked), with $o the paths of the final oracle and
 # $root the repository: which test files its command ran against the mutants. Each file filter of an
-# npx [--no-install] vitest run command (plain words and single-quoted ones) is a match when it is the end
-# of an oracle file path at a component boundary (an absolute one: when it ends with one), ignoring ASCII
-# letter case as vitest does; unreadable when it is an option, holds a non-ASCII character (vitest folds
-# its case, jq cannot), // or a . or .. component; else no match. The answer: "other" when a filter
+# npx [--no-install] vitest run command (plain words and single-quoted ones; an absolute one under $root
+# read from $root) is a match when it is the end of an oracle file path at a component boundary,
+# ignoring ASCII letter case as vitest does; unreadable when it is still absolute (outside $root, or
+# $root spelled through a link), holds a non-ASCII character (vitest folds its case, jq cannot), // or
+# a . or .. component; else no match. An option anywhere makes the whole command unread (it may take the
+# next word as its value). The answer: "other" when a filter
 # matches no oracle file, "none" for no filter (every test file), "unread" for an unreadable filter or a
 # vitest command of another shape (options, double quotes, other shell syntax), "ok", or "skip" for no
 # command or one without vitest (a verify wrapper): the judge reads that. A tripwire, not a boundary:
@@ -382,7 +384,7 @@ COMMAND_FILTERS='
   def nodots: if startswith("./") then .[2:] | nodots else . end;
   # On the filter as written ($r) and with the repository and leading ./ taken off (.).
   def unreadable($r): ($r | startswith("-")) or ($r | explode | any(.[]; . > 126)) or ($r | test("//"))
-    or (split("/") | any(.[]; . == "." or . == ".."));
+    or startswith("/") or (split("/") | any(.[]; . == "." or . == ".."));
   (.config.command // null) as $c
   | if ($c | type) != "string" or ($c | test("vitest") | not) then "skip"
     else (($c | capture("^npx (--no-install )?vitest run(?<rest>( +([A-Za-z0-9._/@+=:,%^][A-Za-z0-9._/@+=:,%~^-]*|\u0027([^\u0027]|\u0027\\\\\u0027\u0027)*\u0027))*) *$"))? // null) as $m
@@ -391,9 +393,9 @@ COMMAND_FILTERS='
               | gsub("\u0027\\\\\u0027\u0027"; "\u0027") | {r: ., n: (ltrimstr($root + "/") | nodots)}] as $t
           | ($o | map("/" + ascii_downcase)) as $paths
           | [$t[] | .r as $r | .n | select(unreadable($r) | not) | ascii_downcase] as $plain
-          | if any($plain[]; . as $f | $f == "" or $f == "/"
-                   or (if $f | startswith("/") then any($paths[]; . as $p | $f | endswith($p))
-                       else any($paths[]; endswith("/" + $f)) end | not)) then "other"
+          # An option may take the next word as its value, so no word after one can be read as a filter.
+          | if any($t[]; .r | startswith("-")) then "unread"
+            elif any($plain[]; . as $f | $f == "" or (any($paths[]; endswith("/" + $f)) | not)) then "other"
             elif ($t | length) == 0 then "none"
             elif ($plain | length) < ($t | length) then "unread"
             else "ok" end
