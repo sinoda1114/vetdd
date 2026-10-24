@@ -12,11 +12,11 @@
 # commit are the slice's; lines that arrived between versions or since
 # are not, and an `after` recorded again within a version moves nothing. A slice without a `before`
 # starts at its red when calibrate.sh unfix took it, and otherwise (a refactor, a behavior-preserving
-# change) has one step, its first passing `after` to its last. The lines the slice wrote are taken
-# exactly (plain blame of the last `after`); the edits since are followed with -w -M10 -C10, so a later
-# slice or a refactor moves the lines without adding its own (a line only reindented or moved, also
-# to another file named with --file, stays the slice's), and two slices in one file each get only
-# their own. The commits are never referenced by a ref (unreachable objects); HEAD, the index, and
+# change) has one step, its first passing `after` to its last. The lines each step wrote are taken
+# exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10, so another
+# slice between two versions, a later slice, or a refactor moves the lines without adding its own (a
+# line only reindented or moved, also to another file named with --file, stays the slice's), and two
+# slices in one file each get only their own. The commits are never referenced by a ref (unreachable objects); HEAD, the index, and
 # the working tree are not touched.
 # Without --file: every file the slice changed except its oracle files (every oracle file its evidence
 # names) and .vetdd/. --file (relative to the current directory, repeatable) limits the output to
@@ -227,7 +227,7 @@ while [ "$i" -lt ${#seg_start[@]} ]; do
     || die "could not make a throwaway commit"
   c="$(throwaway -p "$c" -m "vetdd mutate-ranges $slice: end (run ${seg_eseq[$i]})" "${seg_end[$i]}")" \
     || die "could not make a throwaway commit"
-  ends="$ends $c"; last_end="$c"; parent=(-p "$c"); i=$((i + 1))
+  ends="${ends:+$ends }$c"; parent=(-p "$c"); i=$((i + 1))
 done
 c2="$(throwaway "${parent[@]}" -m "vetdd mutate-ranges $slice: working tree" "$t2")" || die "could not make the working-tree commit"
 
@@ -320,44 +320,54 @@ stryker_safe() {
   return 0
 }
 
-# owned <file in the last end commit>: the line numbers there that the slice wrote, one per line.
-# Exact: plain blame (no -w, -M, or -C), so a whitespace change inside a literal or a line the slice
-# copied from existing code counts as the slice's.
+# owned <end commit> <file there>: the line numbers in that commit that its red-to-green step wrote,
+# one per line. Exact: plain blame (no -w, -M, or -C), so a whitespace change inside a literal or a
+# line the slice copied from existing code counts as the slice's.
 owned() {
-  git blame --line-porcelain --no-textconv --no-ignore-revs-file "$last_end" -- "$1" > "$tmp/own" 2> "$tmp/own.err" \
-    || die "git blame failed on $1: $(head -n 1 "$tmp/own.err")"
-  awk -v ends="$ends" '
-      BEGIN { n = split(ends, e, " "); for (k = 1; k <= n; k++) mine[e[k]] = 1 }
+  git blame --line-porcelain --no-textconv --no-ignore-revs-file "$1" -- "$2" > "$tmp/own" 2> "$tmp/own.err" \
+    || die "git blame failed on $2: $(head -n 1 "$tmp/own.err")"
+  awk -v e="$1" '
       substr($0, 1, 1) == "\t" { next }
-      NF >= 3 && ($1 in mine) && !seen[$3]++ { print $3 + 0 }' "$tmp/own"
+      NF >= 3 && $1 == e && !seen[$3]++ { print $3 + 0 }' "$tmp/own"
 }
-# slice_lines <path>: the slice's lines in the working tree as ranges "a-b", one per line. Later
-# edits (the working-tree commit) are followed with -w -M10 -C10, so a line a later change only
-# reindented, moved (10 letters or digits at least), or moved to another file stays the slice's.
-slice_lines() {
+# carried <end commit> <path>: the working-tree line numbers of <path> that the step ending in that
+# commit wrote. The edits made after it (another slice between two versions, a refactor, the working
+# tree) are followed with -w -M10 -C10, so a line they only reindented, moved (10 letters or digits at
+# least), or moved to another file stays the slice's.
+carried() {
   git -c core.quotePath=false blame --line-porcelain --no-textconv --no-ignore-revs-file -w -M10 -C10 \
-    "$last_end..$c2" -- "$1" > "$tmp/later" 2> "$tmp/later.err" \
-    || die "git blame failed on $1: $(head -n 1 "$tmp/later.err")"
-  # Each working-tree line that comes from the last end commit: "<line now> TAB <line there> TAB <file there>".
-  awk -v e="$last_end" '
+    "$1..$c2" -- "$2" > "$tmp/later" 2> "$tmp/later.err" \
+    || die "git blame failed on $2: $(head -n 1 "$tmp/later.err")"
+  # Each working-tree line that comes from the end commit: "<line now> TAB <line there> TAB <file there>".
+  awk -v e="$1" '
     substr($0, 1, 1) == "\t" { if (sha == e) printf "%d\t%d\t%s\n", fin, orig, fname; next }
     /^filename / { fname = substr($0, 10); next }
     NF >= 3 && $1 ~ /^[0-9a-f]+$/ && length($1) >= 40 { sha = $1; orig = $2; fin = $3 }
-  ' "$tmp/later" > "$tmp/map" || die "could not read the blame of $1"
+  ' "$tmp/later" > "$tmp/map" || die "could not read the blame of $2"
   : > "$tmp/owned"
   cut -f 3 "$tmp/map" | LC_ALL=C sort -u > "$tmp/sources"
   while IFS= read -r src; do
     case "$src" in
       '') continue ;;
-      '"'*) say "$1: some of its lines come from $src, a name git quotes (a quote, a backslash, or a control character): they are left out"; continue ;;
+      '"'*) say "$2: some of its lines come from $src, a name git quotes (a quote, a backslash, or a control character): they are left out"; continue ;;
     esac
-    owned "$src" > "$tmp/own.lines" || exit 2
+    owned "$1" "$src" > "$tmp/own.lines" || exit 2
     while IFS= read -r n; do printf '%s\t%s\n' "$src" "$n"; done < "$tmp/own.lines" >> "$tmp/owned"
   done < "$tmp/sources"
-  awk -F '\t' 'NR == FNR { own[$1 "\t" $2] = 1; next } (($3 "\t" $2) in own) { print $1 }' "$tmp/owned" "$tmp/map" |
-    sort -n | awk '
-      { n = $1 + 0; if (have && n == last + 1) { last = n } else { if (have) printf "%d-%d\n", first, last; first = n; last = n; have = 1 } }
-      END { if (have) printf "%d-%d\n", first, last }'
+  awk -F '\t' 'NR == FNR { own[$1 "\t" $2] = 1; next } (($3 "\t" $2) in own) { print $1 }' "$tmp/owned" "$tmp/map"
+}
+# slice_lines <path>: the slice's lines in the working tree as ranges "a-b", one per line: the union,
+# over the slice's red-to-green steps, of the lines each wrote, carried to the working tree.
+slice_lines() {
+  local e
+  : > "$tmp/finals"
+  for e in $ends; do
+    carried "$e" "$1" > "$tmp/carried" || exit 2
+    cat "$tmp/carried" >> "$tmp/finals"
+  done
+  sort -n -u "$tmp/finals" | awk '
+    { n = $1 + 0; if (have && n == last + 1) { last = n } else { if (have) printf "%d-%d\n", first, last; first = n; last = n; have = 1 } }
+    END { if (have) printf "%d-%d\n", first, last }'
 }
 
 out=""

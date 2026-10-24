@@ -198,6 +198,25 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [[ "$stderr" == *'q"x.js'* || "$stderr" == *'q\"x.js'* ]] || { echo "$status $output $stderr"; false; }
 }
 
+@test "another slice reindents the slice's lines between two of its versions: they stay the slice's (PR #78, Codex)" {
+  printf '%s\n' 'function f() {' '  return "the original value";' '}' > src/f.js
+  git add -A && git commit -q -m f
+  red s1
+  printf '%s\n' 'function f() {' '  return "the value the slice computed";' '}' > src/f.js
+  green s1
+  run --separate-stderr mr s1
+  [ "$output" = "src/f.js:2-2" ] || { echo "after v1: $output $stderr"; false; }
+  red s2
+  printf '%s\n' 'function f() {' '    return "the value the slice computed";' '}' 'const g = 1;' > src/f.js
+  green s2
+  printf 'echo stronger\n' >> test.sh
+  ev s1 calibration --oracle-version v2 -- false >/dev/null 2>&1
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/f.js:2-2" ]
+}
+
 # --- 2. a later slice moves the lines -----------------------------------------------------------
 
 @test "a later slice adds lines above and inside: the first slice's ranges move and leave its lines out" {
