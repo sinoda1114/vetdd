@@ -6,7 +6,8 @@
 #                        [--allow-binary <path>]... [--allow-words <glob>:<word>[,<word>]...]... <lane>...
 #   For each lane: worktree.sh check again, then, in a worktree the parent makes (worktree.sh review,
 #   never the runner's own), check-evidence.sh --before-close <lane> is the gate (exit 1: the lane is
-#   not green and stays out, named in <out>/gate.txt; any other failure stops the build); a green lane
+#   not green and stays out, named in <out>/gate.txt, which names the commit check passed for each green
+#   lane; a branch that moves before its lane is laid out stops the build; any other failure stops it too); a green lane
 #   gets judge-layout.sh --before-close with its design note as the reply (--allow-secrets,
 #   --allow-binary, and --allow-words go to it: write a secret or a word glob as c*/..., since each
 #   lane is checked as c1 and then judged as c<k>; one written for a label (c1/...) is a usage
@@ -15,7 +16,7 @@
 #   <out>/variants.json keeps the map ({"c1": "<lane>", ...}). A lane id ends in a random suffix
 #   (<slice>-<6 or more hex digits>, parallel/arena.md step 1): the id the candidate carries says
 #   nothing about the runner or the order they ran in, so nothing inside it is rewritten. The review worktrees are removed again (also when the build stops); the
-#   lanes' branches stay for the merge and the grafts.
+#   lanes' branches stay for the merge and the grafts. Every lane id has the same first half (<slice>).
 #   <out> must be outside the repository or under its .vetdd/.
 # Exit 0 built (it prints the judge.sh command with references/arena-rubric.md), or exactly one lane
 # is green (it is chosen without a comparison, named in <out>/chosen; no judge command is printed); 1 a local step
@@ -66,6 +67,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$out" ] && [ -n "$base" ] && [ ${#lanes[@]} -gt 0 ] \
   || die "usage: arena-layout.sh --out <new dir> --base <ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--allow-words <glob>:<word>[,<word>]...]... <lane>..."
+# out/ is the directory out names, not its parent.
+while [ "${out%/}" != "$out" ] && [ "${out%/}" != "" ]; do out="${out%/}"; done
 [ ! -e "$out" ] && [ ! -L "$out" ] || die "--out $(p "$out") exists; give a new directory"
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
 root="$(cd "$root" && pwd -P)"
@@ -78,11 +81,15 @@ case "$abs/" in
 esac
 # Resolved once here: each lane's review worktree would read a relative ref (HEAD) as its own commit.
 base="$(git -C "$root" rev-parse -q --verify "$base^{commit}")" || die "--base is not a commit: $(p "$base")"
-seen=" "
+seen=" "; half=""
 for l in "${lanes[@]}"; do
   vetdd_is_slice_id "$l" || die "invalid lane id: $(p "$l")"
   printf '%s' "$l" | grep -Eq -- '-[0-9a-f]{6,}$' \
     || die "lane $(p "$l") has no random suffix; name each lane <slice>-\$(od -An -N3 -tx1 /dev/urandom | tr -d ' \\n') (parallel/arena.md), so its id says nothing about its runner"
+  # The first half too says nothing about the runner: every lane is <slice>-<random> of one slice.
+  [ -z "$half" ] || [ "${l%-*}" = "$half" ] \
+    || die "lane $(p "$l") does not start as $(p "${lanes[0]}") does ($(p "$half")-...): name every lane <slice>-<random> with the same slice (parallel/arena.md step 1), so no lane's name says anything about its runner"
+  half="${l%-*}"
   case "$seen" in *" $l "*) die "lane $(p "$l") is named twice" ;; esac
   seen="$seen$l "
   git -C "$root" rev-parse -q --verify "refs/heads/vetdd/$l" >/dev/null || die "no branch vetdd/$(p "$l")"
@@ -103,11 +110,14 @@ trap 'if [ -n "$cur" ]; then "$here/worktree.sh" remove "$cur" --keep-branch >/d
 green=()
 for l in "${lanes[@]}"; do
   # A lane check refuses stays out, as in step 3; the others go on.
-  if ! "$here/worktree.sh" check "$l" >/dev/null 2>"$out/errs/$l.check"; then
+  if ! ck="$("$here/worktree.sh" check "$l" 2>"$out/errs/$l.check")"; then
     printf '%s: refused by worktree.sh check\n' "$l" >> "$out/gate.txt"
     vetdd_printable < "$out/errs/$l.check" | sed 's/^/  /' >> "$out/gate.txt"
     continue
   fi
+  # The commit check passed: the lane is gated and laid out at it, and merged at it (gate.txt names it).
+  sha="${ck##* }"
+  printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}([0-9a-f]{24})?$' || die "worktree.sh check $(p "$l") named no commit" 1
   rv="$("$here/worktree.sh" review "$l" 2>"$out/errs/$l.review")" \
     || { vetdd_printable < "$out/errs/$l.review" >&2; die "cannot make a review worktree for $(p "$l")" 1; }
   cur="$l"
@@ -115,7 +125,7 @@ for l in "${lanes[@]}"; do
   gate="$(cd "$rv" && "$here/check-evidence.sh" --before-close "$l" 2>&1)" || grc=$?
   case "$grc" in
     0)
-      printf '%s: green\n' "$l" >> "$out/gate.txt"
+      printf '%s: green at %s\n' "$l" "$sha" >> "$out/gate.txt"
       jl_rc=0
       (cd "$rv" && "$here/judge-layout.sh" --before-close --lane ${jl_args[@]+"${jl_args[@]}"} --out "$out/lanes/$l" \
         --reply "$rv/.vetdd/notes/$l-design.md" --base "$base" "$l") >/dev/null 2>"$out/errs/$l.layout" || jl_rc=$?
@@ -132,6 +142,14 @@ for l in "${lanes[@]}"; do
       printf '%s\n' "$gate" | vetdd_printable >&2
       die "check-evidence.sh could not judge lane $(p "$l") (exit $grc)" 1 ;;
   esac
+  # A branch that moved since check (a runner still at work) was not the one checked, gated, and laid
+  # out. Its review worktree may no longer match its branch, so it goes by force: it holds only copies.
+  now="$(git -C "$root" rev-parse -q --verify "refs/heads/vetdd/$l^{commit}")" || now=""
+  if [ "$now" != "$sha" ]; then
+    git -c core.hooksPath=/dev/null -c core.fsmonitor= -C "$root" worktree remove --force "$rv" >/dev/null 2>&1
+    cur=""
+    die "vetdd/$(p "$l") moved while it was checked and laid out (from $sha to ${now:-nothing}): a runner may still be at work; stop it, then run arena-layout.sh again with a new --out" 1
+  fi
   "$here/worktree.sh" remove "$l" --keep-branch >/dev/null || die "cannot remove the review worktree of $(p "$l")" 1
   cur=""
 done

@@ -358,3 +358,87 @@ unit() {
   run WT remove sb --no-evidence
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+# --- #38 follow-ups --------------------------------------------------------------------------------
+
+@test "#38: a slice id that is not a valid branch name (foo..bar, foo., foo.lock) is a usage error before anything is made" {
+  local s
+  for s in foo..bar foo. foo.lock; do
+    run WT add "$s"
+    [ "$status" -eq 2 ] || { echo "$s: $output"; false; }
+    [[ "$output" == *"branch name"* ]] || { echo "$s: $output"; false; }
+  done
+  [ ! -e "$WTROOT" ]
+  [ -z "$(git branch --list 'vetdd/*')" ]
+}
+
+@test "#38: add, check, and remove work with worktree.useRelativePaths=true" {
+  git config worktree.useRelativePaths true
+  run WT add sa
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # The setting took effect: the worktree's .git points at its git directory by a relative path.
+  case "$(cat "$WTROOT/sa/.git")" in "gitdir: /"*) skip "this git writes absolute worktree paths" ;; esac
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  run WT check sa
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  git merge -q --no-edit vetdd/sa
+  run WT remove sa
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -e "$WTROOT/sa" ]
+  [ -f .vetdd/evidence/sa/meta.json ]
+}
+
+@test "#38: remove still refuses a .git that points elsewhere when worktree.useRelativePaths=true" {
+  git config worktree.useRelativePaths true
+  WT add sa >/dev/null
+  case "$(cat "$WTROOT/sa/.git")" in "gitdir: /"*) skip "this git writes absolute worktree paths" ;; esac
+  mkdir -p "$BATS_TEST_TMPDIR/fakegit"
+  printf 'gitdir: ../../fakegit\n' > "$WTROOT/sa/.git"
+  run WT remove sa --no-evidence
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not point at its own git directory"* ]]
+}
+
+@test "#38: --link refuses .vetdd or a path under it (any case), a .git anywhere in the path, and a control character" {
+  printf 'ignored/\n.vetdd/\n' > .gitignore && git add .gitignore && git commit -qm ignore
+  mkdir -p .vetdd/notes ignored/.git ignored/sub/.GIT "ignored/a
+b"
+  local l
+  for l in .vetdd .vetdd/notes ignored/.git ignored/sub/.GIT "ignored/a
+b"; do
+    run WT add sa --link "$l"
+    [ "$status" -eq 2 ] || { echo "$l: $output"; false; }
+    [ ! -e "$WTROOT/sa" ]
+  done
+  case "$(uname -s)" in Darwin) run WT add sa --link .VETDD/notes; [ "$status" -eq 2 ]; [[ "$output" == *".vetdd"* ]] ;; esac
+  run WT add sa --link ignored
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#38: remove refuses a worktree that holds a nested repository, and runs nothing of its git config" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42 \
+    && git init -q nested && cd nested && printf 'a\n' > f && git add f && git commit -qm n \
+    && git config filter.evil.clean "touch '$BATS_TEST_TMPDIR/ran'; cat" && printf '* filter=evil\n' > .git/info/attributes \
+    && cd .. && git add nested 2>/dev/null && git commit -qm sub \
+    && printf 'b\n' > nested/f && touch -t 200001010000 nested/f)
+  run WT remove sa --keep-branch
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"nested"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/ran" ]
+  [ -d "$WTROOT/sa" ]
+}
+
+@test "#38: check prints the commit it checked" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  run WT check sa
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "vetdd/sa can be merged at $(git rev-parse vetdd/sa)" ]
+}
+
+@test "#38: swarm.md merges the commit check printed, and reinstalls a linked directory before Close" {
+  local sw="$SCRIPTS/../parallel/swarm.md"
+  grep -q 'merge --no-ff --no-overwrite-ignore -m "Merge vetdd/<slice>" <the commit check printed>' "$sw"
+  grep -q 'npm ci' "$sw"
+}
