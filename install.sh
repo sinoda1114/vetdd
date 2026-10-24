@@ -14,8 +14,8 @@
 # copy the files git tracks under skills/vetdd (all of them when the checkout is not a git
 # repository) into a private temporary directory beside <dest>; leave an install that matches that
 # copy (content, execute bits, links) alone; otherwise move the existing one (a directory, or a link
-# to a development checkout) to ${CLAUDE_CONFIG_DIR:-~/.claude}/skills-backup/vetdd-<time> (-1, -2,
-# ... when taken) and put the copy in its place, moving the old one back when that fails or is
+# to a development checkout) to ${CLAUDE_CONFIG_DIR:-~/.claude}/skills-backup/vetdd-<time> (-1 to -99,
+# then a random suffix, when taken) and put the copy in its place, moving the old one back when that fails or is
 # interrupted. Directories it creates are never writable by group or others. codex is not required to install,
 # but the separate judge needs it with a file login: a missing codex or login is reported, not fatal.
 # Exit: 0 installed or up to date; 1 a required tool is missing or a step failed (the install in
@@ -180,6 +180,9 @@ prepare_dir "$parent" "give a --dest under directories only you can change"
 parent="$real"; dest="${parent%/}/${dest##*/}"
 # A directory that is not a vetdd install (--dest naming the skills directory itself, or a link to
 # one, say) is never moved away.
+if [ -L "$dest" ] && [ ! -e "$dest" ]; then
+  die "$dest is a link that points nowhere, so it cannot be shown to be a vetdd install; remove it or give another --dest"
+fi
 if { [ -d "$dest" ] && ! grep -qx 'name: vetdd' "$dest/SKILL.md" 2>/dev/null; } \
    || { [ -e "$dest" ] && [ ! -d "$dest" ]; }; then
   die "$dest exists and is not a vetdd install; give --dest the vetdd directory itself (e.g. ~/.claude/skills/vetdd)"
@@ -278,6 +281,12 @@ else
       n=$((n + 1)); [ "$n" -le 99 ] || { b=""; break; }
       b="$stamp-$n"
     done
+    # Every numbered name taken: a fresh vetdd-<time>-XXXXXX, reserved by mktemp -d (a directory
+    # replaces that empty one; a link or file needs it gone first).
+    if [ -z "$b" ] && r="$(mktemp -d "$stamp-XXXXXX")"; then
+      { [ -d "$moved" ] && [ ! -L "$moved" ]; } || rmdir "$r"
+      if move "$moved" "$r" 2>/dev/null || went "$moved" "$r"; then b="$r"; else rmdir "$r" 2>/dev/null; fi
+    fi
     if [ -n "$b" ]; then moved="$b"; rmdir "$hold"; fi
     say "moved the existing install to $moved"
     release

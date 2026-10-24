@@ -642,6 +642,45 @@ fake_linux_acl() {
   [[ "$output" == *"complete or partial"* ]] && [[ "$output" == *"compare"* ]]
 }
 
+# taken_backups <ts>: a date fixed at <ts>, and vetdd-<ts> and vetdd-<ts>-1 to -99 already in skills-backup.
+taken_backups() {
+  local bk="$CLAUDE_CONFIG_DIR/skills-backup" db="$BATS_TEST_TMPDIR/datebin" n=1
+  mkdir -p "$bk/vetdd-$1" "$db"
+  while [ "$n" -le 99 ]; do mkdir "$bk/vetdd-$1-$n"; n=$((n + 1)); done
+  printf '#!/bin/sh\necho %s\n' "$1" > "$db/date" && chmod +x "$db/date"
+  printf '%s' "$db"
+}
+
+@test "i48: with every numbered backup name taken the old install still gets a vetdd-<time> name, nothing staged left" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local ts=20260101-000000 db; db="$(taken_backups "$ts")"
+  PATH="$db:$PATH" run "$INSTALL"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  same_as_tracked "$DEST"
+  local bk="$CLAUDE_CONFIG_DIR/skills-backup"
+  [ -z "$(ls -A "$bk" | grep -v '^vetdd-')" ] || { ls -A "$bk"; false; }
+  [ "$(grep -lx old "$bk"/vetdd-"$ts"*/SKILL.md | wc -l | tr -d ' ')" -eq 1 ]
+}
+
+@test "i48: with every numbered backup name taken and the final move failing, the old install comes back, nothing staged left" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local ts=20260101-000000 db mb; db="$(taken_backups "$ts")"; mb="$(shim_final_move 'exit 1')"
+  PATH="$mb:$db:$PATH" run "$INSTALL"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  grep -qx old "$DEST/SKILL.md"
+  [ -z "$(ls -A "$CLAUDE_CONFIG_DIR/skills-backup" | grep -v '^vetdd-')" ]
+}
+
+@test "i48: a dangling link at --dest (it cannot be shown to be a vetdd install) is refused, untouched" {
+  mkdir -p "$CLAUDE_CONFIG_DIR/skills"
+  ln -s "$BATS_TEST_TMPDIR/removed-checkout" "$DEST"
+  run "$INSTALL"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"points nowhere"* ]]
+  [ -L "$DEST" ] && [ "$(readlink "$DEST")" = "$BATS_TEST_TMPDIR/removed-checkout" ]
+  [ ! -e "$CLAUDE_CONFIG_DIR/skills-backup" ]
+}
+
 # fake_upg <members> <other primary user, or empty>: an id that reports a group named after the user
 # (the gid of $BATS_TEST_TMPDIR/grp), and a getent that lists <members> in it and, if given, another
 # user whose primary group it is.
