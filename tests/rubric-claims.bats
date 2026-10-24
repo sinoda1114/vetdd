@@ -42,13 +42,14 @@ claims() { awk '/^## [0-9]+\. /{on = ($0 ~ /\. claims-match-evidence$/); next} o
   [[ "$one" == *"80%"* ]]
   [[ "$zero" == *"contradicts the evidence"* ]]
   [[ "$zero" == *"check-evidence"* ]]
+  [[ "$zero" == *"no factual line"* ]]
 }
 
 @test "claims-match-evidence says how lines are counted, exempts the Result line, and takes a local log as a path" {
   local s
   s="$(claims "$FINAL" | tr '\n' ' ')"
   [[ "$s" == *"one sentence, one bullet, or one table row"* ]]
-  [[ "$s" == *'"Every row is Measured"'* ]]
+  [[ "$s" == *'"Every row is Measured"'* && "$s" == *"right after the table"* ]]
   [[ "$s" == *"Result line"* ]]
   [[ "$s" == *"local log"* ]]
 }
