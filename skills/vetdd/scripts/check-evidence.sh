@@ -69,11 +69,19 @@
 #           (10c) the latest accepted mutation run (evidence.sh --audit mutation) recorded after the final
 #               green run has a usable report (status ok, its copy present with the
 #               recorded sha256), mutated and tested something, let no mutant survive or go uncovered,
-#               and its mutated files still hold the source it mutated; with no such run, a mutation
+#               and its mutated files still hold the source it mutated, and, when its command is
+#               npx [--no-install] vitest run with single-quoted or plain file filters, it names at least
+#               one and each is the end of an oracle file path of the final oracle, whole components
+#               (ignoring ASCII letter case, as vitest does), so a filter that names another test file
+#               is caught; with no such run, a mutation
 #               note written after the final oracle first ran. Ignored mutants are a WARN (10c). Asked
 #               of a slice whose final oracle has a JS or TS file (.js .jsx .mjs .cjs .ts .tsx .mts
 #               .cts), and of any other slice with a mutation run or note. A tripwire, not a boundary: it trusts the
-#               report (what Stryker mutated and how it ran), and the ranges are the judge's to check.
+#               report (what Stryker mutated and how it ran), a vitest command it cannot read (options,
+#               double quotes, a non-ASCII, // or .. path) is a WARN, a command without vitest (a verify
+#               wrapper) is not read, a filter that matches can still select more files (the ts-kata
+#               config refuses that), and the ranges are the judge's to check. A mutated source with a
+#               bidirectional or other control character is a WARN.
 # Stall:    (11) every handover file (.vetdd/evidence/<slice>/handover-<n>.md, handover.sh: the mark of
 #               a redesign) has each heading. A record that holds more stalls (lib/stall.sh with the
 #               default K = 2) than handovers is a WARN, not a FAIL: the agreement can change K, and
@@ -94,6 +102,7 @@ die() { printf 'check-evidence.sh: %s\n' "$1" >&2; exit 2; }
 vetdd_require_jq check-evidence.sh
 . "${BASH_SOURCE[0]%/*}/lib/tree-hash.sh"
 . "${BASH_SOURCE[0]%/*}/lib/stall.sh"
+. "${BASH_SOURCE[0]%/*}/lib/mutation-report.sh"
 
 repo="."
 slices=()
@@ -126,9 +135,25 @@ if [ ${#slices[@]} -eq 0 ]; then
   fi
 fi
 
-# Rules 1-4 and the rule-5 precondition, as "<rule>: <reason>" lines.
-HISTORY_RULES='
+# jq definitions the rules over the runs share, so rules 1-4, 8, 10, and 10c agree on what a green run,
+# an oracle, and a run the oracle chain can place are (#16).
+RUN_DEFS='
 def green: .kind == "after" or .kind == "integrated";
+def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
+def recorded: (.oracle | type) == "object" and (.oracle.files | type) == "array";
+# A run the oracle chain can place: an oracle record and a numeric exit code (rule 8 fails any other).
+def usable: recorded and (.exit_code | type) == "number";
+def num: if type == "number" then floor | tostring else error("not a number") end;
+# A not_applicable note counts for the final oracle when it was written after that oracle first ran:
+# by after_seq (the last run number then) when it has one, else by its time (a note written before
+# after_seq existed). With nothing to compare, it counts for nothing.
+def counts_for($first; $first_seq):
+  if (.after_seq | type) == "number" then $first_seq != null and $first_seq <= .after_seq
+  else $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first end;
+'
+
+# Rules 1-4 and the rule-5 precondition, as "<rule>: <reason>" lines.
+HISTORY_RULES="$RUN_DEFS"'
 def red: (.kind == "before" or .kind == "calibration") and .outcome == "target_failure" and .audit == null;
 def neither: .outcome == "infrastructure_error" or .outcome == "inconclusive";
 .runs as $all
@@ -156,16 +181,12 @@ def neither: .outcome == "infrastructure_error" or .outcome == "inconclusive";
   )'
 
 # Rule 8, over accepted runs in seq order, each with the oracle it was measured with.
-ORACLE_RULES='
-def green: .kind == "after" or .kind == "integrated";
+ORACLE_RULES="$RUN_DEFS"'
 # A red the command itself produced: an outcome forced with --outcome on an exit 0, or on a
 # command that could not run (126, 127), is not one.
 def red: (.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
          and .audit == null and .exit_code != 0 and .exit_code != 126 and .exit_code != 127;
-def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
 def vname: if . == null then "unset" else tostring end;
-def recorded: (.oracle | type) == "object" and (.oracle.files | type) == "array";
-def usable: recorded and (.exit_code | type) == "number";
 . as $meta
 | [.runs[] | select(.accepted != false)] as $accepted
 | [$accepted[] | select(usable)] | sort_by(.seq) as $acc
@@ -249,17 +270,7 @@ def usable: recorded and (.exit_code | type) == "number";
 # Rule 10, over the accepted runs and the audits log. The final oracle is the one of the final green run
 # (as in rule 8): its version and the sha256 of its files. Recorded text is never printed (run numbers
 # only); a value of the wrong type is an error, which the caller turns into a failure.
-AUDIT_RULES='
-# A not_applicable note counts for the final oracle when it was written after that oracle first ran:
-# by after_seq (the last run number then) when it has one, else by its time (a note written before
-# after_seq existed). With nothing to compare, it counts for nothing.
-def counts_for($first; $first_seq):
-  if (.after_seq | type) == "number" then $first_seq != null and $first_seq <= .after_seq
-  else $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first end;
-def green: .kind == "after" or .kind == "integrated";
-def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
-def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array" and (.exit_code | type) == "number";
-def num: if type == "number" then floor | tostring else error("not a number") end;
+AUDIT_RULES="$RUN_DEFS"'
 def audited: .audit.kind == "undefined-imports";
 . as $meta
 | [.runs[] | select(.accepted != false)] as $accepted
@@ -301,17 +312,7 @@ def audited: .audit.kind == "undefined-imports";
 # object: problems and warnings (rule text with run numbers only), and the files of the judged run for
 # the shell to hash. Asked of a slice whose final oracle has a JS or TS file, and of any other slice with
 # a mutation run or a mutation note.
-MUTATION_RULES='
-# A not_applicable note counts for the final oracle when it was written after that oracle first ran:
-# by after_seq (the last run number then) when it has one, else by its time (a note written before
-# after_seq existed). With nothing to compare, it counts for nothing.
-def counts_for($first; $first_seq):
-  if (.after_seq | type) == "number" then $first_seq != null and $first_seq <= .after_seq
-  else $first != null and (.recorded_at | type) == "string" and .recorded_at >= $first end;
-def green: .kind == "after" or .kind == "integrated";
-def oid: {v: (.oracle.version // null), f: ((.oracle.files // []) | map({path, sha256}) | sort_by(.path))};
-def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array";
-def num: if type == "number" then floor | tostring else error("not a number") end;
+MUTATION_RULES="$RUN_DEFS$VETDD_JQ_CLEAN"'
 def nn: if type == "number" and . >= 0 then . else error("not a count") end;
 def mut: (.audit | type) == "object" and .audit.kind == "mutation";
 . as $meta
@@ -344,7 +345,8 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
           elif $rep.status != "ok" then
             {copy: null, problems: [if $rep.status == "empty"
                 then "10c: mutation run \($s) mutated nothing: the --mutate ranges held no mutant; widen them to the function'"'"'s closing brace"
-                else "10c: the report of mutation run \($s) is \(if $rep.status == "missing" then "missing" else "invalid" end); run the mutation audit again" end], warns: [], files: []}
+                elif $rep.status == "missing" then "10c: the report of mutation run \($s) is missing; run the mutation audit again"
+                else "10c: the report of mutation run \($s) is invalid; run the mutation audit again (evidence.sh printed why when it recorded the run)" end], warns: [], files: []}
           else
             ($rep.counts) as $c
             | ($c.survived | nn) as $sv | ($c.no_coverage | nn) as $nc | ($c.total | nn) as $t | ($c.ignored | nn) as $ig
@@ -358,10 +360,47 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
                   else [] end)
                  + (if $sv + $nc > 0 then ["10c: mutation run \($s): \($sv) survived and \($nc) without coverage of \($t) mutants; strengthen the test until each is killed, or, for a mutant that cannot change behavior, disable it in the product code with // Stryker disable next-line <mutator>: <reason> and run the audit again"] else [] end)),
                warns: (if $ig > 0 then ["10c: \($ig) of the \($t) mutants of mutation run \($s) are ignored (Stryker disable comments); each one and its reason goes in the reply'"'"'s Attention"] else [] end),
-               files: [$files[] | {path, sha256, seq: $s}], copy: {seq: $s, sha256: $csum}}
+               # A path is shown only when it is clean and short; it is still checked either way.
+               files: [$files[] | {path, sha256, seq: $s, shown: (if (.path | clean) and (.path | length) <= 256 then .path else "" end)}],
+               copy: {seq: $s, sha256: $csum, oracle: [$fo.f[].path | strings]}}
           end
       end
   end'
+
+# Rule 10c, on the copy of the judged run (its sha256 checked), with $o the paths of the final oracle and
+# $root the repository: which test files its command ran against the mutants. Each file filter of an
+# npx [--no-install] vitest run command (plain words and single-quoted ones; an absolute one under $root
+# read from $root) is a match when it is the end of an oracle file path at a component boundary,
+# ignoring ASCII letter case as vitest does; unreadable when it is still absolute (outside $root, or
+# $root spelled through a link), holds a non-ASCII character (vitest folds its case, jq cannot), // or
+# a . or .. component; else no match. An option anywhere makes the whole command unread (it may take the
+# next word as its value). The answer: "other" when a filter
+# matches no oracle file, "none" for no filter (every test file), "unread" for an unreadable filter or a
+# vitest command of another shape (options, double quotes, other shell syntax), "ok", or "skip" for no
+# command or one without vitest (a verify wrapper): the judge reads that. A tripwire, not a boundary:
+# vitest selects every file whose path holds a filter, so a filter that matches can still select more
+# files; the ts-kata config refuses one that selects more than one, a config without that check does not.
+COMMAND_FILTERS='
+  def nodots: if startswith("./") then .[2:] | nodots else . end;
+  # On the filter as written ($r) and with the repository and leading ./ taken off (.).
+  def unreadable($r): ($r | startswith("-")) or ($r | explode | any(.[]; . > 126)) or ($r | test("//"))
+    or startswith("/") or (split("/") | any(.[]; . == "." or . == ".."));
+  (.config.command // null) as $c
+  | if ($c | type) != "string" or ($c | test("vitest") | not) then "skip"
+    else (($c | capture("^npx (--no-install )?vitest run(?<rest>( +([A-Za-z0-9._/@+=:,%^][A-Za-z0-9._/@+=:,%~^-]*|\u0027([^\u0027]|\u0027\\\\\u0027\u0027)*\u0027))*) *$"))? // null) as $m
+      | if $m == null then "unread"
+        else [$m.rest | scan("\u0027((?:[^\u0027]|\u0027\\\\\u0027\u0027)*)\u0027|([^ \u0027]+)") | (.[0] // .[1])
+              | gsub("\u0027\\\\\u0027\u0027"; "\u0027") | {r: ., n: (ltrimstr($root + "/") | nodots)}] as $t
+          | ($o | map("/" + ascii_downcase)) as $paths
+          | [$t[] | .r as $r | .n | select(unreadable($r) | not) | ascii_downcase] as $plain
+          # An option may take the next word as its value, so no word after one can be read as a filter.
+          | if any($t[]; .r | startswith("-")) then "unread"
+            elif any($plain[]; . as $f | $f == "" or (any($paths[]; endswith("/" + $f)) | not)) then "other"
+            elif ($t | length) == 0 then "none"
+            elif ($plain | length) < ($t | length) then "unread"
+            else "ok" end
+        end
+    end'
 
 # Warnings (rule 9c) travel in a file, apart from the problems that decide pass or fail.
 warn_file="$(mktemp "${TMPDIR:-/tmp}/check-evidence.XXXXXX")" || die "cannot create a temporary file"
@@ -604,14 +643,28 @@ check_mutation() {
       elif [ -n "$tr" ] && [ "$tr" != command ]; then
         printf '%s\n' "10c: mutation run $seq ran Stryker's $tr runner, not the command runner; Stryker's vitest runner reported killable mutants as Survived with vitest 5 (vetdd #20), so read its survivors before trusting them" >> "$warn_file"
       fi
+      # A source with a control or a bidirectional control (Trojan Source) reads otherwise to the judge than
+      # to the toolchain; emoji joiners and variation selectors are not warned about.
+      if ! jq -e "$VETDD_JQ_CLEAN"' all(.files[]?.source; type != "string" or cleantext)' "$root/$rel" >/dev/null 2>&1; then
+        printf '%s\n' "10c: mutation run $seq mutated a file whose source holds a bidirectional or other control character; it may read otherwise than it runs, so look at that file's bytes" >> "$warn_file"
+      fi
+      # The tests that faced the mutants are the slice's own (#16): a mutant another test kills is not the slice's.
+      case "$(jq -r --arg root "$root" --argjson o "$(printf '%s' "$out" | jq -c '.copy.oracle // []')" "$COMMAND_FILTERS" "$root/$rel" 2>/dev/null || echo error)" in
+        ok|skip) ;;
+        unread) printf '%s\n' "10c: mutation run $seq ran a vitest command that 10c cannot read (an option, double quotes, a non-ASCII, // or .. path, or other shell syntax), so it did not check that only the slice's own test files faced the mutants; the judge reads the command in the copy" >> "$warn_file" ;;
+        none) echo "10c: mutation run $seq ran its mutants against every test file (its vitest run command names no test file), so a mutant another test kills counts for the slice; set VETDD_MUTATION_TESTS to the slice's own test files and run the mutation audit again" ;;
+        other) echo "10c: mutation run $seq ran its mutants against test files outside the slice's oracle files (a file filter of its vitest run command is not the end of an oracle file path), so a mutant another test kills counts for the slice; set VETDD_MUTATION_TESTS to the slice's own test files and run the mutation audit again" ;;
+        *) echo "10c: could not read which tests mutation run $seq ran against its mutants (its copy is malformed); run the mutation audit again" ;;
+      esac
     fi
   fi
   # NUL-separated: a path is read exactly as recorded, backslashes and all.
-  while IFS= read -r -d '' path && IFS= read -r -d '' sum && IFS= read -r -d '' seq; do
+  while IFS= read -r -d '' path && IFS= read -r -d '' sum && IFS= read -r -d '' seq && IFS= read -r -d '' shown; do
     if [ -z "$path" ] || ! vetdd_inside_repo "$root" "$path" || [ ! -f "$root/$path" ] || [ "$(vetdd_sha256 "$root/$path")" != "$sum" ]; then
-      echo "10c: ${path:-<an empty path>} changed since mutation run $seq (or is missing, a link, or outside the repository); run the mutation audit again on the delivered file"
+      [ -z "$path" ] && shown="<an empty path>"
+      echo "10c: ${shown:-<a recorded path not shown: it holds a bidirectional or invisible character, or is over 256 characters>} changed since mutation run $seq (or is missing, a link, or outside the repository); run the mutation audit again on the delivered file"
     fi
-  done < <(printf '%s' "$out" | jq -j '.files[] | .path, "\u0000", .sha256, "\u0000", (.seq | tostring), "\u0000"')
+  done < <(printf '%s' "$out" | jq -j '.files[] | .path, "\u0000", .sha256, "\u0000", (.seq | tostring), "\u0000", .shown, "\u0000"')
 }
 
 # Rules 6 and 9a, on the files the oracle names.

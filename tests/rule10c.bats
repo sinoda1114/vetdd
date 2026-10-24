@@ -282,13 +282,11 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
   run an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
   [ "$status" -eq 2 ]
-  sleep 1
   printf '\n# a stronger test\n' >> test.sh
   ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   ev s1 after -- sh test.sh >/dev/null 2>&1
   run check s1
   [[ "$output" == *"10c: no mutation audit"* ]]
-  sleep 1
   an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
   run check s1
   [ "$output" = "s1: OK" ] || { echo "$output"; false; }
@@ -309,7 +307,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   printf 'x\n' > 'src/a\b.ts'
   git add -A && git commit -q -m bs
   record_good_slice s1
-  jq --arg r "$REPO" --arg k 'src/a\b.ts' '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run x" | .files = {($k): (.files["src/dueDate.ts"] | .source = "x\n" | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/bs.json"
+  jq --arg r "$REPO" --arg k 'src/a\b.ts' '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run test.sh" | .files = {($k): (.files["src/dueDate.ts"] | .source = "x\n" | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/bs.json"
   mutation s1 "$BATS_TEST_TMPDIR/bs.json"
   [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ]
   run check s1
@@ -421,7 +419,7 @@ SH
   printf 'x\n' > 'src/a\b.ts'
   git add -A && git commit -q -m bs
   record_good_slice s1
-  jq --arg r "$REPO" --arg k 'src/a\b.ts' '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run x" | .files = {($k): (.files["src/dueDate.ts"] | .source = "x\n" | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/bs.json"
+  jq --arg r "$REPO" --arg k 'src/a\b.ts' '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run test.sh" | .files = {($k): (.files["src/dueDate.ts"] | .source = "x\n" | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/bs.json"
   PATH="$BATS_TEST_TMPDIR/gnu:$PATH" mutation s1 "$BATS_TEST_TMPDIR/bs.json"
   PATH="$BATS_TEST_TMPDIR/gnu:$PATH" run check s1
   [ "$output" = "s1: OK" ] || { echo "$output"; false; }
@@ -479,8 +477,25 @@ need_kata_vitest() {
   command -v node >/dev/null || skip "node not installed"
   [ -x "$VETDD_ROOT/fixtures/ts-kata/node_modules/.bin/vitest" ] || skip "fixtures/ts-kata/node_modules is missing (npm ci there)"
 }
+# fake_npx: print a directory holding an npx that plays `npx --no-install vitest list <path> --filesOnly
+# --json` (it lists <path> when it is a file of the current directory, else nothing), so the config's
+# own checks run without ts-kata's dependencies (CI, #23). FAKE_NPX_SLEEP makes it hang that long first.
+fake_npx() {
+  local d="$BATS_TEST_TMPDIR/fakebin"
+  mkdir -p "$d"
+  cat > "$d/npx" <<'EOF'
+#!/bin/sh
+# A hang as npx has one: the tool runs in a child of npx, which holds the output open.
+if [ -n "${FAKE_NPX_SLEEP:-}" ]; then sleep "$FAKE_NPX_SLEEP" & echo $! > "$BATS_TEST_TMPDIR/fake-npx-child"; wait; exit 0; fi
+if [ -n "${FAKE_NPX_FLOOD:-}" ]; then head -c "$FAKE_NPX_FLOOD" /dev/zero | tr '\000' x; exit 0; fi
+if [ -f "$4" ]; then jq -n --arg f "$(pwd -P)/$4" '[{file: $f}]'; else printf '[]\n'; fi
+EOF
+  chmod +x "$d/npx"
+  printf '%s' "$d"
+}
+# KATA_CFG_DIR: where the scratch project goes (default: cfgproj in the test's temp directory).
 kata_cfg() {
-  local kata="$VETDD_ROOT/fixtures/ts-kata" P="$BATS_TEST_TMPDIR/cfgproj" f
+  local kata="$VETDD_ROOT/fixtures/ts-kata" P="${KATA_CFG_DIR:-$BATS_TEST_TMPDIR/cfgproj}" f
   rm -rf "$P"; mkdir -p "$P" && cp "$kata/stryker.config.mjs" "$kata/package.json" "$P/"
   [ ! -d "$kata/node_modules" ] || ln -s "$kata/node_modules" "$P/node_modules"
   if [ "$1" != -unset ]; then
@@ -496,10 +511,16 @@ kata_cfg() {
     (cd "$P" && VETDD_MUTATION_TESTS="$1" node --input-type=module -e 'const c = (await import("./stryker.config.mjs")).default; console.log(c.commandRunner.command)' 2>&1)
   fi
 }
+# kata_import <dir> <VETDD_MUTATION_TESTS value>: load the Stryker config in <dir> with that value; its
+# output and exit status. The directory goes in as an argument, never into the shell text (#23).
+kata_import() {
+  (cd "$1" && VETDD_MUTATION_TESTS="$2" node --input-type=module -e 'await import("./stryker.config.mjs")' 2>&1)
+}
 
 @test "each test path is single-quoted for the shell, so ( ) \$ [ ] and quotes stay part of the name (Q1)" {
-  need_kata_vitest
-  run kata_cfg $'app/(auth)/login.test.ts\nroutes/$id.test.ts\nsrc/[id].test.ts\nsrc/it\'s.test.ts'
+  command -v node >/dev/null || skip "node not installed"
+  # The fake npx stands in for vitest list, so this runs without ts-kata's dependencies (#23).
+  PATH="$(fake_npx):$PATH" run kata_cfg $'app/(auth)/login.test.ts\nroutes/$id.test.ts\nsrc/[id].test.ts\nsrc/it\'s.test.ts'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$output" = "npx --no-install vitest run 'app/(auth)/login.test.ts' 'routes/\$id.test.ts' 'src/[id].test.ts' 'src/it'\\''s.test.ts'" ] || { echo "$output"; false; }
   # The quoted command, run by sh, hands vitest exactly those names.
@@ -569,8 +590,7 @@ kata_cfg() {
   run kata_cfg $'-t\nsrc/a.test.ts'
   [ "$status" -ne 0 ]
   [[ "$output" == *"starts with -"* ]]
-  need_kata_vitest
-  run kata_cfg ' src/a b.test.ts'
+  PATH="$(fake_npx):$PATH" run kata_cfg ' src/a b.test.ts'
   [ "$output" = "npx --no-install vitest run ' src/a b.test.ts'" ] || { echo "$output"; false; }
   grep -q 'POSIX' "$VETDD_ROOT/fixtures/ts-kata/stryker.config.mjs"
   mut_section "$SCRIPTS/../modes/test.md" | grep -q 'POSIX'
@@ -592,7 +612,7 @@ kata_cfg() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"s1: WARN (10c: mutation run 3 ran Stryker's vitest runner"* ]] || { echo "$output"; false; }
   record_good_slice s2
-  mutation s2 "$(killed '.config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run '"'"'src/a.test.ts'"'"'"')"
+  mutation s2 "$(killed '.config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run '"'"'test.sh'"'"'"')"
   run check s2
   [ "$output" = "s2: OK" ] || { echo "$output"; false; }
 }
@@ -600,13 +620,13 @@ kata_cfg() {
 @test "the ts-kata config refuses a test path that is a substring of another test file's path (#21)" {
   need_kata_vitest
   local kata="$VETDD_ROOT/fixtures/ts-kata"
-  run sh -c "cd '$kata' && VETDD_MUTATION_TESTS=dueDate.test.ts node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
+  run kata_import "$kata" 'dueDate.test.ts'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # src/invoice.test.ts and src/dueDate.test.ts both contain "test.ts": the filter would run both.
-  run sh -c "cd '$kata' && VETDD_MUTATION_TESTS=test.ts node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
+  run kata_import "$kata" 'test.ts'
   [ "$status" -ne 0 ]
   [[ "$output" == *"selects 2 test files"* ]] || { echo "$output"; false; }
-  run sh -c "cd '$kata' && VETDD_MUTATION_TESTS=nothing.test.ts node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
+  run kata_import "$kata" 'nothing.test.ts'
   [ "$status" -ne 0 ]
   [[ "$output" == *"selects 0 test files"* ]]
 }
@@ -674,10 +694,10 @@ kata_cfg() {
   command -v node >/dev/null || skip "node not installed"
   local kata="$VETDD_ROOT/fixtures/ts-kata" P="$BATS_TEST_TMPDIR/bare"
   mkdir -p "$P" && cp "$kata/stryker.config.mjs" "$P/"
-  run sh -c "cd '$P' && VETDD_MUTATION_TESTS='-x' node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
+  run kata_import "$P" '-x'
   [ "$status" -ne 0 ]
   [[ "$output" == *"starts with -"* ]]
-  run sh -c "cd '$P' && VETDD_MUTATION_TESTS= node --input-type=module -e 'await import(\"./stryker.config.mjs\")' 2>&1"
+  run kata_import "$P" ''
   [ "$status" -ne 0 ]
   [[ "$output" == *"set VETDD_MUTATION_TESTS"* ]]
 }
@@ -765,4 +785,203 @@ jsts_slice() {
 @test "triage: a package below the repository root writes its mutation report to the root's .vetdd/reports; a prebuilt CLI is rebuilt per mutant" {
   grep -q 'below the repository root' "$SCRIPTS/../modes/test.md"
   grep -q 'rebuild' "$SCRIPTS/../modes/verify.md"
+}
+
+# --- #16 and #23 follow-ups -----------------------------------------------------------------------
+
+@test "rules 8, 10, and 10c read the same final green: one definition of green, oid, usable, and counts_for (#16)" {
+  record_good_slice s1
+  mutation s1 "$(killed)"
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  # The last green loses its exit code: rule 8 fails it, and every rule falls back to the green before.
+  tamper s1 '.runs[-1] |= del(.exit_code)'
+  run check s1
+  [[ "$output" == *"8: run 4 has no numeric exit_code"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"10c:"* ]] || { echo "$output"; false; }
+  local d
+  for d in 'def green:' 'def oid:' 'def usable:' 'def counts_for('; do
+    [ "$(grep -c "^$d" "$SCRIPTS/check-evidence.sh")" = 1 ] || { echo "defined more than once: $d"; false; }
+  done
+}
+
+@test "10c fails a mutation run whose vitest command runs a test file outside the slice's oracle files, or every one (#16)" {
+  local c
+  for c in "npx --no-install vitest run 'src/other.test.ts'" "npx --no-install vitest run 'test.sh' 'src/other.test.ts'" \
+           "npx --no-install vitest run" "npx vitest run other.test.ts" "npx --no-install vitest run 'te'\\\\''st.sh'"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [ "$status" -eq 1 ] || { echo "accepted: $c"; echo "$output"; false; }
+    [[ "$output" == *"s1: FAIL (10c: mutation run 3 ran its mutants against"* ]] || { echo "$c: $output"; false; }
+  done
+  # The slice's own file, however named (./, letter case, unquoted), and a command of another shape
+  # (a verify wrapper, a vitest command with options: the judge's to read) pass.
+  for c in "npx --no-install vitest run 'test.sh'" "npx --no-install vitest run './test.sh'" "npx --no-install vitest run 'TEST.sh'" \
+           "npx --no-install vitest run test.sh" "sh .claude/skills/verify-app/scripts/mutant.sh"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [ "$output" = "s1: OK" ] || { echo "refused: $c"; echo "$output"; false; }
+  done
+}
+
+@test "a recorded mutated-file path is shown only when it is plain and short (#16)" {
+  record_good_slice s1
+  mutation s1 "$(killed)"
+  tamper s1 '.runs[-1].audit.report.files[0].path = "src/‮evil.ts"'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"10c: <a recorded path not shown"*"changed since mutation run 3"* ]] || { echo "$output"; false; }
+  ! printf '%s' "$output" | grep -q "$(printf '\342\200\256')" || false
+  tamper s1 '.runs[-1].audit.report.files[0].path = ("a/" * 150 + "x.ts")'
+  run check s1
+  [[ "$output" == *"10c: <a recorded path not shown"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/x.ts"* ]]
+}
+
+@test "an invalid report's 10c line says evidence.sh printed why when it recorded the run (#23)" {
+  record_good_slice s1
+  mutation s1 "$(report '.config.commandRunner.command = ("x" * 4097)')"
+  run check s1
+  [[ "$output" == *"10c: the report of mutation run 3 is invalid; run the mutation audit again (evidence.sh printed why when it recorded the run)"* ]] || { echo "$output"; false; }
+}
+
+@test "the ts-kata config gives each vitest list a time limit (#23)" {
+  command -v node >/dev/null || skip "node not installed"
+  local b; b="$(fake_npx)"
+  local t0=$SECONDS
+  FAKE_NPX_SLEEP=8 VETDD_MUTATION_LIST_TIMEOUT_MS=500 PATH="$b:$PATH" run kata_cfg 'src/a.test.ts'
+  [ $((SECONDS - t0)) -lt 5 ] || { echo "took $((SECONDS - t0)) s"; false; }
+  # The whole process group is stopped: the child of npx (the hung vitest) is not left running.
+  local child; child="$(cat "$BATS_TEST_TMPDIR/fake-npx-child")"
+  if kill -0 "$child" 2>/dev/null; then kill "$child"; echo "left running: $child"; false; fi
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"did not finish within 500 ms"* ]] || { echo "$output"; false; }
+  local v
+  for v in 0 -1 abc 1.5; do
+    VETDD_MUTATION_LIST_TIMEOUT_MS="$v" PATH="$b:$PATH" run kata_cfg 'src/a.test.ts'
+    [ "$status" -ne 0 ] || { echo "accepted: $v"; false; }
+    [[ "$output" == *"VETDD_MUTATION_LIST_TIMEOUT_MS"* ]] || { echo "$output"; false; }
+  done
+  PATH="$b:$PATH" run kata_cfg 'src/a.test.ts'
+  [ "$output" = "npx --no-install vitest run 'src/a.test.ts'" ] || { echo "$output"; false; }
+}
+
+@test "a project that itself lies below a directory named .stryker-tmp still selects its test file (#23)" {
+  command -v node >/dev/null || skip "node not installed"
+  KATA_CFG_DIR="$BATS_TEST_TMPDIR/.stryker-tmp/proj" PATH="$(fake_npx):$PATH" run kata_cfg 'src/a.test.ts'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "npx --no-install vitest run 'src/a.test.ts'" ]
+  # A sandbox inside the project is still left out.
+  KATA_CFG_EXTRA='.stryker-tmp/sandbox-1/src/a.test.ts' PATH="$(fake_npx):$PATH" run kata_cfg '.stryker-tmp/sandbox-1/src/a.test.ts'
+  [[ "$output" == *"selects 0 test files"* ]] || { echo "$output"; false; }
+}
+
+@test "10c reads a filter as the end of an oracle file path, whole components, however it names the slice's own file (r1)" {
+  local c
+  # Too short to name the slice's file: the end of no oracle path at a component boundary.
+  for c in "npx --no-install vitest run 's'" "npx --no-install vitest run 'est.sh'"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [[ "$output" == *"s1: FAIL (10c: mutation run 3 ran its mutants against"* ]] || { echo "accepted: $c"; echo "$output"; false; }
+  done
+  # An absolute path under the repository (as git spells its root) and ./ repeated pass.
+  for c in "npx --no-install vitest run '$(git rev-parse --show-toplevel)/test.sh'" "npx --no-install vitest run '././test.sh'"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [ "$output" = "s1: OK" ] || { echo "refused: $c"; echo "$output"; false; }
+  done
+}
+
+@test "a vitest command 10c cannot read is a WARN, not a pass in silence and not a failure (r2)" {
+  local c
+  for c in 'npx --no-install vitest run \"test.sh\"' "npx --no-install vitest run 'TËST.sh'" \
+           "npx --no-install vitest run 'test.sh' '--reporter=dot'" "npx --no-install vitest run --bail=1 test.sh" \
+           "npx --no-install vitest run 'src/../test.sh'" "npx --no-install vitest run './/test.sh'"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [ "$status" -eq 0 ] || { echo "failed: $c"; echo "$output"; false; }
+    [ "${lines[0]}" = "s1: OK" ] || { echo "$c: $output"; false; }
+    [[ "$output" == *"s1: WARN (10c: mutation run 3 ran a vitest command that 10c cannot read"* ]] || { echo "no warning: $c"; echo "$output"; false; }
+  done
+  # A filter that names another file still fails, whatever else the command holds.
+  rm -rf .vetdd
+  record_good_slice s1
+  mutation s1 "$(killed ".config.commandRunner.command = \"npx --no-install vitest run 'src/other.test.ts' 'TËST.sh'\"")"
+  run check s1
+  [[ "$output" == *"s1: FAIL (10c: mutation run 3 ran its mutants against test files outside"* ]] || { echo "$output"; false; }
+  # A command without vitest in it (a verify wrapper) is the judge's: no warning.
+  rm -rf .vetdd
+  record_good_slice s1
+  mutation s1 "$(killed '.config.commandRunner.command = "sh .claude/skills/verify-app/scripts/mutant.sh"')"
+  run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+}
+
+@test "the ts-kata config stops the list's process group when it is itself stopped, and caps what it reads (r2)" {
+  command -v node >/dev/null || skip "node not installed"
+  local b P="$BATS_TEST_TMPDIR/sigproj" pid child i
+  b="$(fake_npx)"
+  KATA_CFG_DIR="$P" PATH="$b:$PATH" kata_cfg 'src/a.test.ts' >/dev/null 2>&1
+  rm -f "$BATS_TEST_TMPDIR/fake-npx-child"
+  (cd "$P" && FAKE_NPX_SLEEP=20 VETDD_MUTATION_TESTS=src/a.test.ts PATH="$b:$PATH" exec node --input-type=module -e 'await import("./stryker.config.mjs")') >/dev/null 2>&1 &
+  pid=$!
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -s "$BATS_TEST_TMPDIR/fake-npx-child" ] && break; sleep 0.5; done
+  child="$(cat "$BATS_TEST_TMPDIR/fake-npx-child")"
+  kill -TERM "$pid"; wait "$pid" || true
+  sleep 0.5
+  if kill -0 "$child" 2>/dev/null; then kill "$child"; echo "left running: $child"; false; fi
+  # More than 16 MiB of list output is refused, not held.
+  FAKE_NPX_FLOOD=17000000 PATH="$b:$PATH" run kata_cfg 'src/a.test.ts'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"more than 16 MiB"* ]] || { echo "${output:0:400}"; false; }
+}
+
+@test "a mutated file whose source holds a bidirectional control character is a WARN: the judge reads it as it shows (r2)" {
+  printf 'const a = "x\342\200\256y";\n' > src/b.ts
+  git add -A && git commit -q -m bidi
+  record_good_slice s1
+  jq --arg r "$REPO" --rawfile src src/b.ts '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run test.sh" | .files = {"src/b.ts": (.files["src/dueDate.ts"] | .source = $src | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/bidi.json"
+  mutation s1 "$BATS_TEST_TMPDIR/bidi.json"
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ]
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (10c: mutation run 3 mutated a file whose source holds a bidirectional or other control character"* ]] || { echo "$output"; false; }
+}
+
+@test "a source with an emoji joiner is no WARN; a leading ~ in a plain filter is unread, as the shell expands it (r3)" {
+  printf 'const a = "\360\237\221\250\342\200\215\360\237\222\273";\n' > src/b.ts
+  git add -A && git commit -q -m emoji
+  record_good_slice s1
+  jq --arg r "$REPO" --rawfile src src/b.ts '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "npx --no-install vitest run test.sh" | .files = {"src/b.ts": (.files["src/dueDate.ts"] | .source = $src | .mutants |= map(.status = "Killed"))}' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/emoji.json"
+  mutation s1 "$BATS_TEST_TMPDIR/emoji.json"
+  run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+  rm -rf .vetdd
+  record_good_slice s1
+  mutation s1 "$(killed '.config.commandRunner.command = "npx --no-install vitest run ~/repo/test.sh"')"
+  run check s1
+  [ "${lines[0]}" = "s1: OK" ] || { echo "$output"; false; }
+  [[ "$output" == *"WARN (10c: mutation run 3 ran a vitest command that 10c cannot read"* ]] || { echo "$output"; false; }
+}
+
+@test "an absolute filter outside the repository, and a quoted option with its value, are unread: a WARN, never ok or a FAIL (PR #100 bots)" {
+  local c
+  for c in "npx --no-install vitest run '/elsewhere/test.sh'" "npx --no-install vitest run '/'" \
+           "npx --no-install vitest run 'test.sh' '--reporter' 'dot'"; do
+    rm -rf .vetdd
+    record_good_slice s1
+    mutation s1 "$(killed ".config.commandRunner.command = \"$c\"")"
+    run check s1
+    [ "${lines[0]}" = "s1: OK" ] || { echo "$c: $output"; false; }
+    [[ "$output" == *"s1: WARN (10c: mutation run 3 ran a vitest command that 10c cannot read"* ]] || { echo "no warning: $c"; echo "$output"; false; }
+  done
 }

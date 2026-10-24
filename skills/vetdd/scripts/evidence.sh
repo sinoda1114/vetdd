@@ -29,7 +29,9 @@
 #   runs/<seq>-mutation.json (normalized: config.mutate, config.testRunner, config.command when the
 #   command runner ran,
 #   and each file's source and mutants). A marked
-#   run is never a red. It never changes the outcome.
+#   run is never a red. It never changes the outcome. A report that is not usable is recorded invalid,
+#   with a warning that says why (lib/mutation-report.sh: a report over 64 MiB, one with another hard
+#   link, a runner that is not one of Stryker's, a --mutate entry that is not <file>:<first>-<last>, ...).
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -154,7 +156,9 @@ if [ -n "$mreport_opt" ]; then
     || die "--mutation-report path is not a usable path inside the repository (a symbolic link, outside, through a file, or unreadable): $mreport_opt"
   vetdd_report_allowed "$root" "$mreport_rel" \
     || die "--mutation-report path must be an untracked file under .vetdd/reports/ (resolved to $mreport_rel)"
-  [ "$mreport_rel" != "$report_rel" ] || die "--mutation-report and --test-report must be different files"
+  # Compared ignoring letter case: on a case-insensitive file system M.json and m.json are one file.
+  [ "$(printf '%s' "$mreport_rel" | LC_ALL=C tr 'A-Z' 'a-z')" != "$(printf '%s' "$report_rel" | LC_ALL=C tr 'A-Z' 'a-z')" ] \
+    || die "--mutation-report and --test-report must be different files (compared ignoring letter case)"
 fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
@@ -229,8 +233,15 @@ fi
 audit_json=null
 if [ "$audit_opt" = undefined-imports ]; then audit_json='{"kind": "undefined-imports"}'
 elif [ "$audit_opt" = mutation ]; then
-  mreport_json="$(vetdd_mutation_report_import "$root" "$mreport_rel" "$dir/runs/$(printf '%03d' "$seq")-mutation.json" \
-    "runs/$(printf '%03d' "$seq")-mutation.json")" || mreport_json=""
+  # Two names the letter-case check passed can still be one file (NFC and NFD on APFS): never read as both.
+  if [ -n "$report_rel" ] && [ -e "$root/$mreport_rel" ] && [ "$root/$mreport_rel" -ef "$root/$report_rel" ]; then
+    printf 'evidence.sh: warning: mutation report %s is invalid (it is the same file as the test report %s); recorded audit.report.status=invalid (the outcome still comes from the exit code)\n' \
+      "$mreport_rel" "$report_rel" | vetdd_printable >&2
+    mreport_json=""
+  else
+    mreport_json="$(vetdd_mutation_report_import "$root" "$mreport_rel" "$dir/runs/$(printf '%03d' "$seq")-mutation.json" \
+      "runs/$(printf '%03d' "$seq")-mutation.json")" || mreport_json=""
+  fi
   printf '%s' "$mreport_json" | jq -e 'type == "object"' >/dev/null 2>&1 \
     || mreport_json="$(jq -n --arg p "$mreport_rel" '{format: "stryker-json", path: $p, status: "invalid"}')"
   audit_json="$(printf '%s' "$mreport_json" | jq -c '{kind: "mutation", report: .}')"
