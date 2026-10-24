@@ -586,7 +586,8 @@ single_label() {
 
 @test "r2: two labels without variants.json still have the origin words checked (a hand-made calibration pair)" {
   rm "$BATS_TEST_TMPDIR/run/variants.json"
-  printf 'the winner\n' > "$CAND/c1/artifact/diff.patch"
+  # variant, not winner: --final keeps winner checked, so only variant or baseline shows --final is not passed.
+  printf '<Button variant="primary" />\n' > "$CAND/c1/artifact/diff.patch"
   run judge
   [ "$status" -eq 4 ]
 }
