@@ -84,3 +84,34 @@ END
   x=${y:-!}
   : $((1 << 2)) $(( ! 0 ))
 }
+
+# Other helpers, in every form a function can be declared.
+function helper2 { ! grep -q x "$1"; }
+function helper3() { ! grep -q x "$1"; }
+
+@test "compound commands whose status counts" {
+  true || { ! cmd || false; }
+  { ! cmd || false; } 2>/dev/null
+  ! { true; } || false
+  case x in a) true; esac
+  case x in
+    a) true ;;
+    *) true
+  esac
+  if (true) then :; fi
+  while (false) do :; done
+}
+
+@test "array values and here-strings" {
+  args=(! cmd)
+  args=(if then else)
+  args=(
+    ! cmd   # a comment
+    'x)'
+  )
+  value=$(cat <<< "$input")
+  cat <<EOF - "$(printf x
+echo inner)" >/dev/null
+! cmd
+EOF
+}

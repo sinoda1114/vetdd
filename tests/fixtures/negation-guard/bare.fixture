@@ -116,3 +116,43 @@ EOF
 @test "after [[ ... && ... ]]" {
   [[ -n x && -n y ]] && ! caught
 }
+
+@test "|| false inside { } whose status || ignores" {
+  { ! caught || false; } || true
+}
+
+@test "|| false inside ( ) on the left of a pipe" {
+  ( ! caught || false ) | cat
+}
+
+@test "|| false inside an if whose status || ignores" {
+  if true; then ! caught || false; fi || true
+}
+
+@test "|| false inside nested groups, the outer one ignored" {
+  { { ! caught || false; }; } 2>/dev/null && true
+}
+
+@test "after a case whose last branch has no ;;" {
+  case x in
+    a) true ;;
+    *) true
+  esac
+  ! caught
+}
+
+@test "after an array" {
+  a=(x y); ! caught
+}
+
+setup() {
+  ! caught
+}
+
+function teardown {
+  ! caught
+}
+
+function setup_file() {
+  ! caught
+}

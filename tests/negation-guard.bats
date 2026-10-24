@@ -2,7 +2,8 @@
 # #26: a negated command mid-test (`! cmd`) never fails a bats test: bash's set -e ignores a command
 # inverted with !, so only the last line of a test would count. Write `! cmd || false` (or `run ! cmd`).
 # #32: the scanner (helpers/bare-negations.pl) finds a negation wherever a command can start inside
-# @test: at the start of a line, after ; && || & | ( then do else, inside { }, and in a case branch.
+# @test (and setup/teardown): at the start of a line, after ; && || & | ( then do else, inside { }, in a
+# case branch, and inside a compound command whose status && || or | ignores.
 
 load test_helper
 
@@ -12,18 +13,20 @@ FIX="$BATS_TEST_DIRNAME/fixtures/negation-guard"
 @test "no test file has a bare negated command (write ! cmd || false)" {
   run perl "$SCAN" "$BATS_TEST_DIRNAME"/*.bats
   [ "$status" -eq 0 ] || { echo "status $status: $output"; false; }
-  [ -z "$output" ] || { echo "$output"; false; }
+  [ -z "$output" ] || { echo "$output"; echo "write ! cmd || false (or run ! cmd) on each line above"; false; }
 }
 
 @test "the scanner reports every bare negation in the fixture, and only those lines" {
-  local want got
+  local want got= l f="$BATS_TEST_TMPDIR/a:1:dir/bare.fixture"
   want="$(grep -nE '![[:space:]]+caught' "$FIX/bare.fixture" | cut -d: -f1 | tr '\n' ' ')"
-  run perl "$SCAN" "$FIX/bare.fixture"
+  # A path with colons in it, as a checkout can have.
+  mkdir -p "${f%/*}" && cp "$FIX/bare.fixture" "$f"
+  run perl "$SCAN" "$f"
   [ "$status" -eq 1 ] || { echo "status $status: $output"; false; }
-  got="$(printf '%s\n' "$output" | cut -d: -f2 | tr '\n' ' ')"
+  for l in "${lines[@]}"; do l="${l#"$f:"}"; got="$got${l%%:*} "; done
   [ "$got" = "$want" ] || { echo "want lines: $want"; echo "got: $output"; false; }
   # Each report names the file and the line as written.
-  [[ "${lines[0]}" == "$FIX/bare.fixture:6:  ! caught" ]] || { echo "${lines[0]}"; false; }
+  [[ "${lines[0]}" == "$f:6:  ! caught" ]] || { echo "${lines[0]}"; false; }
 }
 
 @test "the scanner reports nothing for ! cmd || false, run !, [ ! ], [[ ! ]], strings, comments, heredocs and conditions" {
