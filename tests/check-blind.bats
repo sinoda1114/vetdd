@@ -217,15 +217,6 @@ copy_kata() {
   [[ "$output" != *$'\033'* ]]
 }
 
-# A UTF-8 locale other than C, or empty when the machine has none of them.
-utf8_locale() {
-  local l
-  for l in ja_JP.UTF-8 ja_JP.utf8; do
-    locale -a 2>/dev/null | grep -qx "$l" && { printf '%s\n' "$l"; return 0; }
-  done
-  return 0
-}
-
 @test "H5: the judge profile reports node_modules and .git as hits without reading them" {
   mkdir -p "$W/c1/artifact/node_modules/pkg" "$W/c1/artifact/.git"
   printf 'claude-opus variant-B\n' > "$W/c1/artifact/node_modules/pkg/index.js"
@@ -274,7 +265,7 @@ utf8_locale() {
 
 @test "H6: an invalid UTF-8 byte does not hide a hit under a UTF-8 locale" {
   local loc; loc="$(utf8_locale)"
-  [ -n "$loc" ] || skip "no ja_JP UTF-8 locale on this machine"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
   printf 'caf\351 by opus\n' > "$W/a.md"
   LC_ALL="$loc" run blind "$W" --profile judge
   [ "$status" -eq 1 ]
@@ -283,7 +274,7 @@ utf8_locale() {
 
 @test "H6: vetdd_redact redacts past an invalid UTF-8 byte under a UTF-8 locale" {
   local loc; loc="$(utf8_locale)"
-  [ -n "$loc" ] || skip "no ja_JP UTF-8 locale on this machine"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
   printf 'opus\n' > "$BATS_TEST_TMPDIR/words"
   printf 'caf\351 by opus\n' > "$W/a.md"
   run env LC_ALL="$loc" bash -c '. "$1"; vetdd_redact "$2" "$3"' _ \
@@ -871,4 +862,27 @@ c1/transcript.jsonl:3: secret: assignment" ]
   mkdir -p "$BATS_TEST_TMPDIR/f/c1" && printf 'written by claude\n' > "$BATS_TEST_TMPDIR/f/c1/a"
   run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --allow-words $'c1/*:openai\n claude'
   [ "$status" -eq 2 ] || { echo "$output"; false; }
+}
+
+# --- #50: locale ------------------------------------------------------------------------------------
+
+@test "#50: an extra word after one with an invalid UTF-8 byte is still checked, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  printf 'acme%scorp\nzeta-lane\n' "$(printf '\377')" > "$BATS_TEST_TMPDIR/extra.txt"
+  printf 'made in zeta-lane\n' > "$W/a.md"
+  LC_ALL="$loc" run blind "$W" --profile judge --extra-words "$BATS_TEST_TMPDIR/extra.txt"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ "$output" = "a.md:1: zeta-lane" ] || { echo "$output"; false; }
+}
+
+@test "#50: --allow-words for a word does not let a longer extra word with an invalid UTF-8 byte through, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  local bad; bad="acme$(printf '\377')corp"
+  printf 'acme\n%s\n' "$bad" > "$BATS_TEST_TMPDIR/extra.txt"
+  printf 'made by %s\n' "$bad" > "$W/a.md"
+  LC_ALL="$loc" run blind "$W" --profile judge --extra-words "$BATS_TEST_TMPDIR/extra.txt" --allow-words 'a.md:acme'
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == "a.md:1: acme"*"corp" ]] || { printf '%s\n' "$output" | od -c; false; }
 }

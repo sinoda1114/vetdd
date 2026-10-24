@@ -159,10 +159,16 @@ fingerprint() {
     if [ -x "$top/$p" ]; then printf 'x%s' "$h"; else printf -- '-%s' "$h"; fi
   else printf -- '-'; fi
 }
-oracle_prints() { local o; for o in "${oracle[@]}"; do printf '%s %s\n' "$(fingerprint "$o")" "$o"; done | sort; }
+# Both lists are saved by plant and compared by planted, which may run under another locale: each
+# runs under LC_ALL=C, so neither the sort order nor printf %q depends on it (#50).
+oracle_prints() (
+  export LC_ALL=C
+  for o in "${oracle[@]}"; do printf '%s %s\n' "$(fingerprint "$o")" "$o"; done | sort
+)
 # Every path that differs from HEAD or is untracked, minus the saved set, fingerprinted; names are
 # printed with %q so a newline in a name stays one entry. Files ignored by git are not covered.
-others() {
+others() (
+  export LC_ALL=C
   local p saved base names
   saved=$'\n'"$(cat "$state/files")"$'\n'
   base=HEAD; g rev-parse -q --verify HEAD >/dev/null || base="$(g hash-object -t tree /dev/null)"
@@ -175,7 +181,7 @@ others() {
     printf '%s %q\n' "$(fingerprint "$p")" "$p"
   done < "$names" | sort
   rm -f "$names"
-}
+)
 unreadable() { grep -q '^!' "$@"; }
 
 # Save a byte copy, its digest, and the index entry of every file in $state/files.

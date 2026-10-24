@@ -515,3 +515,31 @@ b"; do
   awk '/npm ci/{n=NR} /1\. `"\$VETDD\/scripts\/worktree.sh" check <slice>`/{c=NR} END{exit !(n && c && n < c)}' "$sw"
   grep -q 'If `remove --at` stops because the branch moved' "$sw"
 }
+
+# --- #50: locale ------------------------------------------------------------------------------------
+
+@test "#50: a slice id with a letter outside ASCII is a usage error under a UTF-8 locale too" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  LC_ALL="$loc" run WT add "$(printf 'caf\303\251')"
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ -z "$(git branch --list 'vetdd/*')" ]
+  # vetdd_is_slice_id itself, which every script uses: ASCII letters, digits, . _ - only.
+  run env LC_ALL="$loc" bash -c '. "$1"; shift; for id in "$@"; do vetdd_is_slice_id "$id" && echo "took $id"; done; :' _ \
+    "$SCRIPTS/lib/common.sh" "$(printf '\303\251t\303\251')" "$(printf 'a\303\237')" "$(printf '\357\275\201b')" "$(printf 'x\303\270')" "$(printf 'a\377b')" Hz a-b.c_9
+  [ "$status" -eq 0 ]
+  [ "$output" = "took Hz
+took a-b.c_9" ] || { printf '%s\n' "$output" | od -c | head; false; }
+}
+
+@test "#50: check refuses a .gitattributes under a directory whose name is not UTF-8, under a UTF-8 locale too" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  WT add sa >/dev/null
+  # A tree entry no checkout on macOS could hold, made with plumbing as a worker could.
+  (cd "$WTROOT/sa" && blob="$(printf '* filter=x\n' | git hash-object -w --stdin)" \
+    && git update-index --add --cacheinfo "100644,$blob,d$(printf '\377')/.gitattributes" && git commit -qm attrs)
+  LC_ALL="$loc" run WT check sa
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *".gitattributes"* ]] || { echo "$output"; false; }
+}

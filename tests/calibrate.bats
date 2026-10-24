@@ -608,13 +608,11 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   done
 }
 
-# bash 3.2 matches a bracket range by the locale's collation: under en_US.UTF-8 or ja_JP.UTF-8,
-# [a-z] holds the capital letters too, so a range must never stand for "lower case" (CI on macOS
-# runs with LANG=en_US.UTF-8).
+# bash 3.2 matches a bracket range by the locale's collation (utf8_locale in test_helper.bash): [a-z]
+# holds the capital letters too, so a range must never stand for "lower case".
 @test "locale: plant and planted work under a UTF-8 locale (a tracked file is not taken for assume-unchanged)" {
-  local loc
-  loc="$(locale -a 2>/dev/null | grep -ixE 'en_US\.utf-?8' | head -1)"
-  [ -n "$loc" ] || skip "no en_US UTF-8 locale here"
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
   git add -A && git commit -q -m fixed
   LC_ALL="$loc" run cal plant s2 --file value.txt --oracle-file test.sh
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -622,6 +620,41 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   LC_ALL="$loc" run cal planted s2 --seam unit --oracle-version 1 --oracle-file test.sh -- sh test.sh
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(mq s2 '.runs[-1].outcome')" = "target_failure" ]
+}
+
+@test "#50: an assume-unchanged file is refused under the C locale and under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  git update-index --assume-unchanged sub/keep.txt
+  local l
+  for l in C "$loc"; do
+    LC_ALL="$l" run cal unfix s1 --file value.txt --file sub/keep.txt --oracle-file test.sh -- sh test.sh
+    [ "$status" -eq 2 ] || { echo "$l: $output"; false; }
+    [[ "$output" == *"sub/keep.txt is marked assume-unchanged"* ]] || { echo "$l: $output"; false; }
+    [ "$(cat value.txt)" = "42" ]
+    [ ! -e "$(state_dir s1)" ]
+  done
+}
+
+@test "#50: planted run under another locale than plant still finds nothing else changed" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  # Oracle files and untracked files whose order and spelling (printf %q) depend on the locale: same
+  # contents, so the names decide the order (C puts B before a), and a name outside ASCII.
+  cp test.sh a.sh; cp test.sh B.sh
+  git add -A && git commit -q -m fixed
+  printf 'same\n' > B.txt; printf 'same\n' > a.txt; printf 'same\n' > "$(printf 'caf\303\251.txt')"
+  local from to
+  for from in C "$loc"; do
+    if [ "$from" = C ]; then to="$loc"; else to=C; fi
+    LC_ALL="$from" run cal plant s2 --file value.txt --oracle-file a.sh --oracle-file B.sh
+    [ "$status" -eq 0 ] || { echo "plant under $from: $output"; false; }
+    printf '41\n' > value.txt
+    LC_ALL="$to" run cal planted s2 --seam unit --oracle-version 1 --oracle-file a.sh --oracle-file B.sh -- sh test.sh
+    [ "$status" -eq 0 ] || { echo "planted under $to: $output"; false; }
+    [ "$(mq s2 '.runs[-1].outcome')" = "target_failure" ]
+    [ "$(cat value.txt)" = "42" ]
+  done
 }
 
 # --- #5: --test-report reaches evidence.sh from unfix and planted ------------------------------------

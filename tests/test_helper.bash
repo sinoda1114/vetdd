@@ -31,6 +31,19 @@ make_repo() {
   git commit -q -m init
 }
 
+# utf8_locale: a UTF-8 locale this machine has (en_US, or else ja_JP), or nothing; a test that needs
+# one skips without it. Two kinds of locale bug need it (#50), and each shows only on some machines,
+# so these tests pass elsewhere either way:
+# - bash 3.2 matches a bracket range ([a-z], [A-Za-z0-9]) by the locale's collation, so [a-z] holds
+#   H and é too (bash 5 matches ranges by code point): only under bash 3.2, as macOS /bin/bash is;
+# - the macOS tools (BSD tr, awk) stop at an invalid UTF-8 byte ("Illegal byte sequence") under a
+#   UTF-8 locale and cut the rest of their input: only with the macOS tools (GNU tr reads bytes).
+# Run the suite under bash 3.2 with LANG and LC_ALL set to en_US.UTF-8 to see both (CI's
+# bats-bash32 job runs on macOS with LANG=en_US.UTF-8).
+utf8_locale() {
+  locale -a 2>/dev/null | grep -ixE '(en_US|ja_JP)\.utf-?8' | LC_ALL=C sort | head -1
+}
+
 meta() { cat "$REPO/.vetdd/evidence/$1/meta.json"; }
 
 # jq query against a slice's meta.json

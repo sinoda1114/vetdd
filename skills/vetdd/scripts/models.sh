@@ -34,11 +34,15 @@ declare_default() {
 
 invalid() { echo "models.sh: invalid model name for $1: $2" >&2; exit 2; }
 
-# One model name: letters, digits, and . _ : / - ; must start with a letter or digit so it can
+# The ASCII letters and digits, spelled out: bash 3.2 matches a range such as [A-Za-z0-9] by the
+# locale's collation, where it holds é too (#50).
+ALNUM=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
+
+# One model name: ASCII letters, digits, and . _ : / - ; must start with a letter or digit so it can
 # never be read as a command-line option.
 check_name() {
   case "$2" in
-    ""|[!A-Za-z0-9]*|*[!A-Za-z0-9._:/-]*) invalid "$1" "$2" ;;
+    ""|[!"$ALNUM"]*|*[!"$ALNUM"._:/-]*) invalid "$1" "$2" ;;
   esac
 }
 
