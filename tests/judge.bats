@@ -892,3 +892,39 @@ TEST_CORP_PROXY" run judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -qx 'CODEX_CA_CERTIFICATE=/etc/corp-ca.pem' "$FAKE_SEEN.env.exec"
 }
+
+@test "#44: a malformed --allow-words is a usage error before anything is written or codex is asked" {
+  local v
+  for v in 'foo' 'c1/*:notaword' 'c1/*:openai,'; do
+    run "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$PROJ/new/judge.json" \
+      --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1 --allow-words "$v"
+    [ "$status" -eq 2 ] || { echo "$v: $output"; false; }
+    [[ "$output" == *"judge.sh: --allow-words '$v'"* ]] || { echo "$v: $output"; false; }
+    [ ! -e "$PROJ/new" ] || { echo "$v: --out's directory was created"; false; }
+    [ ! -e "$FAKE_SEEN.homes" ] || { echo "$v: codex was asked"; false; }
+  done
+}
+
+@test "#44: an --allow-words word from --extra-words passes the up-front check (CRLF and blanks dropped)" {
+  printf 'feature-x here\n' > "$CAND/c1/artifact/diff.patch"
+  printf ' feature-x \r\n' > "$BATS_TEST_TMPDIR/words.txt"
+  run judge --extra-words "$BATS_TEST_TMPDIR/words.txt"
+  [ "$status" -eq 4 ]
+  run judge --extra-words "$BATS_TEST_TMPDIR/words.txt" --allow-words 'c1/artifact/diff.patch:feature-x'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#44: a final judge still refuses a reply naming the winner; --allow-words '<glob>:winner' lets it through" {
+  rm "$BATS_TEST_TMPDIR/run/variants.json"
+  single_label
+  printf '## Result\n\nThe winner of the comparison is merged.\n' > "$CAND/c1/artifact/reply.md"
+  run judge
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"c1/artifact/reply.md:3: winner"* ]] || { echo "$output"; false; }
+  run judge --allow-words 'c1/artifact/reply.md:winner'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # variant and baseline stay product words in a final verdict.
+  printf '<Button variant="primary" />\n.x { align-items: baseline; }\n' > "$CAND/c1/artifact/ui.tsx"
+  run judge --allow-words 'c1/artifact/reply.md:winner'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

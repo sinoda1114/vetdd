@@ -3,6 +3,7 @@
 # Usage: sanitize-candidates.sh --src <workspace> --label <cN> --dest <run-dir>/candidates
 #                               [--strip <word>]... [--variants <variants.json>] [--transcript <file>]
 #                               [--words-out <file>] [--allow-secrets <glob>[:<kind>[,<kind>]...]]...
+#                               [--allow-words <glob>:<word>[,<word>]...]...
 #   <dest>/<label>/artifact/          the workspace without .git, node_modules, .vetdd, and secret-bearing
 #                                     files (SECRET_EXCLUDES below: .env, .env.*, .npmrc, .ssh, *.pem, ...)
 #   <dest>/<label>/evidence/          the workspace's .vetdd/evidence, when present, without the same
@@ -17,6 +18,15 @@
 #                                     artifact/tests/*:email,assignment), or for every kind without
 #                                     them. Only for test data a human confirmed, and only the kinds
 #                                     confirmed.
+#   --allow-words <glob>:<word>[,<word>]...
+#                                     passed to the self-check too: paths of the copy that match the
+#                                     glob, relative to <dest>/<label>, skip the words named
+#                                     (artifact/package-lock.json:baseline, for a dependency named
+#                                     baseline-browser-mapping). Only for product words a human
+#                                     confirmed. The value is checked as judge-layout.sh and judge.sh
+#                                     check it (vetdd_allow_words_error, lib/blind-words.sh); a word
+#                                     this script redacts (a model name or a strip word) is refused,
+#                                     since the copy never holds it. Nothing is redacted less.
 # Every case-insensitive, whole-word occurrence of a strip word (the same boundaries check-blind.sh
 # uses) in text contents, file names, and directory names under <dest>/<label> becomes "[redacted]".
 # Strip words: the model names in lib/blind-words.sh, the workspace's basename, its git branch when
@@ -64,6 +74,7 @@ SECRET_EXCLUDES=".env .env.* .npmrc .netrc .pypirc .envrc .dev.vars .aws .ssh *.
   .docker .kube .DS_Store"
 
 src=""; label=""; dest=""; strip=(); paths=(); variants=""; transcript=""; words_out=""; allow_secrets=()
+allow_words=()
 work=""; stage=""; old_copy=""
 
 parse_args() {
@@ -79,11 +90,14 @@ parse_args() {
       --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs a glob"
         err="$(vetdd_allow_secret_error "$2")" || die "$err"
         allow_secrets+=("$2"); shift 2 ;;
+      --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."
+        err="$(vetdd_allow_words_error "$2")" || die "$err"
+        allow_words+=("$2"); shift 2 ;;
       *) die "unexpected argument '$1'" ;;
     esac
   done
   [ -n "$src" ] && [ -n "$label" ] && [ -n "$dest" ] \
-    || die "usage: sanitize-candidates.sh --src <workspace> --label <cN> --dest <dir> [--strip <word>]... [--variants <file>] [--transcript <file>] [--words-out <file>] [--allow-secrets <glob>[:<kind>,...]]..."
+    || die "usage: sanitize-candidates.sh --src <workspace> --label <cN> --dest <dir> [--strip <word>]... [--variants <file>] [--transcript <file>] [--words-out <file>] [--allow-secrets <glob>[:<kind>,...]]... [--allow-words <glob>:<word>[,<word>]...]..."
   case "$label" in c[0-9]*) ;; *) die "invalid label '$label' (c1, c2, ...)" ;; esac
   case "${label#c}" in ""|*[!0-9]*) die "invalid label '$label' (c followed by digits: c1, c2, ...)" ;; esac
   [ -d "$src" ] || die "workspace not found: $src"
@@ -182,6 +196,25 @@ collect_strip_words() {
       strip+=("$branch")
     fi
   fi
+}
+
+# check_allow_words: refuse an --allow-words word that is redacted here (a model name or a strip
+# word): the copy never holds it, so allowing it would only look like keeping it.
+check_allow_words() {
+  local v w r lw words=()
+  [ "${#allow_words[@]}" -gt 0 ] || return 0
+  for v in "${allow_words[@]}"; do
+    # vetdd_allow_words_error passed it: a comma-separated list of plain words after the last ":".
+    IFS=, read -r -a words <<< "${v##*:}"
+    for w in ${words[@]+"${words[@]}"}; do
+      lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
+      # shellcheck disable=SC2086 # the default list is space-separated words
+      for r in $VETDD_MODEL_WORDS ${strip[@]+"${strip[@]}"}; do
+        [ "$(printf '%s' "$r" | tr 'A-Z' 'a-z')" = "$lw" ] || continue
+        die "--allow-words '$v': '$w' is redacted (a model name or a strip word), so the copy never holds it; --allow-words only lets the self-check pass a word that stays"
+      done
+    done
+  done
 }
 
 # collect_path_words: for an A/B eval (--variants, or variants.json in the run directory, the parent
@@ -293,6 +326,7 @@ self_check() {
   local hits
   local g args=()
   for g in ${allow_secrets[@]+"${allow_secrets[@]}"}; do args+=(--allow-secrets "$g"); done
+  for g in ${allow_words[@]+"${allow_words[@]}"}; do args+=(--allow-words "$g"); done
   hits="$("$here/check-blind.sh" "$1" --profile judge --extra-words "$work/strip-words" ${args[@]+"${args[@]}"})"
   case $? in
     0) ;;
@@ -339,6 +373,7 @@ main() {
   parse_args "$@"
   check_paths
   collect_strip_words
+  check_allow_words
   collect_path_words
   collect_email
 

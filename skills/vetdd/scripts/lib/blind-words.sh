@@ -8,6 +8,10 @@ VETDD_MODEL_WORDS="claude opus sonnet haiku fable codex gpt- grok anthropic open
 # Words that reveal a candidate's origin or the expected outcome to the judge (principle 6).
 # The judge knows it is judging, so the evaluation words above are not hidden from it.
 VETDD_ORIGIN_WORDS="variant baseline winner"
+# The origin words a final verdict (one delivered change, check-blind.sh --final) still checks:
+# product code says variant and baseline (a button variant, a CSS baseline), but "winner" can steer
+# the judge, so a product that uses it passes it with --allow-words <glob>:winner.
+VETDD_FINAL_ORIGIN_WORDS="winner"
 
 # vetdd_word_file <file> <word>...: write the words, lower-cased, longest first (so a longer word
 # that contains a shorter one is redacted whole).
@@ -118,11 +122,21 @@ vetdd_redact() {
   ' "$1" "$2"
 }
 
+# vetdd_word_lines <file>: print the words of a word file (--extra-words, blind-words.txt) one per
+# line, as check-blind.sh and judge.sh read them: every CR and the blanks around a word dropped,
+# blank lines and "#" comments left out.
+# Exit non-zero when the file cannot be read.
+vetdd_word_lines() (
+  set -o pipefail
+  tr -d '\r' < "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk '$0 != "" && $0 !~ /^#/'
+)
+
 # vetdd_allow_words_error <value> [<extra word>...]: check one --allow-words value,
-# <glob>:<word>[,<word>]... (split at the last ":"): a glob, at least one word, each word letters,
-# digits, and . _ - only and one of the lists here (or an extra word). Print why it is wrong and
-# return 1, or return 0. check-blind.sh, judge-layout.sh, and arena-layout.sh all call it, so a typo
-# is a usage error before anything is written.
+# <glob>:<word>[,<word>]... (split at the last ":"): a glob, at least one word, no empty word (a
+# leading, trailing, or doubled comma), each word letters, digits, and . _ - only and one of the
+# lists here (or an extra word). Print why it is wrong and return 1, or return 0. check-blind.sh,
+# judge-layout.sh, arena-layout.sh, judge.sh, and sanitize-candidates.sh all call it, so a typo is a
+# usage error before anything is written.
 vetdd_allow_words_error() {
   local v="$1" glob list w lw known
   shift
@@ -130,13 +144,13 @@ vetdd_allow_words_error() {
   glob="${v%:*}"; list="${v##*:}"
   [ -n "$glob" ] || { printf "%s\n" "--allow-words '$v' has no glob before ':'"; return 1; }
   [ -n "$(printf '%s' "$list" | tr -d ',')" ] || { printf "%s\n" "--allow-words '$v' has no word after ':'"; return 1; }
+  case ",$list," in *,,*) printf "%s\n" "--allow-words '$v' has an empty word (a leading, trailing, or doubled comma)"; return 1 ;; esac
   known=" $(printf '%s ' $VETDD_ORIGIN_WORDS $VETDD_MODEL_WORDS $VETDD_FORBIDDEN_WORDS "$@" | tr 'A-Z' 'a-z') "
   local words=()
   IFS=, read -r -a words <<EOF_W
 $list
 EOF_W
   for w in ${words[@]+"${words[@]}"}; do
-    [ -n "$w" ] || continue
     printf '%s' "$w" | grep -Eq '^[A-Za-z0-9._-]+$' || { printf "%s\n" "--allow-words '$v': '$w' is not a word (letters, digits, . _ -)"; return 1; }
     lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
     case "$known" in *" $lw "*) ;; *) printf "%s\n" "--allow-words '$v': '$w' is not a checked word"; return 1 ;; esac

@@ -13,8 +13,9 @@
 #   .env.example, .env.sample, and .env.template excepted) stops it wherever it would go: a new file of
 #   any kind, an oracle file (ignored or not), or a path the diff from --base changes.
 #   --allow-words: product words a human confirmed (an SDK named after a model's maker), for
-#   check-blind.sh and the printed judge command. The origin words (variant, baseline, winner) are
-#   not checked for one delivered change; --lane (an arena lane, compared with others) keeps them.
+#   check-blind.sh and the printed judge command. variant and baseline are not checked for one
+#   delivered change (winner still is: a reply names the chosen lane, never a winner); --lane (an
+#   arena lane, compared with others) keeps all three.
 #   --before-close: check-evidence.sh runs with it (an arena lane, laid out before its Close: the
 #   mutation audit is not due yet), as arena-layout.sh's gate does
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
@@ -378,8 +379,9 @@ allow_args=()
 for a in ${allow[@]+"${allow[@]}"}; do allow_args+=(--allow-secrets "$a"); done
 for a in ${awords[@]+"${awords[@]}"}; do allow_args+=(--allow-words "$a"); done
 blind_rc=0
-# One delivered change: the origin words are product words here (--final), as judge.sh treats a
-# final verdict. An arena lane (--lane) is compared with others, so they stay checked, as there.
+# One delivered change: variant and baseline are product words here (--final; winner stays checked),
+# as judge.sh treats a final verdict. An arena lane (--lane) is compared with others, so all three
+# stay checked, as there.
 [ "$lane" -eq 1 ] || allow_args+=(--final)
 blind="$("$here/check-blind.sh" "$out" --profile judge ${allow_args[@]+"${allow_args[@]}"} 2>&1)" || blind_rc=$?
 if [ "$blind_rc" -eq 1 ]; then

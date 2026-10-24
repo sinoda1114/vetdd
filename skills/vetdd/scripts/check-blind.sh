@@ -37,9 +37,10 @@
 #                         an allow-everything. Without kinds every kind is dropped, so name the kinds
 #                         a human confirmed. Words (in names too), non-text files, and symlinks are
 #                         still checked there.
-#   --final               (judge profile) one delivered change, no variants to hide: the origin words
-#                         (variant, baseline, winner) are not checked, since product code uses them
-#                         (a button variant, a CSS baseline); model names still are
+#   --final               (judge profile) one delivered change, no variants to hide: variant and
+#                         baseline are not checked, since product code uses them (a button variant,
+#                         a CSS baseline); winner (it can steer the judge) and model names still
+#                         are, and a product word among them passes with --allow-words
 #   --allow-words <glob>:<word>[,<word>]...
 #                         skip these words (from the lists or --extra-words) for paths matching the
 #                         glob (the --allow rules), in names and contents: for product words a human
@@ -64,7 +65,7 @@ die() { printf 'check-blind.sh: %s\n' "$1" | vetdd_printable >&2; exit 2; }
 . "${BASH_SOURCE[0]%/*}/lib/secret-patterns.sh"
 . "${BASH_SOURCE[0]%/*}/lib/text.sh"
 # A library that failed to load would leave its matcher undefined, and every scan would pass.
-for fn in vetdd_word_file vetdd_find_words vetdd_find_secrets vetdd_is_text; do
+for fn in vetdd_word_file vetdd_word_lines vetdd_find_words vetdd_find_secrets vetdd_is_text; do
   declare -F "$fn" >/dev/null || die "internal error: $fn is not defined (a library in lib/ failed to load)"
 done
 [ -n "${VETDD_SECRET_KINDS:-}" ] || die "internal error: VETDD_SECRET_KINDS is not set (lib/secret-patterns.sh failed to load)"
@@ -105,7 +106,7 @@ dir="${dir%/}"
 case "$profile" in
   candidate) base_words="$VETDD_FORBIDDEN_WORDS $VETDD_MODEL_WORDS" ;;
   judge)
-    if [ "$final" -eq 1 ]; then base_words="$VETDD_MODEL_WORDS"; else base_words="$VETDD_ORIGIN_WORDS $VETDD_MODEL_WORDS"; fi
+    if [ "$final" -eq 1 ]; then base_words="$VETDD_FINAL_ORIGIN_WORDS $VETDD_MODEL_WORDS"; else base_words="$VETDD_ORIGIN_WORDS $VETDD_MODEL_WORDS"; fi
     [ "${#placed[@]}" -eq 0 ] || die "--placed is for the candidate profile; the judge profile scans everything" ;;
   *) die "unknown profile '$profile' (candidate or judge)" ;;
 esac
@@ -125,12 +126,11 @@ words="$work/words"
 extra_words=()
 for f in ${extra_files[@]+"${extra_files[@]}"}; do
   [ -f "$f" ] || die "extra words file not found: $f"
-  # Read as vetdd_word_file reads them: CR and surrounding blanks dropped, comments and blank lines out.
-  while IFS= read -r w || [ -n "$w" ]; do
-    w="$(printf '%s' "$w" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-    case "$w" in ''|'#'*) continue ;; esac
-    extra_words+=("$w")
-  done < "$f"
+  # CR and surrounding blanks dropped, comments and blank lines out (vetdd_word_lines).
+  lines="$(vetdd_word_lines "$f")" || die "cannot read the extra words file: $f"
+  while IFS= read -r w; do
+    [ -z "$w" ] || extra_words+=("$w")
+  done <<< "$lines"
 done
 # shellcheck disable=SC2086 # the default lists are space-separated words
 vetdd_word_file "$words" $base_words ${extra_words[@]+"${extra_words[@]}"}

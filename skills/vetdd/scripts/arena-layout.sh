@@ -3,12 +3,13 @@
 # vetdd/<lane>, already checked (worktree.sh check) and brought back (worktree.sh remove <lane>
 # --keep-branch), with its design note at .vetdd/notes/<lane>-design.md.
 # Usage: arena-layout.sh --out <new dir> --base <ref> [--allow-secrets <glob>[:<kind>,...]]...
-#                        [--allow-binary <path>]... <lane>...
+#                        [--allow-binary <path>]... [--allow-words <glob>:<word>[,<word>]...]... <lane>...
 #   For each lane: worktree.sh check again, then, in a worktree the parent makes (worktree.sh review,
 #   never the runner's own), check-evidence.sh --before-close <lane> is the gate (exit 1: the lane is
 #   not green and stays out, named in <out>/gate.txt; any other failure stops the build); a green lane
-#   gets judge-layout.sh --before-close with its design note as the reply (--allow-secrets and
-#   --allow-binary go to it: write a secret glob as c*/..., since the label changes). The green lanes
+#   gets judge-layout.sh --before-close with its design note as the reply (--allow-secrets,
+#   --allow-binary, and --allow-words go to it: write a secret or a word glob as c*/..., since each
+#   lane is checked as c1 and then judged as c<k>; the printed judge.sh command repeats them). The green lanes
 #   go side by side as <out>/candidates/c1..cN in an order drawn from /dev/urandom, sent as recorded;
 #   <out>/variants.json keeps the map ({"c1": "<lane>", ...}). A lane id ends in a random suffix
 #   (<slice>-<6 or more hex digits>, parallel/arena.md step 1): the id the candidate carries says
@@ -45,7 +46,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$out" ] && [ -n "$base" ] && [ ${#lanes[@]} -gt 0 ] \
-  || die "usage: arena-layout.sh --out <new dir> --base <ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... <lane>..."
+  || die "usage: arena-layout.sh --out <new dir> --base <ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--allow-words <glob>:<word>[,<word>]...]... <lane>..."
 [ ! -e "$out" ] && [ ! -L "$out" ] || die "--out $(p "$out") exists; give a new directory"
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
 root="$(cd "$root" && pwd -P)"

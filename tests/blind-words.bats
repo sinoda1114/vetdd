@@ -97,3 +97,22 @@ redact_line() { printf '%s\n' "$1" > "$IN"; vetdd_redact "$W" "$IN"; }
   run find_in "anopus 5"
   [ "$output" = "" ]
 }
+
+@test "#44: vetdd_allow_words_error refuses an empty word (a leading, trailing, or doubled comma)" {
+  local v
+  for v in 'c1/*:openai,' 'c1/*:,openai' 'c1/*:openai,,anthropic'; do
+    run vetdd_allow_words_error "$v"
+    [ "$status" -eq 1 ] || { echo "$v: $output"; false; }
+    [[ "$output" == *"empty word"* ]] || { echo "$v: $output"; false; }
+  done
+  run vetdd_allow_words_error 'c1/*:openai,anthropic'
+  [ "$status" -eq 0 ]
+}
+
+@test "vetdd_word_lines reads a word file as the word lists do: CR and surrounding blanks dropped, comments and blank lines out" {
+  printf ' feature-x \r\n# note\r\n\n  \nalpha-lane' > "$BATS_TEST_TMPDIR/extra.txt"
+  run vetdd_word_lines "$BATS_TEST_TMPDIR/extra.txt"
+  [ "$status" -eq 0 ]
+  [ "$output" = "feature-x
+alpha-lane" ]
+}
