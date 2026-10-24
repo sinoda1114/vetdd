@@ -199,13 +199,13 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   ! grep -q 'ignore the survivors' "$c" || false
 }
 
-@test "the docs: test mode runs the mutation audit with a line range, and the rubric is version 6 with 10c" {
+@test "the docs: test mode runs the mutation audit with a line range, and the rubric is version 6 or later with 10c" {
   local doc="$SCRIPTS/../modes/test.md" rub="$SCRIPTS/../references/final-judge-rubric.md"
   grep -q -- '--audit mutation --mutation-report stryker-json:' "$doc"
   grep -q -- "--mutate '" "$doc"
   grep -q 'tsconfigFile' "$doc"
   grep -q 'Stryker disable next-line' "$doc"
-  head -1 "$rub" | grep -qx '# Final judge rubric (version 6)'
+  head -1 "$rub" | grep -qxE '# Final judge rubric \(version ([6-9]|[1-9][0-9]+)\)'
   sed -n '/^## 3\. /,/^## 4\. /p' "$rub" | grep -q '10c'
   grep -q 'mutation.json' "$rub"
 }
