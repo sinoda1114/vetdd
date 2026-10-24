@@ -156,7 +156,7 @@ shape="$(jq -r '
 read -r kind n_after a0t a0s alt als ct cs ch <<EOF
 $shape
 EOF
-first=""; refactor=0
+first=""; refactor=0; why="it has no red calibration before its first passing after"
 if [ "$kind" = before ]; then
   first="$n_after"
 else
@@ -165,11 +165,12 @@ else
     check_tree "$a0t" "after run (run $a0s)"
     # The after that follows the red: the first passing after.
     if unfix_red "$ct" "$a0t" "$ch"; then first="$cs"
-    else say "the red calibration (run $cs) of slice '$slice' is not an unfix red ($unfix_why): the slice is taken as a refactor, from its first passing after to its last"; fi
+    else why="its red calibration (run $cs) is not an unfix red: $unfix_why"; fi
   fi
   if [ -z "$first" ]; then
     [ "$n_after" -ge 2 ] || die "slice '$slice' has no before run and fewer than two passing after runs: a slice without a before (a refactor, a behavior-preserving change) needs a passing after before its change and another after it; a slice whose red came from calibrate.sh unfix needs a passing after after it"
     refactor=1
+    say "slice '$slice' has no before run and $why: it is taken as a refactor, from its first passing after (run $a0s) to its last (run $als)"
   fi
 fi
 
@@ -379,13 +380,13 @@ for r in ${targets[@]+"${targets[@]}"}; do
       *) say "$r: outside the current directory, below which Stryker mutates: left out (run from the repository root to include it)"; continue ;;
     esac
   fi
-  # Checked before blame: git quotes such a name in its output, so its lines could not be read.
-  stryker_safe "$shown"
   case "$(mode_in "$c2" "$r")" in
     100644|100755) ;;
     '') say "$r: the slice changed it, but it is no longer in the working tree at this path (moved or deleted since); name its current path with --file"; continue ;;
     *) say "$r: no longer a regular file: left out"; continue ;;
   esac
+  # Checked before blame: git quotes such a name in its output, so its lines could not be read.
+  stryker_safe "$shown"
   ranges="$(slice_lines "$r")" || exit 2
   if [ -z "$ranges" ]; then
     say "$r: no line the slice added or changed is in it now (it only removed lines, or later edits replaced them): nothing to mutate there"

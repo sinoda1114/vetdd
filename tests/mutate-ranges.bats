@@ -85,6 +85,16 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/a.js:3-3" ]
 }
 
+@test "a slice with no before and no red: taken as a refactor, and stderr says so" {
+  green s1
+  printf '%s\n' a1 a2 R3 a4 a5 > src/a.js
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:3-3" ]
+  [[ "$stderr" == *"refactor"* ]] || { echo "$stderr"; false; }
+}
+
 @test "a slice whose red is an unfix calibration (no before): the fix is its change, whatever afters follow" {
   printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
   cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
@@ -627,6 +637,18 @@ b.js"
   run --separate-stderr mr s1
   [ "$status" -eq 2 ] || { echo "$status $output $stderr"; false; }
   [ -z "$output" ]
+}
+
+@test "a changed file a later edit renamed away is noted, even when its old name would be refused" {
+  red s1
+  printf '%s\n' q1 > 'src/a,b.js'
+  printf '%s\n' b1 > src/b.js
+  green s1
+  mv "$REPO/src/a,b.js" "$REPO/src/a-b.js"
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/b.js:1-1" ]
+  [[ "$stderr" == *"src/a,b.js"*"--file"* ]] || { echo "$stderr"; false; }
 }
 
 @test "a symbolic link the slice added is not a file to mutate" {
