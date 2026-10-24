@@ -275,14 +275,17 @@ $(p "$bad")" 1
     # A submodule in the index (a gitlink the worker added) is a repository git status goes into, and
     # it would run that repository's own config (its filters). A nested repository that is not one is
     # only an untracked directory to git status. The index is read, nothing else.
-    nested="$(set -o pipefail; wgit_run "$wgit" "$path" ls-files -s -z | tr '\0' '\n' | awk '$1 == "160000" { sub(/^[^\t]*\t/, ""); print; exit }')" \
+    nested="$(set -o pipefail; wgit_run "$wgit" "$path" ls-files -s -z | tr '\0' '\n' | awk '$1 == "160000" && !found++ { sub(/^[^\t]*\t/, ""); print }')" \
       || die "cannot read the index of $(p "$path")" 1
     [ -z "$nested" ] || die "the worktree of $(p "$slice") holds a nested repository, a submodule ($(p "$nested")); git status would run its git config, so nothing was run there: take it out of the index and the worktree first" 1
     head="$(wgit_run "$wgit" "$path" symbolic-ref -q HEAD)" || head="(detached)"
-    # A review worktree is detached at the commit review recorded in its git directory.
+    # A review worktree is detached at the commit review recorded in its git directory. A worker can
+    # write that record too, so the commit must also be on the branch: no commit is lost either way.
     if [ -f "$wgit/vetdd-review" ] && [ "$head" = "(detached)" ]; then
-      [ "$(wgit_run "$wgit" "$path" rev-parse -q --verify HEAD)" = "$(cat "$wgit/vetdd-review")" ] \
-        || die "the review worktree of $(p "$slice") left the commit it was made at; nothing was removed" 1
+      rvc="$(wgit_run "$wgit" "$path" rev-parse -q --verify HEAD)" || rvc=""
+      [ -n "$rvc" ] && [ "$rvc" = "$(cat "$wgit/vetdd-review")" ] \
+        && pgit merge-base --is-ancestor "$rvc" "refs/heads/vetdd/$slice" 2>/dev/null \
+        || die "the review worktree of $(p "$slice") is not at the commit it was made at, or that commit is not on vetdd/$(p "$slice"); nothing was removed" 1
     else
       [ "$head" = "refs/heads/vetdd/$slice" ] \
         || die "the worktree of $(p "$slice") is on $(p "$head"), not vetdd/$(p "$slice"); put its commits on that branch first, or they would be lost" 1

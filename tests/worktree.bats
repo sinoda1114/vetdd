@@ -437,7 +437,7 @@ b"; do
   [ "$output" = "vetdd/sa can be merged at $(git rev-parse vetdd/sa)" ]
 }
 
-@test "#38: swarm.md merges the commit check printed, and reinstalls a linked directory before Close" {
+@test "#38: swarm.md merges the commit check printed, and reinstalls a linked directory" {
   local sw="$SCRIPTS/../parallel/swarm.md"
   grep -q 'merge --no-ff --no-overwrite-ignore -m "Merge vetdd/<slice>" <the commit check printed>' "$sw"
   grep -q 'npm ci' "$sw"
@@ -484,4 +484,34 @@ b"; do
   rm -rf "$WTROOT/sa/loose"
   run WT remove sa --no-evidence
   [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+# --- PR review round 2 (#38) -----------------------------------------------------------------------
+
+@test "#38 r2: a submodule early in a large index is named as a submodule, not as an index remove cannot read" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42 \
+    && mkdir -p many && for i in $(seq 1 3000); do : > "many/f$i"; done \
+    && git init -q a-nested && (cd a-nested && : > f && git add f && git commit -qm n) \
+    && git add a-nested many 2>/dev/null && git commit -qm sub)
+  run WT remove sa --keep-branch
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"submodule (a-nested)"* ]] || { echo "$output"; false; }
+}
+
+@test "#38 r2: remove refuses a worktree detached off its branch even when it claims to be a review worktree" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42 && printf 'x\n' > lost.txt && git add lost.txt && git commit -qm lost \
+    && c="$(git rev-parse HEAD)" && git reset -q --hard HEAD~1 && git checkout -q --detach "$c")
+  local wg; wg="$(git rev-parse --git-common-dir)/worktrees/sa"
+  git -C "$WTROOT/sa" rev-parse HEAD > "$wg/vetdd-review"
+  run WT remove sa --keep-branch
+  [ "$status" -eq 1 ]
+  [ -d "$WTROOT/sa" ]
+}
+
+@test "#38 r2: swarm.md reinstalls a linked directory before the integration, and says how to undo a merge remove --at refuses" {
+  local sw="$SCRIPTS/../parallel/swarm.md"
+  awk '/npm ci/{n=NR} /1\. `"\$VETDD\/scripts\/worktree.sh" check <slice>`/{c=NR} END{exit !(n && c && n < c)}' "$sw"
+  grep -q 'If `remove --at` stops because the branch moved' "$sw"
 }
