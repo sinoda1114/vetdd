@@ -272,6 +272,43 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/h.js:1-3" ]
 }
 
+@test "a later change that copies the slice's lines to a new file, leaving the source unchanged, is followed with --file (claude-kit#11, Codex)" {
+  printf '%s\n' 'export function keep() { return "unchanged line of the product"; }' > src/g.js
+  git add -A && git commit -q -m g
+  red s1
+  printf '%s\n' 'export function keep() { return "unchanged line of the product"; }' 'export function added() {' '  return "a line the slice wrote for its behavior";' '}' > src/g.js
+  green s1
+  # g.js stays as the slice left it; h.js is a copy of its function.
+  printf '%s\n' 'export function added() {' '  return "a line the slice wrote for its behavior";' '}' > src/h.js
+  run --separate-stderr mr s1 --file src/h.js
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/h.js:1-3" ]
+}
+
+@test "known limit: a copy into a file that already existed, the source left unchanged, is not followed (-C -C searches only for a new file; change the expectation if that changes)" {
+  printf '%s\n' 'export function keep() { return "unchanged line of the product"; }' > src/g.js
+  printf '%s\n' 'export const other = "a file that was already there";' > src/h.js
+  git add -A && git commit -q -m g
+  red s1
+  printf '%s\n' 'export function keep() { return "unchanged line of the product"; }' 'export function added() {' '  return "a line the slice wrote for its behavior";' '}' > src/g.js
+  green s1
+  printf '%s\n' 'export const other = "a file that was already there";' 'export function added() {' '  return "a line the slice wrote for its behavior";' '}' > src/h.js
+  run --separate-stderr mr s1 --file src/h.js
+  [ "$status" -eq 3 ] || { echo "$status $output $stderr"; false; }
+}
+
+@test "a line a later change copied out of an oracle file into a new product file is not the slice's" {
+  printf '%s\n' 'function f(a) {' '  return a;' '}' > src/f.js
+  git add -A && git commit -q -m f
+  red s1
+  printf '%s\n' 'function f(a) {' '  return a + 1;' '}' > src/f.js
+  printf '%s\n' 'function helperTheTestWrote(value) {' '  return computeTheValueOfTheThing(value) + 1;' '}' >> test.sh
+  green s1
+  printf '%s\n' 'function helperTheTestWrote(value) {' '  return computeTheValueOfTheThing(value) + 1;' '}' > src/n.js
+  run --separate-stderr mr s1 --file src/n.js
+  [ "$status" -eq 3 ] || { echo "$status $output $stderr"; false; }
+}
+
 @test "a textconv diff driver does not change the lines blame sees" {
   printf 'src/*.js diff=up\n' > .gitattributes && git add .gitattributes && git commit -q -m attr
   git config diff.up.textconv 'sh -c "echo converted"'

@@ -13,11 +13,11 @@
 # are not, and an `after` recorded again within a version moves nothing. A slice without a `before`
 # starts at its red when calibrate.sh unfix took it, and otherwise (a refactor, a behavior-preserving
 # change) has one step, its first passing `after` to its last. The lines each step wrote are taken
-# exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10, so another
-# slice between two versions, a later slice, or a refactor moves the lines without adding its own (a
-# line only reindented or moved, also to another file named with --file, stays the slice's), and two
-# slices in one file each get only their own. The commits are never referenced by a ref (unreachable objects); HEAD, the index, and
-# the working tree are not touched.
+# exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10 -C10, so
+# another slice between two versions, a later slice, or a refactor moves the lines without adding its
+# own (a line only reindented or moved, also to another file named with --file or copied into a new
+# one, stays the slice's), and two slices in one file each get only their own. The commits are never
+# referenced by a ref (unreachable objects); HEAD, the index, and the working tree are not touched.
 # Without --file: every file the slice changed except its oracle files (every oracle file its evidence
 # names) and .vetdd/. --file (relative to the current directory, repeatable) limits the output to
 # the files named, in that order; name a file's new path with it when a later change moved the file.
@@ -230,7 +230,7 @@ while [ "$i" -lt ${#seg_start[@]} ]; do
     || die "could not make a throwaway commit"
   ends="${ends:+$ends }$c"; parent=(-p "$c"); i=$((i + 1))
 done
-c2="$(throwaway "${parent[@]}" -m "vetdd mutate-ranges $slice: working tree" "$t2")" || die "could not make the working-tree commit"
+c2="$(throwaway ${parent[@]+"${parent[@]}"} -m "vetdd mutate-ranges $slice: working tree" "$t2")" || die "could not make the working-tree commit"
 
 # mode_in <tree-ish> <path>: the entry's mode, empty when the path is not in it.
 mode_in() {
@@ -333,10 +333,16 @@ owned() {
 }
 # carried <end commit> <path>: the working-tree line numbers of <path> that the step ending in that
 # commit wrote. The edits made after it (another slice between two versions, a refactor, the working
-# tree) are followed with -w -M10 -C10, so a line they only reindented, moved (10 letters or digits at
-# least), or moved to another file stays the slice's.
+# tree) are followed with -w -M10 -C10 -C10, so a line they only reindented, moved (10 letters or
+# digits at least), or moved to another file stays the slice's; the second -C10 also finds a copy into
+# a file the copying commit created (or renamed) from a file it left unchanged, though not a copy into
+# a file that was already there; for a new file it compares every file of the tree, which takes
+# longer in a large repository. Lines are taken only from product files: a line copied out of an
+# oracle file is not the slice's, so when the slice wrote the very same line in a test and in product
+# code and blame names the test as the source of a copy, that line is left out (a known limit). -w
+# also ignores whitespace inside literals (#81).
 carried() {
-  git -c core.quotePath=false blame --line-porcelain --no-textconv --no-ignore-revs-file -w -M10 -C10 \
+  git -c core.quotePath=false blame --line-porcelain --no-textconv --no-ignore-revs-file -w -M10 -C10 -C10 \
     "$1..$c2" -- "$2" > "$tmp/later" 2> "$tmp/later.err" \
     || die "git blame failed on $2: $(head -n 1 "$tmp/later.err")"
   # Each working-tree line that comes from the end commit: "<line now> TAB <line there> TAB <file there>".
@@ -352,10 +358,13 @@ carried() {
       '') continue ;;
       '"'*) say "$2: some of its lines come from $src, a name git quotes (a quote, a backslash, or a control character): they are left out"; continue ;;
     esac
+    is_oracle "$src" && continue
     owned "$1" "$src" > "$tmp/own.lines" || exit 2
     while IFS= read -r n; do printf '%s\t%s\n' "$src" "$n"; done < "$tmp/own.lines" >> "$tmp/owned"
   done < "$tmp/sources"
-  awk -F '\t' 'NR == FNR { own[$1 "\t" $2] = 1; next } (($3 "\t" $2) in own) { print $1 }' "$tmp/owned" "$tmp/map"
+  # The first file is told by name: NR == FNR would read the map as the owned lines when none are.
+  VETDD_OWNED="$tmp/owned" awk -F '\t' 'FILENAME == ENVIRON["VETDD_OWNED"] { own[$1 "\t" $2] = 1; next }
+    (($3 "\t" $2) in own) { print $1 }' "$tmp/owned" "$tmp/map"
 }
 # slice_lines <path>: the slice's lines in the working tree as ranges "a-b", one per line: the union,
 # over the slice's red-to-green steps, of the lines each wrote, carried to the working tree.
