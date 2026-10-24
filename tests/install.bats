@@ -308,22 +308,84 @@ gid_of() { ls -ldn "$1" | awk '{print $4}'; }
 
 # Issue #48: a --dest in a shared place, behind a link, or racing another installer.
 
-@test "i48: a --dest directly in a shared sticky directory (/tmp) is refused, nothing created" {
-  [ -n "$(find /tmp/ -maxdepth 0 -perm -1002 -user 0)" ] || skip "/tmp is not a root-owned sticky shared directory here"
-  local d="/tmp/vetdd-i48-${BATS_TEST_TMPDIR##*/}-$$"
+# shared_sticky: a root-owned sticky directory everyone can write (a shared temporary place), or nothing.
+shared_sticky() {
+  local d
+  for d in /var/tmp /Users/Shared /dev/shm; do
+    [ -z "$(find "$d" -maxdepth 0 -perm -1002 -user 0 2>/dev/null)" ] || { printf '%s' "$d"; return; }
+  done
+}
+
+@test "i48: a --dest directly in a shared sticky directory is refused, nothing created" {
+  local sh; sh="$(shared_sticky)"; [ -n "$sh" ] || skip "no root-owned shared sticky directory here"
+  local d="$sh/vetdd-i48-${BATS_TEST_TMPDIR##*/}-$$-$RANDOM"
+  [ ! -e "$d" ] || skip "$d exists"
   run "$INSTALL" --dest "$d"
-  [ -e "$d" ] && rm -rf "$d"
+  if [ -e "$d" ]; then rm -rf "$d"; false; fi
   [ "$status" -eq 1 ] || { echo "$output"; false; }
   [[ "$output" == *"someone else can write"* ]]
 }
 
-@test "i48: a --dest in a private directory under /tmp is accepted (a sticky ancestor is fine)" {
-  local d; d="$(mktemp -d /tmp/vetdd-i48.XXXXXX)"
+@test "i48: a --dest in a private directory inside a shared sticky one is accepted (a sticky ancestor is fine)" {
+  local sh; sh="$(shared_sticky)"; [ -n "$sh" ] || skip "no root-owned shared sticky directory here"
+  local d; d="$(mktemp -d "$sh/vetdd-i48.XXXXXX")"
   run "$INSTALL" --dest "$d/vetdd"
   local ok=0; same_as_tracked "$d/vetdd" || ok=1
   rm -rf "$d"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$ok" -eq 0 ]
+}
+
+@test "i48: a refused --dest creates nothing (missing parents are made only below a safe directory)" {
+  mkdir -p "$BATS_TEST_TMPDIR/shared" && chmod 777 "$BATS_TEST_TMPDIR/shared"
+  run "$INSTALL" --dest "$BATS_TEST_TMPDIR/shared/new/sub/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ ! -e "$BATS_TEST_TMPDIR/shared/new" ]
+}
+
+@test "i48: a --dest ending in . or .. is a usage error" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  run "$INSTALL" --dest "$DEST/."
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  run "$INSTALL" --dest "$DEST/scripts/.."
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  grep -qx old "$DEST/SKILL.md"
+}
+
+@test "i48: a parent whose access-control list lets others add files is refused" {
+  mkdir -p "$BATS_TEST_TMPDIR/acl"
+  if [ "$(uname)" = Darwin ]; then
+    chmod +a "everyone allow add_file,add_subdirectory,delete_child" "$BATS_TEST_TMPDIR/acl"
+  else
+    command -v setfacl >/dev/null 2>&1 || skip "no setfacl"
+    setfacl -m u:nobody:rwx "$BATS_TEST_TMPDIR/acl" 2>/dev/null || skip "the file system takes no ACL"
+  fi
+  run "$INSTALL" --dest "$BATS_TEST_TMPDIR/acl/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ ! -e "$BATS_TEST_TMPDIR/acl/vetdd" ]
+}
+
+@test "i48: an access-control list that only denies (a macOS home) is accepted" {
+  [ "$(uname)" = Darwin ] || skip "macOS ACLs"
+  mkdir -p "$BATS_TEST_TMPDIR/deny"
+  chmod +a "group:everyone deny delete" "$BATS_TEST_TMPDIR/deny"
+  run "$INSTALL" --dest "$BATS_TEST_TMPDIR/deny/vetdd"
+  chmod -N "$BATS_TEST_TMPDIR/deny"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "i48: a link along --dest that belongs to someone else is refused" {
+  mkdir -p "$BATS_TEST_TMPDIR/real-skills" "$BATS_TEST_TMPDIR/l"
+  ln -s "$BATS_TEST_TMPDIR/real-skills" "$BATS_TEST_TMPDIR/l/skills"
+  # A find that reports the link as nobody's the user's or root's (a test cannot make one).
+  local fb="$BATS_TEST_TMPDIR/findbin" realfind; realfind="$(command -v find)"
+  mkdir -p "$fb"
+  printf '#!/bin/sh\n[ "$1" != "%s" ] || exit 0\nexec "%s" "$@"\n' "$BATS_TEST_TMPDIR/l/skills" "$realfind" > "$fb/find"
+  chmod +x "$fb/find"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/l/skills/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"$BATS_TEST_TMPDIR/l/skills is a link"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/real-skills/vetdd" ]
 }
 
 @test "i48: a --dest that is a link to a directory that is not a vetdd install is refused, untouched" {
@@ -409,6 +471,34 @@ gid_of() { ls -ldn "$1" | awk '{print $4}'; }
   [ "$status" -ne 0 ] || { echo "$output"; false; }
   grep -qx old "$DEST/SKILL.md"
   [ -z "$(ls -A "$CLAUDE_CONFIG_DIR/skills" | grep -v '^vetdd$')" ]
+}
+
+@test "i48: a TERM while the old install is being moved to the backup still puts it back" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local mb="$BATS_TEST_TMPDIR/termbin" realmv; realmv="$(command -v mv)"
+  mkdir -p "$mb"
+  printf '#!/bin/sh\ncase "$*" in */.vetdd-backup.*) kill -TERM $PPID ;; esac\nexec "%s" "$@"\n' "$realmv" > "$mb/mv"
+  chmod +x "$mb/mv"
+  PATH="$mb:$PATH" run "$INSTALL"
+  [ "$status" -eq 143 ] || { echo "$output"; false; }
+  grep -qx old "$DEST/SKILL.md"
+  [[ "$output" == *"moved the old install back"* ]]
+}
+
+@test "i48: putting the old install back across file systems never nests it in a directory that appeared" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local fb="$BATS_TEST_TMPDIR/restorebin" realmv realperl; realmv="$(command -v mv)"; realperl="$(command -v perl)"
+  mkdir -p "$fb"
+  # perl: the final move fails, and renaming the backup back fails as across file systems.
+  printf '#!/bin/sh\ncase "$3" in */.vetdd-install.*|*/skills-backup/vetdd-*) exit 1 ;; esac\nexec "%s" "$@"\n' "$realperl" > "$fb/perl"
+  # mv: copying the backup back, it finds a directory just made at --dest.
+  printf '#!/bin/sh\ncase "$1" in */skills-backup/vetdd-*) mkdir -p "%s" && : > "%s/other" ;; esac\nexec "%s" "$@"\n' "$DEST" "$DEST" "$realmv" > "$fb/mv"
+  chmod +x "$fb/perl" "$fb/mv"
+  PATH="$fb:$PATH" run "$INSTALL"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ "$(ls -A "$DEST")" = other ]
+  local kept; kept="$(printf '%s\n' "$output" | sed -n 's/^install.sh: the old install stays at //p')"
+  [ -n "$kept" ] && grep -qx old "$kept/SKILL.md"
 }
 
 # fake_upg <members> <other primary user, or empty>: an id that reports a group named after the user
