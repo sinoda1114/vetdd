@@ -281,8 +281,13 @@ setup() {
   grep -q '^+++ b/ignored/value.txt$' "$OUT/c1/artifact/diff.patch"
 }
 
-@test "verify mode does not build its layout with judge-layout.sh, which does not copy verify artifacts" {
-  ! sed -n '/^### B/,/^### C/p' "$SCRIPTS/../modes/verify.md" | grep -q 'judge-layout.sh' || false
+@test "#56: verify mode builds its layout with judge-layout.sh --verify-artifacts, and the reply names them by their layout path" {
+  local b5; b5="$(sed -n '/^### B/,/^### C/p' "$SCRIPTS/../modes/verify.md" | grep '^5\. Judge')"
+  [[ "$b5" == *'judge-layout.sh'* ]]
+  [[ "$b5" == *'--verify-artifacts'* ]]
+  [[ "$b5" == *'artifact/verify-artifacts/'* ]]
+  # Built by hand, the .claude rename and the path replacement would be skipped.
+  [[ "$b5" != *'by hand'* ]]
 }
 
 # --- #28 -------------------------------------------------------------------------------------------
@@ -821,27 +826,32 @@ rewrite_oracle_path() {
   [[ "$output" != *"ignored/other.txt"* ]] || { echo "$output"; false; }
 }
 
-@test "#63 r2: an oracle path outside the repository is refused as outside, not as a file git does not list" {
+@test "#63 r2, #66: an oracle path outside the repository (../) is refused when the record is read, not as a file git does not list" {
   ignored_oracle_slice
   cp ignored/t2.sh "$BATS_TEST_TMPDIR/outside.sh"
   rewrite_oracle_path ../outside.sh
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
   [ "$status" -eq 1 ] || { echo "$output"; false; }
-  [[ "$output" == *"outside the repository"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"../outside.sh"*"not a plain path"* ]] || { echo "$output"; false; }
   [[ "$output" != *"git does not list it"* ]] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
 }
 
-@test "#63 r2: an ignored .env oracle recorded as cfg//.env is still named once" {
+@test "#66: an oracle path with //, ./ or ../ is refused when the record is read (exit 1), before any other check, nothing written" {
   printf '.env\n' >> .gitignore && git add .gitignore && git commit -qm ignore-env
-  mkdir -p cfg && printf '#!/bin/sh\n[ "$(cat value.txt)" = "42" ]\n' > cfg/.env
-  printf '0\n' > value.txt
-  ev s2 before --seam unit --oracle-version v1 --oracle-file cfg/.env -- sh cfg/.env >/dev/null 2>&1
-  printf '42\n' > value.txt
-  ev s2 after -- sh cfg/.env >/dev/null 2>&1
-  rewrite_oracle_path cfg//.env
-  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
-  [ "$status" -eq 2 ] || { echo "$output"; false; }
-  [ "$(printf '%s\n' "$output" | grep 'never goes to the judge:' | sed 's/.*judge://')" = " cfg/.env" ] || { echo "$output"; false; }
+  ignored_oracle_slice
+  mkdir -p cfg && printf 'K=v\n' > cfg/.env
+  local p
+  for p in ignored//t2.sh ./ignored/t2.sh ignored/./t2.sh ignored/../ignored/t2.sh /ignored/t2.sh ignored/ cfg//.env ./.env; do
+    rewrite_oracle_path "$p"
+    run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+    [ "$status" -eq 1 ] || { echo "$p: $output"; false; }
+    [[ "$output" == *"not a plain path"* ]] || { echo "$p: $output"; false; }
+    [[ "$output" != *"--include-new"* ]] || { echo "$p: $output"; false; }
+    [[ "$output" != *"git does not list it"* ]] || { echo "$p: $output"; false; }
+    [[ "$output" != *"never goes to the judge"* ]] || { echo "$p: $output"; false; }
+    [ ! -e "$OUT" ]
+  done
 }
 
 @test "#63 r3: an oracle file tracked inside a submodule (gitlink) still builds" {
@@ -888,4 +898,220 @@ rewrite_oracle_path() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"is not a word"* ]] || { echo "$output"; false; }
   [[ "$output" != *$'\xc2\x9b'* ]] || { printf '%s' "$output" | od -c | head; false; }
+}
+
+# --- #56, #28, #36, #18: verify artifacts, path replacement, the .claude rename, verify docs ------
+
+VERIFY_MD="$BATS_TEST_DIRNAME/../skills/vetdd/modes/verify.md"
+
+@test "#56: --verify-artifacts copies the text artifacts under artifact/verify-artifacts/, paths replaced; a binary one stays and is named" {
+  mkdir -p .vetdd/artifacts/due/t1/sub .vetdd/artifacts/other
+  printf 'due: 2026-03-30\nran in %s\n' "$REPO" > .vetdd/artifacts/due/t1/stdout.txt
+  printf '0\n' > .vetdd/artifacts/due/t1/sub/exit-code
+  printf 'a\0b' > .vetdd/artifacts/due/t1/shot.png
+  printf 'x\n' > .vetdd/artifacts/other/o.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due/t1 s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local V="$OUT/c1/artifact/verify-artifacts"
+  grep -qx 'ran in <repo>' "$V/due/t1/stdout.txt"
+  cmp -s "$V/due/t1/sub/exit-code" .vetdd/artifacts/due/t1/sub/exit-code
+  [ ! -e "$V/due/t1/shot.png" ]
+  [[ "$output" == *"not text"*".vetdd/artifacts/due/t1/shot.png"* ]] || { echo "$output"; false; }
+  [ ! -e "$V/other" ]
+  # A single file, and the whole directory.
+  run JL --out "$OUT.2" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/other/o.txt s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$OUT.2/c1/artifact/verify-artifacts/other/o.txt" ]
+  [ ! -e "$OUT.2/c1/artifact/verify-artifacts/due" ]
+  run JL --out "$OUT.3" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$OUT.3/c1/artifact/verify-artifacts/other/o.txt" ]
+  [ -f "$OUT.3/c1/artifact/verify-artifacts/due/t1/stdout.txt" ]
+  # Without the flag, none goes.
+  [ ! -e "$OUT/c1/artifact/verify-artifacts/other" ]
+}
+
+@test "#56: --verify-artifacts takes only a plain path under .vetdd/artifacts/ that exists (exit 2, nothing written)" {
+  mkdir -p .vetdd/artifacts/due "$BATS_TEST_TMPDIR/elsewhere" && printf 'x\n' > .vetdd/artifacts/due/a.txt
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" .vetdd/artifacts/lnk
+  local p
+  for p in value.txt .vetdd/evidence/s1 .vetdd/artifacts/nothere .vetdd/artifacts/../evidence/s1 .vetdd/artifacts//due \
+           ./.vetdd/artifacts/due .vetdd/artifacts/due/ "$REPO/.vetdd/artifacts/due" .vetdd/artifactsX .vetdd/artifacts/lnk ''; do
+    run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts "$p" s1
+    [ "$status" -eq 2 ] || { echo "[$p]: $output"; false; }
+    [[ "$output" == *"--verify-artifacts"*".vetdd/artifacts/"* ]] || { echo "[$p]: $output"; false; }
+    [ ! -e "$OUT" ]
+  done
+}
+
+@test "#56: a symbolic link or a .env file among the verify artifacts stops the build (exit 2, nothing written)" {
+  mkdir -p .vetdd/artifacts/due && printf 'x\n' > .vetdd/artifacts/due/a.txt
+  ln -s "$REPO/value.txt" .vetdd/artifacts/due/link.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"link.txt"* ]]
+  [ ! -e "$OUT" ]
+  rm .vetdd/artifacts/due/link.txt
+  printf 'K=v\n' > .vetdd/artifacts/due/.env
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".vetdd/artifacts/due/.env"* ]]
+  [ ! -e "$OUT" ]
+}
+
+@test "#56: the verify artifacts pass the same rename and blind check: .claude in them goes as .agent, a model name stops it (exit 4)" {
+  mkdir -p .vetdd/artifacts/due/t1
+  printf 'ran .claude/skills/verify-x/scripts/verify-due.sh\n' > .vetdd/artifacts/due/t1/cmd.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'ran .agent/skills/verify-x/scripts/verify-due.sh' "$OUT/c1/artifact/verify-artifacts/due/t1/cmd.txt"
+  printf 'written by Claude\n' >> .vetdd/artifacts/due/t1/cmd.txt
+  run JL --out "$OUT.2" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due s1
+  [ "$status" -eq 4 ] || { echo "$output"; false; }
+}
+
+@test "#56: verify mode's audits say what a config change with no runtime code records: the notes, citing the A.4 calibration red" {
+  local a; a="$(sed -n '/^### B/,/^### C/p' "$VERIFY_MD" | grep -i 'no runtime code')"
+  [[ "$a" == *'--kind mutation --not-applicable'* ]] || { echo "$a"; false; }
+  [[ "$a" == *'A.4'* ]]
+}
+
+@test "#28: a repository path right after a color code, a one-letter option (-I, -L), or an escaped newline is replaced" {
+  printf '\033[2m%s/src/x.ts\033[22m\ncc -I%s/include -L%s/lib\n{"m":"line\\n%s/src/y.ts","c":"\\u001b[31m%s/z.ts"}\n' \
+    "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local log="$OUT/c1/evidence/s1/runs/001-before.log"
+  if grep -qF "$REPO" "$log"; then grep -nF "$REPO" "$log"; false; fi
+  grep -qF "$(printf '\033[2m<repo>/src/x.ts')" "$log"
+  grep -qF 'cc -I<repo>/include -L<repo>/lib' "$log"
+  grep -qF '"line\n<repo>/src/y.ts"' "$log"
+  grep -qF '"\u001b[31m<repo>/z.ts"' "$log"
+}
+
+@test "#28: a repository path at the start of a removed line of the diff is replaced, as on an added one" {
+  printf '%s/old\nkeep\n' "$REPO" > paths.txt && git add paths.txt && git commit -qm paths
+  printf '%s/new\nkeep\n' "$REPO" > paths.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx -- '-<repo>/old' "$OUT/c1/artifact/diff.patch" || { cat "$OUT/c1/artifact/diff.patch"; false; }
+  grep -qx -- '+<repo>/new' "$OUT/c1/artifact/diff.patch"
+}
+
+@test "#28: a percent-encoded file:// URL of the repository (a space and a non-ASCII name) is replaced" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  local new="$BATS_TEST_TMPDIR/my repo $(printf '\303\251')"
+  mv "$REPO" "$new" && cd "$new"
+  local href; href="$(node -e 'console.log(require("url").pathToFileURL(process.argv[1]).href)' "$(pwd -P)")"
+  [[ "$href" == *%20* ]] || { echo "$href"; false; }
+  printf 'at %s/src/x.mjs:3\n' "$href" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'at file://<repo>/src/x.mjs:3' "$OUT/c1/evidence/s1/runs/001-before.log" \
+    || { cat "$OUT/c1/evidence/s1/runs/001-before.log"; false; }
+}
+
+@test "#28: an oracle path with a .git component in any case is refused when the record is read (exit 1), nothing copied" {
+  ignored_oracle_slice
+  local p
+  for p in .GIT/config .git/config sub/.Git/x; do
+    rewrite_oracle_path "$p"
+    run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+    [ "$status" -eq 1 ] || { echo "$p: $output"; false; }
+    [[ "$output" == *"not a plain path"* ]] || { echo "$p: $output"; false; }
+    [ ! -e "$OUT" ]
+  done
+}
+
+@test "#28: an --allow-secrets glob names paths under c1/artifact/ or c1/evidence/ (c*/ for an arena lane), never the whole layout" {
+  local v
+  for v in '*:email' '*' 'c1/*:email' 'c1/artifact/*:email' 'c1/evidence/**:email' 'artifact/tests/*:email' \
+           'c2/artifact/tests/*:email' '**/tests/*:email' 'c1/other/x:email'; do
+    run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets "$v" s1
+    [ "$status" -eq 2 ] || { echo "$v: $output"; false; }
+    [[ "$output" == *"--allow-secrets"* ]] || { echo "$v: $output"; false; }
+    [ ! -e "$OUT" ]
+  done
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets 'c*/artifact/tests/*:email' \
+    --allow-secrets 'c1/artifact/diff.patch:email' --allow-secrets 'c1/evidence/s1/runs/*:email' s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#36: an --allow-secrets or --allow-words glob naming .claude is renamed with the directory, in the printed command too" {
+  mkdir -p .claude/x
+  printf '#!/bin/sh\n# password = "hunter2hunter2"\n# import OpenAI from "openai"\n[ "$(cat value.txt)" = "42" ]\n' > .claude/x/t.sh
+  git add -f .claude && git commit -qm t
+  printf '0\n' > value.txt
+  ev s3 before --seam unit --oracle-version v1 --oracle-file .claude/x/t.sh -- sh .claude/x/t.sh >/dev/null 2>&1
+  printf '42\n' > value.txt
+  ev s3 after -- sh .claude/x/t.sh >/dev/null 2>&1
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD \
+    --allow-secrets 'c1/artifact/tests/.claude/*:assignment' --allow-words 'c1/artifact/tests/.claude/*:openai' s3
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$OUT/c1/artifact/tests/.agent/x/t.sh" ]
+  [[ "$output" == *'--allow-secrets c1/artifact/tests/.agent/\*:assignment'* ]] || { echo "$output"; false; }
+  [[ "$output" == *'--allow-words c1/artifact/tests/.agent/\*:openai'* ]] || { echo "$output"; false; }
+}
+
+@test "#36: a name taken in another case (.AGENT/) counts as taken: .claude goes as .agent2" {
+  mkdir -p .claude .AGENT && printf 'a\n' > .claude/x.sh && printf 'b\n' > .AGENT/y.sh && git add .claude .AGENT
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/.AGENT/y.sh$' "$OUT/c1/artifact/diff.patch"
+  grep -q '^+++ b/.agent2/x.sh$' "$OUT/c1/artifact/diff.patch" || { cat "$OUT/c1/artifact/diff.patch"; false; }
+}
+
+@test "#36: a file named .agent (nothing after it) counts as taken" {
+  printf 'a\n' > .agent && mkdir -p .claude && printf 'b\n' > .claude/x.sh && git add .agent .claude
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/.agent$' "$OUT/c1/artifact/diff.patch"
+  grep -q '^+++ b/.agent2/x.sh$' "$OUT/c1/artifact/diff.patch" || { cat "$OUT/c1/artifact/diff.patch"; false; }
+}
+
+@test "#36: an --out named .claude is built there, not renamed; an --out named .agent does not take the name" {
+  run JL --out "$BATS_TEST_TMPDIR/j/.claude" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$BATS_TEST_TMPDIR/j/.claude/c1/artifact/diff.patch" ]
+  mkdir -p .claude && printf 'b\n' > .claude/x.sh && git add .claude
+  run JL --out "$BATS_TEST_TMPDIR/k/.agent" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^+++ b/.agent/x.sh$' "$BATS_TEST_TMPDIR/k/.agent/c1/artifact/diff.patch"
+}
+
+@test "#36: a .claude at the end of a path or of a sentence is renamed too" {
+  printf 'config in %s/.claude\nsee .claude.\n' "$HOME" >> .vetdd/evidence/s1/runs/001-before.log
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'config in <home>/.agent' "$OUT/c1/evidence/s1/runs/001-before.log"
+  grep -qx 'see .agent.' "$OUT/c1/evidence/s1/runs/001-before.log"
+}
+
+@test "#36: a HOME in another shared place (/usr) is not replaced" {
+  printf 'ran /usr/bin/env\n' >> .vetdd/evidence/s1/runs/001-before.log
+  HOME=/usr run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -qx 'ran /usr/bin/env' "$OUT/c1/evidence/s1/runs/001-before.log"
+}
+
+@test "#18: the dead surface audit expects infrastructure_error, fixes a script that reads a stopped app as target_failure, and restarts the app before integrated" {
+  local d; d="$(grep 'Dead surface' "$VERIFY_MD")"
+  [[ "$d" == *'infrastructure_error'* ]] || { echo "$d"; false; }
+  [[ "$d" == *'target_failure'* ]]
+  [[ "$d" == *'doctor.sh'* ]]
+  [[ "$d" == *'integrated'* ]]
+  [[ "$d" == *'must not end `pass`'* ]]
+}
+
+@test "#18: the mutation item readies the Stryker config (.stryker-tmp/ ignored) before step 1, and a wrapper the A.4 calibration lacked takes a new oracle version" {
+  local m; m="$(grep -- '- \*\*Mutation\.\*\*' "$VERIFY_MD")"
+  [[ "$m" == *'.stryker-tmp/'* ]] || { echo "$m"; false; }
+  [[ "$m" == *'oracle-version.sh'* ]]
+  [[ "$m" == *'A.4'* ]]
+}
+
+@test "#18: the planted defect says planted refuses when restarting the app writes files in the tree" {
+  local p; p="$(grep 'Planted defect' "$VERIFY_MD")"
+  [[ "$p" == *'refuses'* ]] || { echo "$p"; false; }
+  [[ "$p" == *'.gitignore'* ]]
 }

@@ -3,7 +3,7 @@
 # verify modes, Close), so it is never assembled by hand.
 # Usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]...
 #                        [--allow-binary <path>]... [--include-new <path>]... [--allow-words <glob>:<word>,...]...
-#                        [--before-close] [--lane] <slice-id>...
+#                        [--verify-artifacts <path>]... [--before-close] [--lane] <slice-id>...
 #   --include-new: a new file (not in HEAD, not ignored, outside .vetdd/) that is not staged with content
 #   (untracked, or only intent-to-add with git add -N) leaves the machine in the diff only when named
 #   here, by its path from the repository root, or when it is one of the slices' oracle files (those go
@@ -16,6 +16,15 @@
 #   check-blind.sh and the printed judge command. variant and baseline are not checked for one
 #   delivered change (winner still is: a reply names the chosen lane, never a winner); --lane (an
 #   arena lane, compared with others) keeps all three.
+#   --verify-artifacts: verify mode's artifacts (modes/verify.md), a path from the repository root at or
+#   under .vetdd/artifacts/ (a directory or a file; no //, ./, ../, or link on the way): every text file
+#   in it goes to artifact/verify-artifacts/<its path below .vetdd/artifacts/>, with the same
+#   replacement, rename, and checks as the rest. A file that is not text (a screenshot: the judge's blind
+#   check reads text only) stays on the machine and is named on stderr; a link, a file that is not
+#   regular, or a .env file in it stops the build (exit 2, nothing written).
+#   --allow-secrets: the glob names paths of the layout under c1/artifact/ or c1/evidence/ (c*/ for an
+#   arena lane) and something below them other than only *, so the secret check never stops for the
+#   whole layout or a whole half of it (exit 2 otherwise, nothing written).
 #   --before-close: check-evidence.sh runs with it (an arena lane, laid out before its Close: the
 #   mutation audit is not due yet), as arena-layout.sh's gate does
 #   <dir>/c1/artifact/diff.patch          git diff --no-ext-diff --binary <base> on the working tree, every
@@ -24,7 +33,10 @@
 #                                         through a temporary index (the repository's own index is untouched)
 #   <dir>/c1/artifact/reply.md            the reply draft (<file>)
 #   <dir>/c1/artifact/check-evidence.txt  check-evidence.sh <slices>, then a last line "exit <code>"
-#   <dir>/c1/artifact/tests/<path>        each file in the slices' oracle.files, as it is now
+#   <dir>/c1/artifact/tests/<path>        each file in the slices' oracle.files, as it is now (each a plain
+#                                         path from the repository root: no empty, . or .. component, and
+#                                         no .git one in any case, or the record is refused, exit 1)
+#   <dir>/c1/artifact/verify-artifacts/<path>  the text files of each --verify-artifacts path
 #   <dir>/c1/evidence/<slice>/meta.json   each slice's record
 #   <dir>/c1/evidence/<slice>/runs/...    its red-run logs (accepted before or calibration runs that ended
 #                                         target_failure, the undefined-imports audit included, the mutation
@@ -34,16 +46,18 @@
 # <dir> must be outside the repository or under its .vetdd/ (anywhere else, its own files would change
 # the tree check-evidence hashes). Every copied text file has the repository's absolute path, as a whole
 # path, replaced with <repo>, and the user's home directory with <home> (unless HOME is a shared place
-# such as /tmp); a .claude directory (where verify mode keeps its skill) is renamed .agent, in names and
-# text alike, since the judge must not see the author's tool (.agent2, .agent3, ... when that name is
-# already in what is sent, so two paths never become one); then check-blind.sh --profile judge runs on
-# <dir>, with each
+# such as /tmp or /usr), each also percent-encoded (a file:// URL); a .claude directory (where verify
+# mode keeps its skill) is renamed .agent, in names and text alike, since the judge must not see the
+# author's tool (.agent2, .agent3, ... when that name is already in what is sent, in any letter case,
+# so two paths never become one; the --allow-secrets and --allow-words globs are renamed alike); then
+# check-blind.sh --profile judge runs on <dir>, with each
 # --allow-secrets (paths relative to <dir>, e.g. c1/artifact/tests/*:email, only for test data a human
 # confirmed), which the printed judge.sh command repeats. Run it on the delivered tree.
 # Exit 0 built (it prints the judge.sh command); 1 a local step failed (a record could not be read,
 # check-blind could not run); 2 usage error, a binary file in the diff not named with --allow-binary
 # (git's base85 text of a binary file passes the blind and secret checks unseen), or an untracked new
-# file not named with --include-new (nothing is written in each case);
+# file not named with --include-new, or a --verify-artifacts path or file refused (nothing is written
+# in each case);
 # 4 the result is not blind
 # (check-blind.sh's hits are printed; <dir> is left to inspect, readable by the user only).
 # Everything written is private to the user (umask 077), and <dir> must be new, under directories only
@@ -64,7 +78,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 vetdd_require_jq judge-layout.sh
 
-out=""; reply=""; base=""; slices=(); allow=(); binaries=(); news=(); ce_opts=(); awords=(); lane=0
+out=""; reply=""; base=""; slices=(); allow=(); binaries=(); news=(); ce_opts=(); awords=(); varts=(); lane=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
@@ -75,6 +89,7 @@ while [ $# -gt 0 ]; do
       . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$err"; awords+=("$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
     --include-new) [ $# -ge 2 ] || die "--include-new needs a repository path"; news+=("$2"); shift 2 ;;
+    --verify-artifacts) [ $# -ge 2 ] || die "--verify-artifacts needs a path under .vetdd/artifacts/"; varts+=("$2"); shift 2 ;;
     --before-close) ce_opts=(--before-close); shift ;;
     --lane) lane=1; shift ;;
     -*) die "unknown option: $(printf '%s' "$1" | vetdd_printable)" ;;
@@ -82,11 +97,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$out" ] && [ -n "$reply" ] && [ -n "$base" ] && [ ${#slices[@]} -gt 0 ] \
-  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--include-new <path>]... [--allow-words <glob>:<word>,...]... [--before-close] [--lane] <slice-id>..."
+  || die "usage: judge-layout.sh --out <dir> --reply <file> --base <git ref> [--allow-secrets <glob>[:<kind>,...]]... [--allow-binary <path>]... [--include-new <path>]... [--allow-words <glob>:<word>,...]... [--verify-artifacts <path>]... [--before-close] [--lane] <slice-id>..."
 [ -f "$reply" ] && [ ! -L "$reply" ] || die "--reply must be a regular file"
 . "$here/lib/secret-patterns.sh"
+. "$here/lib/text.sh"
 for a in ${allow[@]+"${allow[@]}"}; do
   err="$(vetdd_allow_secret_error "$a")" || die "$(printf '%s' "$err" | vetdd_printable)"
+  # The glob (before the last ":" when kinds follow) stays inside one half of the layout, and names
+  # something there: "*" or "c1/artifact/*" would stop the secret check for all of it.
+  g="$a"; case "$a" in *:*) g="${a%:*}" ;; esac
+  case "$g" in
+    c1/artifact/?*|c1/evidence/?*|'c*/artifact/'?*|'c*/evidence/'?*) ;;
+    *) g="" ;;
+  esac
+  case "${g#*/*/}" in *[!*]*) ;; *) g="" ;; esac
+  [ -n "$g" ] || die "--allow-secrets $(printf '%s' "$a" | vetdd_printable): the glob must name paths under c1/artifact/ or c1/evidence/ (c*/... for an arena lane), and more than * below them (e.g. c1/artifact/tests/*:email)"
 done
 [ ! -e "$out" ] && [ ! -L "$out" ] || die "--out $out exists; give a new directory"
 
@@ -172,6 +197,15 @@ for s in "${slices[@]}"; do
                             and (.log == null or (.log | plain)) and (.seq == null or (.seq | type) == "number")))' \
     "$root/.vetdd/evidence/$s/meta.json" >/dev/null 2>&1 \
     || die "could not read the evidence of slice $s (its meta.json is malformed)" 1
+  # evidence.sh records each oracle file as git spells it, a plain path from the repository root: one
+  # with an empty, . or .. component (a//b, ./b, a/../b, /b, b/) was edited by hand, and every later
+  # comparison with git's list would go wrong; a .git component in any case (.GIT on a
+  # case-insensitive disk) would send the repository's own files past check-blind's .git rule.
+  bad="$(jq -r '[.oracle.files[]? | .path | strings
+                 | select(split("/") | any(. == "" or . == "." or . == ".." or ascii_downcase == ".git"))] | .[0] // empty' \
+    "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)" || die "could not read the evidence of slice $s (its meta.json is malformed)" 1
+  [ -z "$bad" ] || die "$(printf 'the record of slice %s names the oracle file %s, which is not a plain path from the repository root (no empty, . or .. component, and no .git one in any case, as evidence.sh records it); record the slice again instead of editing meta.json' \
+    "$s" "$bad" | vetdd_printable)" 1
   while IFS= read -r -d '' f; do oracles+=("$f"); done \
     < <(jq -j '[.oracle.files[]? | .path | strings] | .[] | . + "\u0000"' "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)
 done
@@ -213,8 +247,8 @@ done < <({ GIT_INDEX_FILE="$idx" git -C "$root" ls-files --others --exclude-stan
 # the list above already took it).
 for o in ${oracles[@]+"${oracles[@]}"}; do
   is_env "$o" || continue
-  # Compared as git spells it: a record may write a//.env for a/.env.
-  dup=0; for e in ${envs[@]+"${envs[@]}"}; do [ "$e" = "$(printf '%s' "$o" | sed 's#//*#/#g')" ] && dup=1; done
+  # An oracle path is a plain path (checked when the record was read), so it compares as git spells it.
+  dup=0; for e in ${envs[@]+"${envs[@]}"}; do [ "$e" = "$o" ] && dup=1; done
   [ "$dup" -eq 1 ] || envs+=("$o")
 done
 [ ${#envs[@]} -eq 0 ] \
@@ -273,6 +307,31 @@ while IFS= read -r -d '' rec; do
   [ "$ok" -eq 1 ] || unallowed="$unallowed $path"
 done < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --numstat -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd')
 [ -z "$unallowed" ] || die "binary changes in the diff:$(printf '%s' "$unallowed" | vetdd_printable); name each one a human allowed to leave with --allow-binary <path>"
+# The verify artifacts, all checked before anything is written: each --verify-artifacts path is a plain
+# path at or under .vetdd/artifacts/ (where the verify scripts write them), inside the repository with
+# no link on the way; every entry below it must be a directory or a regular file, and no .env file.
+# A file that is not text stays: check-blind would stop the layout on it, unread (a screenshot).
+vsrc=()
+for v in ${varts[@]+"${varts[@]}"}; do
+  vp="--verify-artifacts $(printf '%s' "$v" | vetdd_printable)"
+  case "$v" in .vetdd/artifacts|.vetdd/artifacts/?*) ;; *) die "$vp: give a path from the repository root at or under .vetdd/artifacts/" ;; esac
+  case "/$v/" in *//*|*/./*|*/../*) die "$vp: give a plain path at or under .vetdd/artifacts/ (no //, ./, ../, or trailing /)" ;; esac
+  vetdd_inside_repo "$root" "$v" && { [ -d "$root/$v" ] || { [ -f "$root/$v" ] && [ "$v" != .vetdd/artifacts ]; }; } \
+    || die "$vp: not a directory or regular file under .vetdd/artifacts/ of this repository (missing, a link, or outside)"
+  while IFS= read -r -d '' f; do
+    rel="${f#"$root"/}"
+    if [ -L "$f" ] || { [ ! -f "$f" ] && [ ! -d "$f" ]; }; then
+      die "$vp: $(printf '%s' "$rel" | vetdd_printable) is a symbolic link or not a regular file; only files and directories go to the judge"
+    fi
+    [ -f "$f" ] || continue
+    ! is_env "$rel" || die "$vp: $(printf '%s' "$rel" | vetdd_printable) is a .env file, which may hold secrets and never goes to the judge"
+    if vetdd_is_text "$f"; then
+      vsrc+=("$rel")
+    else
+      printf 'judge-layout.sh: verify artifact left on the machine (not text, which the blind check of the judge input cannot read): %s\n' "$rel" | vetdd_printable >&2
+    fi
+  done < <(find "$root/$v" -print0)
+done
 
 # The missing directories, then --out itself, one level at a time and each new (no -p, so nothing put
 # there in the meantime is followed), private to the user (umask 077).
@@ -288,6 +347,10 @@ GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --binary --end-of-opt
   || die "git diff failed" 1
 
 cp -- "$reply" "$C/artifact/reply.md" || die "cannot copy the reply" 1
+for f in ${vsrc[@]+"${vsrc[@]}"}; do
+  dst="$C/artifact/verify-artifacts/${f#.vetdd/artifacts/}"
+  mkdir -p -- "$(dirname -- "$dst")" && cp -- "$root/$f" "$dst" || die "cannot copy the verify artifact $(printf '%s' "$f" | vetdd_printable)" 1
+done
 
 ce_rc=0
 # A layout built before Close says so first: a final judge never reads an OK that skipped the audit.
@@ -347,43 +410,67 @@ done
 
 # Absolute paths of this machine never go to the judge: each spelling of a swarm worker's worktree
 # (<root>.vetdd-wt/<slice>) and of the repository's path (and of the main repository's, when built in
-# a linked worktree), then of
-# the user's home directory, only as a whole path (after file:// or a character that is not part of a
-# path; followed by /, the end, a period that ends a sentence, or a character that is not part of a name).
+# a linked worktree), then of the user's home directory, each also JSON-escaped and percent-encoded (a
+# file:// URL: only what a URL must encode, as Node's pathToFileURL does, or everything but the
+# unreserved characters), only as a whole path: after file://, after a character that is not part of a
+# path, or right after a color code (ESC[...m, raw or JSON-escaped), an escaped newline or tab (\n,
+# \r, \t), a one-letter option (-I, -L), or the - of a removed line of the diff; followed by /, the
+# end, a period that ends a sentence, or a character that is not part of a name. A longer path that
+# only contains it (/mnt<root>) is kept.
 home_phys="$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P)" || home_phys=""
 case "$home_phys" in /private/*) home_short="${home_phys#/private}" ;; *) home_short="" ;; esac
 home_log="${HOME:-}"; home_log="${home_log%/}"
 # A HOME in a shared place would turn other paths there into <home>: leave those alone.
-case "$home_phys" in ""|/|/tmp|/private/tmp|/var|/private/var|/var/tmp|/private/var/tmp) home_phys=""; home_short=""; home_log="" ;; esac
+case "$home_phys" in
+  ""|/|/tmp|/private/tmp|/var|/private/var|/var/tmp|/private/var/tmp|/var/folders|/private/var/folders|/private|/etc|/private/etc \
+  |/usr|/usr/local|/opt|/srv|/home|/Users|/Users/Shared|/mnt|/media|/Volumes)
+    home_phys=""; home_short=""; home_log="" ;;
+esac
 # The name a .claude directory is sent as: .agent, or the first of .agent2, .agent3, ... that appears
-# nowhere in what is sent (as a name, or as a path component in text), so two paths never become one.
+# nowhere in what is sent, in any letter case (a case-insensitive disk takes .AGENT for .agent): as a
+# name below <dir>, or in text as a path component (followed by /, the end, a period that ends a
+# sentence, or a character that is not part of a name), so two paths never become one.
 tok=.agent; n=1
-while [ -n "$(find "$out" -name "$tok" -print 2>/dev/null | head -n 1)" ] \
-      || LC_ALL=C grep -rIqE '(^|[^[:alnum:]_.])\.'"${tok#.}"'(\\)?/' "$out"; do
+while [ -n "$(find "$out" -mindepth 1 -iname "$tok" -print 2>/dev/null | head -n 1)" ] \
+      || LC_ALL=C grep -rIqiE '(^|[^[:alnum:]_.])\.'"${tok#.}"'(\\?/|\.([^[:alnum:]_-]|$)|[^[:alnum:]_.-]|$)' "$out"; do
   n=$((n + 1)); tok=".agent$n"
 done
-find "$out" -depth -type d -name .claude | while IFS= read -r d; do
+# -mindepth 1: <dir> itself keeps its name, whatever it is.
+find "$out" -mindepth 1 -depth -type d -name .claude | while IFS= read -r d; do
   mv -- "$d" "$(dirname -- "$d")/$tok" || exit 1
 done || die "could not rename a .claude directory in the layout" 1
+# A .claude path component (also JSON-escaped, on a removed line of the diff, and at the end of a path
+# or a sentence) goes under the free name chosen above: in text, and in the --allow-secrets and
+# --allow-words globs, which check-blind matches against the renamed paths.
+RENAME='s{(?:(?<=^-)|(?<![\w.-]))\.claude(?=\\?/|\.(?![\w-])|[^\w.-]|$)}{$ENV{TOK}}g'
+renamed() { printf '%s' "$1" | TOK="$tok" perl -pe "$RENAME"; }
 find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue
   ROOT="$root" LROOT="$logical_root" SROOT="$short_root" MROOT="$main_root" MSROOT="$main_short" H1="$home_phys" H2="$home_short" H3="$home_log" TOK="$tok" perl -pi -e '
-    BEGIN { sub spell { my %s; sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
-                        map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } @_ }
-            @R = spell(@ENV{qw(ROOT LROOT SROOT MROOT MSROOT)}); @H = spell(@ENV{qw(H1 H2 H3)}) }
+    BEGIN {
+      # What a URL path must encode (controls, space, " # % < > ? ` { } \, and every byte past ASCII),
+      # and everything but the unreserved characters and /.
+      sub enc_url { (my $e = $_[0]) =~ s{([\x00-\x20"#%<>?`{}\\\x7f-\xff])}{sprintf("%%%02X", ord $1)}ge; $e }
+      sub enc_all { (my $e = $_[0]) =~ s{([^A-Za-z0-9\-._~/])}{sprintf("%%%02X", ord $1)}ge; $e }
+      sub spell { my %s; sort { length($b) <=> length($a) } grep { length && !$s{$_}++ }
+                  map { ($_, do { (my $e = $_) =~ s{/}{\\/}g; $e }) } map { ($_, enc_url($_), enc_all($_)) } grep { length } @_ }
+      @R = spell(@ENV{qw(ROOT LROOT SROOT MROOT MSROOT)}); @H = spell(@ENV{qw(H1 H2 H3)});
+      $L = qr{(?:\e\[[0-9;]*m|\\u001[bB]\[[0-9;]*m|(?<=\\[nrt])|(?<=^-)|(?<=^-[A-Za-z])|(?<=[\s"\x27=,(]-[A-Za-z])|(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))};
+      $B = qr{(?=/|\\/|\.(?![\w-])|[^\w.-]|$)};
+    }
     # A swarm worker ran in <root>.vetdd-wt/<slice> (worktree.sh): its logs name that path.
-    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?:/|\\/)[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
-    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E\.vetdd-wt(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<worktrees>}g }
-    for my $r (@R) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<repo>}g }
-    for my $r (@H) { s{(?:(?<=file://)|(?<=file:\\/\\/)|(?<![\w.\-/\\]))\Q$r\E(?=/|\\/|\.(?![\w-])|[^\w.-]|$)}{<home>}g }
-    # A .claude directory, as a path component (also JSON-escaped, and on a removed line of the diff), is
-    # sent under the free name chosen above.
-    s{(?:(?<=^-)|(?<![\w.-]))\.claude(?=\\?/)}{$ENV{TOK}}g' "$f" || exit 1
+    for my $r (@R) { s{$L\K\Q$r\E\.vetdd-wt(?:/|\\/)[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$B}{<repo>}g }
+    for my $r (@R) { s{$L\K\Q$r\E\.vetdd-wt$B}{<worktrees>}g }
+    for my $r (@R) { s{$L\K\Q$r\E$B}{<repo>}g }
+    for my $r (@H) { s{$L\K\Q$r\E$B}{<home>}g }
+    '"$RENAME" "$f" || exit 1
 done || die "could not replace the paths of this machine" 1
 
-allow_args=()
-for a in ${allow[@]+"${allow[@]}"}; do allow_args+=(--allow-secrets "$a"); done
-for a in ${awords[@]+"${awords[@]}"}; do allow_args+=(--allow-words "$a"); done
+allow_args=(); allow_out=(); awords_out=()
+for a in ${allow[@]+"${allow[@]}"}; do allow_out+=("$(renamed "$a")"); done
+for a in ${awords[@]+"${awords[@]}"}; do awords_out+=("$(renamed "$a")"); done
+for a in ${allow_out[@]+"${allow_out[@]}"}; do allow_args+=(--allow-secrets "$a"); done
+for a in ${awords_out[@]+"${awords_out[@]}"}; do allow_args+=(--allow-words "$a"); done
 blind_rc=0
 # One delivered change: variant and baseline are product words here (--final; winner stays checked),
 # as judge.sh treats a final verdict. An arena lane (--lane) is compared with others, so all three
@@ -401,6 +488,6 @@ fi
 printf 'judge-layout.sh: built %s\n' "$out"
 printf 'next: %q --rubric %q --candidates %q --out <judge.json> --eval-id <id> --run-id <id> --rubric-version <n>' \
   "$here/judge.sh" "${here%/scripts}/references/final-judge-rubric.md" "$out"
-for a in ${allow[@]+"${allow[@]}"}; do printf ' --allow-secrets %q' "$a"; done
-for a in ${awords[@]+"${awords[@]}"}; do printf ' --allow-words %q' "$a"; done
+for a in ${allow_out[@]+"${allow_out[@]}"}; do printf ' --allow-secrets %q' "$a"; done
+for a in ${awords_out[@]+"${awords_out[@]}"}; do printf ' --allow-words %q' "$a"; done
 printf '\n'
