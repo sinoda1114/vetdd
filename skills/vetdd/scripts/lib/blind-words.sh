@@ -134,14 +134,18 @@ vetdd_word_lines() (
 )
 
 # vetdd_allow_words_error <value> [<extra word>...]: check one --allow-words value,
-# <glob>:<word>[,<word>]... (split at the last ":"): a glob, at least one word, no empty word (a
-# leading, trailing, or doubled comma), each word letters, digits, and . _ - only and one of the
-# lists here (or an extra word). Print why it is wrong and return 1, or return 0. check-blind.sh,
-# judge-layout.sh, arena-layout.sh, judge.sh, and sanitize-candidates.sh all call it, so a typo is a
-# usage error before anything is written.
+# <glob>:<word>[,<word>]... (split at the last ":"): no control character or new line, a glob, at
+# least one word, no empty word (a leading, trailing, or doubled comma), each word letters, digits,
+# and . _ - only and one of the lists here (or an extra word). Print why it is wrong and return 1,
+# or return 0. check-blind.sh, judge-layout.sh, arena-layout.sh, judge.sh, and
+# sanitize-candidates.sh all call it, so a typo is a usage error before anything is written.
 vetdd_allow_words_error() {
   local v="$1" glob list w lw known x ok
   shift
+  # A control character, a new line above all, is refused first: read and grep below see one line,
+  # check-blind.sh would take every line's words.
+  # The value is not echoed: a new line in it would split the message and could fake a line.
+  case "$v" in *[[:cntrl:]]*) printf "%s\n" "--allow-words has a control character or a new line"; return 1 ;; esac
   case "$v" in *:*) ;; *) printf "%s\n" "--allow-words '$v' has no ':<word>' (<glob>:<word>[,<word>]...)"; return 1 ;; esac
   glob="${v%:*}"; list="${v##*:}"
   [ -n "$glob" ] || { printf "%s\n" "--allow-words '$v' has no glob before ':'"; return 1; }

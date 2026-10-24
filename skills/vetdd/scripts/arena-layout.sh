@@ -25,7 +25,13 @@ set -u
 unset CDPATH
 umask 077
 
-die() { printf 'arena-layout.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
+# Every message may carry a value from the command line: strip control characters (vetdd_printable,
+# lib/common.sh, once it is loaded).
+die() {
+  if declare -F vetdd_printable >/dev/null; then printf 'arena-layout.sh: %s\n' "$1" | vetdd_printable >&2
+  else printf 'arena-layout.sh: %s\n' "$1" >&2; fi
+  exit "${2:-2}"
+}
 
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"

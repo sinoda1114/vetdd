@@ -52,7 +52,13 @@ set -u
 unset CDPATH GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
 umask 077
 
-die() { printf 'judge-layout.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
+# Every message may carry a value from the command line: strip control characters (vetdd_printable,
+# lib/common.sh, once it is loaded).
+die() {
+  if declare -F vetdd_printable >/dev/null; then printf 'judge-layout.sh: %s\n' "$1" | vetdd_printable >&2
+  else printf 'judge-layout.sh: %s\n' "$1" >&2; fi
+  exit "${2:-2}"
+}
 
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
