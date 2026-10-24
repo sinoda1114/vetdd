@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Fixture for tests/negation-guard.bats: every line that names `caught` holds a bare negation the
+# Fixture for tests/negation-guard.bats: every line with a negated `caught` holds a bare negation the
 # scanner must report (and no other line may be reported). It is not run as a test file.
 
 @test "indented" {
@@ -155,4 +155,39 @@ function teardown {
 
 function setup_file() {
   ! caught
+}
+
+teardown_file()
+{
+  ! caught
+}
+
+setup() (
+  ! caught
+  true
+)
+
+@test "|| false in the background" {
+  ! caught || false &
+}
+
+@test "|| false inside { } run in the background" {
+  { ! caught || false; } &
+}
+
+annotated() { # @test
+  true
+  ! caught
+}
+
+helper_mid() {
+  ! caught
+  true
+}
+
+@test "a function defined in a test, negation not last" {
+  inner() {
+    ! caught
+    true
+  }
 }

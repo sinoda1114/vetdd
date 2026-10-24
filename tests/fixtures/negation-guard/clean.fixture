@@ -115,3 +115,31 @@ echo inner)" >/dev/null
 ! cmd
 EOF
 }
+
+helper4() {
+  local x=1
+  ! grep -q x "$x"
+}
+
+helper5()
+{
+  ! grep -q x "$1"
+}
+
+@test "case and arithmetic inside \$( ), empty heredoc delimiters, functions defined in a test" {
+  # bash 5 reads a bare pattern ) inside $( ); bash 3.2 needs the (a) form.
+  x=$(case $y in a) echo;; esac)
+  x=$(case $y in (a) echo;; (*) (echo) ;; esac)
+  x=$( (( a << 1 )) )
+  cat <<"" >/dev/null
+! cmd
+
+  cat <<'' >/dev/null
+! cmd
+
+  absent() { ! grep -q x "$1"; }
+  absent2() {
+    : first
+    ! grep -q x "$1"
+  }
+}

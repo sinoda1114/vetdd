@@ -2,8 +2,9 @@
 # #26: a negated command mid-test (`! cmd`) never fails a bats test: bash's set -e ignores a command
 # inverted with !, so only the last line of a test would count. Write `! cmd || false` (or `run ! cmd`).
 # #32: the scanner (helpers/bare-negations.pl) finds a negation wherever a command can start inside
-# @test (and setup/teardown): at the start of a line, after ; && || & | ( then do else, inside { }, in a
-# case branch, and inside a compound command whose status && || or | ignores.
+# @test, the setup/teardown hooks and other functions (whose last command may be the negation they
+# return): at the start of a line, after ; && || & | ( then do else, inside { }, in a case branch,
+# with a trailing &, and inside a compound command whose status && || | or & ignores.
 
 load test_helper
 
