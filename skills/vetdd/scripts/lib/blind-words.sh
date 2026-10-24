@@ -144,7 +144,8 @@ vetdd_allow_words_error() {
   shift
   # A control character, a new line above all, is refused first: read and grep below see one line,
   # check-blind.sh would take every line's words.
-  case "$v" in *[[:cntrl:]]*) printf "%s\n" "--allow-words '$v' has a control character or a new line"; return 1 ;; esac
+  # The value is not echoed: a new line in it would split the message and could fake a line.
+  case "$v" in *[[:cntrl:]]*) printf "%s\n" "--allow-words has a control character or a new line"; return 1 ;; esac
   case "$v" in *:*) ;; *) printf "%s\n" "--allow-words '$v' has no ':<word>' (<glob>:<word>[,<word>]...)"; return 1 ;; esac
   glob="${v%:*}"; list="${v##*:}"
   [ -n "$glob" ] || { printf "%s\n" "--allow-words '$v' has no glob before ':'"; return 1; }

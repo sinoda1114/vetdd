@@ -139,3 +139,9 @@ alpha-lane" ]
     [ "$status" -eq 1 ] || { echo "$v: $output"; false; }
   done
 }
+
+@test "PR80: the control-character refusal is one line and does not echo the value" {
+  run vetdd_allow_words_error $'c1/*:openai\n claude'
+  [ "$status" -eq 1 ]
+  [ "$output" = "--allow-words has a control character or a new line" ] || { printf '%s' "$output" | od -c; false; }
+}

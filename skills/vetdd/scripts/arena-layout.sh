@@ -25,7 +25,13 @@ set -u
 unset CDPATH
 umask 077
 
-die() { printf 'arena-layout.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
+# Every message may carry a value from the command line: strip control characters (vetdd_printable,
+# lib/common.sh, once it is loaded).
+die() {
+  if declare -F vetdd_printable >/dev/null; then printf 'arena-layout.sh: %s\n' "$1" | vetdd_printable >&2
+  else printf 'arena-layout.sh: %s\n' "$1" >&2; fi
+  exit "${2:-2}"
+}
 
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
@@ -51,7 +57,7 @@ while [ $# -gt 0 ]; do
       allow+=("$2"); jl_args+=(--allow-secrets "$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; jl_args+=(--allow-binary "$2"); shift 2 ;;
     --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>,..."
-      . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$(p "$err")"
+      . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$err"
       one_label_glob "$1" "$2"
       jl_args+=(--allow-words "$2"); awords+=("$2"); shift 2 ;;
     -*) die "unknown option: $(p "$1")" ;;

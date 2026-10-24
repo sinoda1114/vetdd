@@ -52,7 +52,13 @@ set -u
 unset CDPATH GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
 umask 077
 
-die() { printf 'judge-layout.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
+# Every message may carry a value from the command line: strip control characters (vetdd_printable,
+# lib/common.sh, once it is loaded).
+die() {
+  if declare -F vetdd_printable >/dev/null; then printf 'judge-layout.sh: %s\n' "$1" | vetdd_printable >&2
+  else printf 'judge-layout.sh: %s\n' "$1" >&2; fi
+  exit "${2:-2}"
+}
 
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
@@ -66,8 +72,7 @@ while [ $# -gt 0 ]; do
     --base) [ $# -ge 2 ] || die "--base needs a git ref"; base="$2"; shift 2 ;;
     --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; allow+=("$2"); shift 2 ;;
     --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>[,<word>]..."
-      . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$(printf '%s\n' "$err" | vetdd_printable)"
-      awords+=("$2"); shift 2 ;;
+      . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$err"; awords+=("$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; binaries+=("$2"); shift 2 ;;
     --include-new) [ $# -ge 2 ] || die "--include-new needs a repository path"; news+=("$2"); shift 2 ;;
     --before-close) ce_opts=(--before-close); shift ;;
