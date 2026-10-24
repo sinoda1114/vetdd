@@ -501,6 +501,109 @@ shared_sticky() {
   [ -n "$kept" ] && grep -qx old "$kept/SKILL.md"
 }
 
+# shim_dies_after <case pattern on the arguments>: a perl that does the move, then is stopped by a
+# Ctrl-C (to itself and to install.sh) when its arguments match.
+shim_dies_after() {
+  local fb="$BATS_TEST_TMPDIR/diebin" realperl; realperl="$(command -v perl)"
+  mkdir -p "$fb"
+  printf '#!/bin/sh\n"%s" "$@"; r=$?\ncase "$*" in %s) kill -INT $PPID; kill -INT $$ ;; esac\nexit $r\n' "$realperl" "$1" > "$fb/perl"
+  chmod +x "$fb/perl"
+  printf '%s' "$fb"
+}
+
+@test "i48: a Ctrl-C that stops the final move after it was made leaves the new copy installed" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local fb; fb="$(shim_dies_after '*/.vetdd-install.*')"
+  PATH="$fb:$PATH" run "$INSTALL"
+  [ "$status" -eq 130 ] || { echo "$output"; false; }
+  same_as_tracked "$DEST"
+  [[ "$output" != *"cannot put"* ]]
+}
+
+@test "i48: a Ctrl-C that stops the rename to the backup name after it was made still puts the old install back" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local fb; fb="$(shim_dies_after '*/.vetdd-backup.*/skills-backup/vetdd-*')"
+  PATH="$fb:$PATH" run "$INSTALL"
+  [ "$status" -eq 130 ] || { echo "$output"; false; }
+  grep -qx old "$DEST/SKILL.md"
+  [[ "$output" == *"moved the old install back"* ]]
+}
+
+# fake_linux_acl <getfacl output>: a uname that says Linux and a getfacl that prints <getfacl output>
+# (or fails, when it is "fail").
+fake_linux_acl() {
+  local fb="$BATS_TEST_TMPDIR/aclbin"
+  mkdir -p "$fb"
+  printf '#!/bin/sh\necho Linux\n' > "$fb/uname"
+  if [ "$1" = fail ]; then printf '#!/bin/sh\nexit 1\n' > "$fb/getfacl"
+  else printf '#!/bin/sh\ncat <<"X"\n%s\nX\n' "$1" > "$fb/getfacl"; fi
+  chmod +x "$fb/uname" "$fb/getfacl"
+  printf '%s' "$fb"
+}
+
+@test "i48: Linux ACL: a named user that may write is refused, unless the mask takes the write away" {
+  mkdir -p "$BATS_TEST_TMPDIR/la"
+  local fb
+  fb="$(fake_linux_acl "$(printf '# group: 99999\nuser::rwx\nuser:4242:rwx\ngroup::r-x\nother::r-x')")"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/la/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  fb="$(fake_linux_acl "$(printf '# group: 99999\nuser::rwx\nuser:4242:rwx\t#effective:r-x\ngroup::r-x\nmask::r-x\nother::r-x')")"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/la/vetdd"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "i48: Linux ACL: a default entry that lets others write what is made inside is refused" {
+  mkdir -p "$BATS_TEST_TMPDIR/la"
+  local fb
+  fb="$(fake_linux_acl "$(printf '# group: 99999\nuser::rwx\ngroup::r-x\nother::r-x\ndefault:user::rwx\ndefault:group::r-x\ndefault:other::rwx')")"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/la/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  fb="$(fake_linux_acl "$(printf '# group: 99999\nuser::rwx\ngroup::r-x\nother::r-x\ndefault:user::rwx\ndefault:group::rwx\ndefault:other::r-x')")"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/la/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "i48: Linux ACL: a getfacl that fails is not taken as no ACL" {
+  mkdir -p "$BATS_TEST_TMPDIR/la"
+  local fb; fb="$(fake_linux_acl fail)"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/la/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "i48: macOS ACL: a GNU ls earlier in PATH (no -e) does not hide an ACL that lets others write" {
+  [ "$(uname)" = Darwin ] || skip "macOS ACLs"
+  mkdir -p "$BATS_TEST_TMPDIR/acl" "$BATS_TEST_TMPDIR/gnubin"
+  chmod +a "everyone allow add_file,add_subdirectory" "$BATS_TEST_TMPDIR/acl"
+  printf '#!/bin/sh\nfor a; do case "$a" in -*e*) echo "ls: invalid option -- e" >&2; exit 2 ;; esac; done\nexec /bin/ls "$@"\n' > "$BATS_TEST_TMPDIR/gnubin/ls"
+  chmod +x "$BATS_TEST_TMPDIR/gnubin/ls"
+  PATH="$BATS_TEST_TMPDIR/gnubin:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/acl/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "i48: macOS ACL: an entry that lets others take ownership (chown) is refused" {
+  [ "$(uname)" = Darwin ] || skip "macOS ACLs"
+  mkdir -p "$BATS_TEST_TMPDIR/acl"
+  chmod +a "everyone allow chown" "$BATS_TEST_TMPDIR/acl"
+  run "$INSTALL" --dest "$BATS_TEST_TMPDIR/acl/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "i48: .. after a link in --dest is taken physically: nothing is made where it was not checked" {
+  mkdir -p "$BATS_TEST_TMPDIR/shared/sub" "$BATS_TEST_TMPDIR/b" && chmod 777 "$BATS_TEST_TMPDIR/shared"
+  ln -s "$BATS_TEST_TMPDIR/shared/sub" "$BATS_TEST_TMPDIR/l"
+  run "$INSTALL" --dest "$BATS_TEST_TMPDIR/l/../b/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ ! -e "$BATS_TEST_TMPDIR/shared/b" ] && [ ! -e "$BATS_TEST_TMPDIR/b/vetdd" ]
+}
+
+@test "i48: a --dest that is a plain file is refused, untouched" {
+  mkdir -p "$CLAUDE_CONFIG_DIR/skills" && printf 'notes\n' > "$DEST"
+  run "$INSTALL"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ -f "$DEST" ] && grep -qx notes "$DEST"
+  [ ! -e "$CLAUDE_CONFIG_DIR/skills-backup" ]
+}
+
 # fake_upg <members> <other primary user, or empty>: an id that reports a group named after the user
 # (the gid of $BATS_TEST_TMPDIR/grp), and a getent that lists <members> in it and, if given, another
 # user whose primary group it is.

@@ -35,7 +35,7 @@ case "${BASH_SOURCE[0]:-}" in
   *) here=. ;;
 esac
 [ -f "$here/install.sh" ] || die "run install.sh from a checkout, not from standard input" 2
-here="$(cd "$here" && pwd -P)" || die "cannot find the checkout"
+here="$(cd -P "$here" && pwd -P)" || die "cannot find the checkout"
 src="$here/skills/vetdd"
 [ -n "${HOME:-}" ] || [ -n "${CLAUDE_CONFIG_DIR:-}" ] || die "neither HOME nor CLAUDE_CONFIG_DIR is set" 2
 conf="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -82,23 +82,40 @@ if [ "$(id -gn)" = "$me" ] && command -v getent >/dev/null 2>&1; then
     && own_group="$gid"
 fi
 # acl_ok <dir>: no access-control list entry on <dir> lets anyone but the user (or root, or
-# own_group) add, delete, or write entries, now or in what is made inside it. An ACL it cannot read
-# (no getfacl) is not ok.
+# own_group) add, delete, write, or take over entries, now or (default entries) in what is made
+# inside it; on Linux the mask is applied. An ACL that cannot be read is not ok. Elsewhere than
+# macOS, without getfacl, only an ls that marks an ACL with + can show one.
 acl_ok() {
-  # macOS ls shows @ instead of + when the directory also has extended attributes: read it always there.
+  local out
   if [ "$os" = Darwin ]; then
-    ls -lde "$1" 2>/dev/null | awk -v me="user:$me" '
-      NR > 1 && / allow / && /add_file|add_subdirectory|delete_child|write|append/ \
+    # /bin/ls: a GNU ls earlier in PATH has no -e. It shows @, not +, when there are also extended
+    # attributes, so the list is always read.
+    out="$(/bin/ls -lde "$1" 2>/dev/null)" || return 1
+    printf '%s\n' "$out" | awk -v me="user:$me" '
+      NR > 1 && / allow / && /add_file|add_subdirectory|delete_child|write|append|chown/ \
         && $2 != me && $2 != "user:root" { found = 1 }
       END { exit found }'
+  elif command -v getfacl >/dev/null 2>&1; then
+    out="$(getfacl -pn "$1" 2>/dev/null)" || return 1
+    printf '%s\n' "$out" | awk -F: -v u="$uid" -v g="$own_group" '
+      /^# group: / { dg = substr($0, 10); next }
+      /^#/ || NF < 3 { next }
+      { d = ($1 == "default"); k = d + 1
+        if ($k == "mask") { mask[d] = $(k + 2); next }
+        n++; t[n] = $k; q[n] = $(k + 1); p[n] = $(k + 2); dd[n] = d }
+      END {
+        for (i = 1; i <= n; i++) {
+          if (p[i] !~ /w/) continue
+          m = (dd[i] in mask) ? mask[dd[i]] : "w"
+          if (t[i] == "other" && dd[i]) found = 1
+          if (m !~ /w/) continue
+          if (t[i] == "user" && q[i] != "" && q[i] != u && q[i] != 0) found = 1
+          if (t[i] == "group" && q[i] != "" && q[i] != g) found = 1
+          if (t[i] == "group" && q[i] == "" && dd[i] && !(g != "" && dg == g)) found = 1
+        }
+        exit found }'
   else
-    [ "$(ls -ld "$1" 2>/dev/null | cut -c11)" = "+" ] || return 0
-    command -v getfacl >/dev/null 2>&1 || return 1
-    getfacl -cpn "$1" 2>/dev/null | awk -F: -v u="$uid" -v g="$own_group" '
-      { k = 1; if ($1 == "default") k = 2 }
-      $(k + 2) ~ /w/ && $(k + 1) != "" \
-        && (($k == "user" && $(k + 1) != u && $(k + 1) != 0) || ($k == "group" && $(k + 1) != g)) { found = 1 }
-      END { exit found }'
+    [ "$(ls -ld "$1" 2>/dev/null | cut -c11)" != "+" ]
   fi
 }
 # safe_dir <real dir>: <real dir> (a path with no link in it) is the user's or root's and nobody else
@@ -135,7 +152,7 @@ make_dir() {
   local e="$1"
   [ ! -d "$e" ] || return 0
   while [ ! -d "$e" ]; do e="$(dirname -- "$e")"; done
-  e="$(cd "$e" 2>/dev/null && pwd -P)" || return 2
+  e="$(cd -P "$e" 2>/dev/null && pwd -P)" || return 2
   safe_dir "$e" || return 1
   mkdir -p "$1" 2>/dev/null || return 2
 }
@@ -147,19 +164,23 @@ prepare_dir() {
   links_ok "$1" || die "$bad is a link that is not yours (or root's); $2"
   make_dir "$1"
   case $? in 0) ;; 1) die "$bad $unsafe" ;; *) die "cannot create $1" ;; esac
-  real="$(cd "$1" 2>/dev/null && pwd -P)" || die "cannot enter $1"
+  real="$(cd -P "$1" 2>/dev/null && pwd -P)" || die "cannot enter $1"
   safe_dir "$real" || die "$bad $unsafe"
 }
 # move <from> <to>: rename(2), which never moves <from> into a directory already at <to> (mv would)
 # and fails on a link there; both must be on the same file system.
 move() { perl -e 'rename($ARGV[0], $ARGV[1]) or die "install.sh: cannot move $ARGV[0] to $ARGV[1]: $!\n"' "$1" "$2"; }
+# went <from> <to>: <from> is gone and <to> is there. A Ctrl-C also reaches the mv or perl doing a
+# move, which can then fail after the move was made: the paths, not the exit status, say what happened.
+went() { [ ! -e "$1" ] && [ ! -L "$1" ] && { [ -e "$2" ] || [ -L "$2" ]; }; }
 
 parent="${dest%/*}"; [ -n "$parent" ] || parent=/
 prepare_dir "$parent" "give a --dest under directories only you can change"
 parent="$real"; dest="${parent%/}/${dest##*/}"
 # A directory that is not a vetdd install (--dest naming the skills directory itself, or a link to
 # one, say) is never moved away.
-if [ -d "$dest" ] && ! grep -qx 'name: vetdd' "$dest/SKILL.md" 2>/dev/null; then
+if { [ -d "$dest" ] && ! grep -qx 'name: vetdd' "$dest/SKILL.md" 2>/dev/null; } \
+   || { [ -e "$dest" ] && [ ! -d "$dest" ]; }; then
   die "$dest exists and is not a vetdd install; give --dest the vetdd directory itself (e.g. ~/.claude/skills/vetdd)"
 fi
 
@@ -171,12 +192,12 @@ put_back() {
   local t=""
   { [ -n "$moved" ] && { [ -e "$moved" ] || [ -L "$moved" ]; }; } || { moved=""; return 0; }
   if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
-    move "$moved" "$dest" 2>/dev/null && moved=""
+    { move "$moved" "$dest" 2>/dev/null || went "$moved" "$dest"; } && moved=""
     # On another file system: first into a fresh directory beside $dest (nothing can wait there), then renamed.
     if [ -n "$moved" ] && t="$(mktemp -d "$parent/.vetdd-restore.XXXXXX" 2>/dev/null)" \
-       && mv "$moved" "$t/vetdd"; then
+       && { mv "$moved" "$t/vetdd" || went "$moved" "$t/vetdd"; }; then
       moved="$t/vetdd"
-      move "$moved" "$dest" 2>/dev/null && { rmdir "$t"; moved=""; }
+      { move "$moved" "$dest" 2>/dev/null || went "$moved" "$dest"; } && { rmdir "$t"; moved=""; }
     fi
   fi
   if [ -z "$moved" ]; then
@@ -197,7 +218,7 @@ trap 'on_sig 129' HUP; trap 'on_sig 130' INT; trap 'on_sig 143' TERM
 new="$tmp/vetdd"
 # The checkout itself is a git repository: only what git tracks goes (no .DS_Store or scratch file).
 # A copy that is not one (an unpacked archive, even inside another repository) goes whole.
-top="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null)" && top="$(cd "$top" && pwd -P)" || top=""
+top="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null)" && top="$(cd -P "$top" && pwd -P)" || top=""
 if [ "$top" = "$here" ]; then
   list="$tmp/files"
   git -C "$here" ls-files -z -- skills/vetdd > "$list" \
@@ -240,9 +261,11 @@ else
     # waiting there), then renamed to the first free vetdd-<time>[-n] beside it.
     hold="$(mktemp -d "$backups/.vetdd-backup.XXXXXX")" || die "cannot create a directory in $backups"
     held=1; moved="$hold/vetdd"
-    mv "$dest" "$moved" || { moved=""; rmdir "$hold" 2>/dev/null; die "cannot move the existing install to $hold"; }
+    # A failed mv (not even partly made) leaves $dest whole; put_back then finds nothing at $moved.
+    mv "$dest" "$moved" || went "$dest" "$moved" \
+      || { rmdir "$hold" 2>/dev/null; die "cannot move the existing install to $hold"; }
     stamp="$backups/vetdd-$(date +%Y%m%d-%H%M%S)"; b="$stamp"; n=0
-    while [ -e "$b" ] || [ -L "$b" ] || ! move "$moved" "$b" 2>/dev/null; do
+    while [ -e "$b" ] || [ -L "$b" ] || ! { move "$moved" "$b" 2>/dev/null || went "$moved" "$b"; }; do
       n=$((n + 1)); [ "$n" -le 99 ] || { b=""; break; }
       b="$stamp-$n"
     done
@@ -251,7 +274,7 @@ else
     release
   fi
   held=1
-  move "$new" "$dest" || die "cannot put the new copy at $dest"
+  move "$new" "$dest" || went "$new" "$dest" || die "cannot put the new copy at $dest"
   moved=""
   say "installed $dest"
   release
