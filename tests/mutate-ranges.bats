@@ -18,6 +18,7 @@ mr() { "$SCRIPTS/mutate-ranges.sh" "$@"; }
 # A red run (exit 1 is target_failure) and a green run of the slice, test.sh its oracle file.
 red() { ev "$1" before --seam unit --oracle-version v1 --oracle-file test.sh -- false >/dev/null 2>&1; }
 green() { ev "$1" after -- true >/dev/null 2>&1; }
+cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
 
 # --- 1. one slice -------------------------------------------------------------------------------
 
@@ -71,14 +72,91 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
   [ "$output" = "src/a.js:4-4" ]
 }
 
-@test "a slice without a before (a refactor): its first passing after to its last" {
-  ev s1-refactor calibration --oracle-file test.sh -- false >/dev/null 2>&1
+@test "a slice without a before (a refactor, red planted): its first passing after to its last" {
+  cal plant s1-refactor --file src/a.js --oracle-file test.sh
+  printf '%s\n' a1 a2 a3 a4 BAD > src/a.js
+  cal planted s1-refactor --oracle-file test.sh -- false
+  [ "$(cat src/a.js | tail -n 1)" = a5 ]
   green s1-refactor
   printf '%s\n' a1 a2 R3 a4 a5 > src/a.js
   green s1-refactor
   run --separate-stderr mr s1-refactor
   [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
   [ "$output" = "src/a.js:3-3" ]
+}
+
+@test "a slice whose red is an unfix calibration (no before): the fix is its change, whatever afters follow" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  [ "$(sed -n 2p src/a.js)" = F2 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "one after: $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  # A coverage oracle recorded as after on the same tree, then a later slice, then Close's after again.
+  green s1
+  red s2
+  printf '%s\n' a1 F2 a3 G4 a5 > src/a.js
+  green s2
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+}
+
+@test "a before that passed (rejected) does not start the slice; the unfix red after it does" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1 || true
+  [ "$(mq s1 '.runs[0].accepted')" = false ]
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+}
+
+@test "a version bumped before the first green: the product lines written under the earlier version count" {
+  red s1
+  printf '%s\n' a1 P2 a3 a4 a5 > src/a.js
+  printf 'echo stronger\n' >> test.sh
+  ev s1 calibration --oracle-version v2 -- false >/dev/null 2>&1
+  printf '%s\n' a1 P2 P3 a4 a5 > src/a.js
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:2-3" ]
+}
+
+@test "a change of whitespace inside a literal is the slice's" {
+  printf '%s\n' 'const greeting = "hello world";' 'const other = 1;' > src/w.js
+  git add -A && git commit -q -m w
+  red s1
+  printf '%s\n' 'const greeting = "helloworld";' 'const other = 1;' > src/w.js
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/w.js:1-1" ]
+}
+
+@test "a line the slice copied from existing code is the slice's" {
+  printf '%s\n' 'function a(input) {' '  if (input === undefined) throw new Error("input is required here");' '  return input;' '}' 'function b(input) {' '  return input * 2;' '}' > src/c.js
+  git add -A && git commit -q -m c
+  red s1
+  printf '%s\n' 'function a(input) {' '  if (input === undefined) throw new Error("input is required here");' '  return input;' '}' 'function b(input) {' '  if (input === undefined) throw new Error("input is required here");' '  return input * 2;' '}' > src/c.js
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/c.js:6-6" ]
+}
+
+@test "a short line a later edit moved is still the slice's" {
+  red s1
+  printf '%s\n' a1 a2 'const EXIT_USAGE = 2;' a3 a4 a5 > src/a.js
+  green s1
+  printf '%s\n' 'const EXIT_USAGE = 2;' a1 a2 a3 a4 a5 > src/a.js
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
+  [ "$output" = "src/a.js:1-1" ]
 }
 
 # --- 2. a later slice moves the lines -----------------------------------------------------------
@@ -452,7 +530,8 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
     rm -f -- "$REPO/$p"
   done
   # A bidirectional control or a zero-width space: named with its bytes shown as ?.
-  for p in "src/a$(printf '\342\200\256')b.js" "src/a$(printf '\342\200\213')b.js"; do
+  for p in "src/a$(printf '\342\200\256')b.js" "src/a$(printf '\342\200\213')b.js" "src/a$(printf '\357\273\277')b.js" \
+    "src/a$(printf '\342\201\240')b.js" "src/a$(printf '\330\234')b.js" "src/a$(printf '\342\200\250')b.js" "src/a$(printf '\341\240\216')b.js"; do
     rm -rf "$REPO/.vetdd"
     red s1
     printf '%s\n' q1 > "$p"
@@ -460,7 +539,7 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
     run --separate-stderr mr s1
     [ "$status" -eq 2 ] || { echo "$status $output $stderr"; false; }
     [ -z "$output" ]
-    [[ "$stderr" == *"src/a???b.js"* ]] || { echo "$stderr"; false; }
+    [[ "$stderr" == *"src/a??b.js"* || "$stderr" == *"src/a???b.js"* ]] || { echo "$stderr"; false; }
     rm -f -- "$REPO/$p"
   done
   rm -rf "$REPO/.vetdd"
@@ -469,6 +548,27 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
   green s1
   run --separate-stderr mr s1
   [[ "$stderr" == *"comma"* ]] || { echo "$stderr"; false; }
+}
+
+@test "a path with a newline is refused: the output stays one line" {
+  red s1
+  printf '%s\n' q1 > "src/a
+b.js"
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 2 ] || { echo "$status $output $stderr"; false; }
+  [ -z "$output" ]
+}
+
+@test "a meta.json whose run oracle is malformed: exit 2, the oracle files are never mutated by mistake" {
+  red s1
+  printf '%s\n' X1 a2 a3 a4 a5 > src/a.js
+  printf 'echo changed\n' >> test.sh
+  green s1
+  tamper s1 '.runs[1].oracle.files = [1]'
+  run --separate-stderr mr s1
+  [ "$status" -eq 2 ] || { echo "$status $output $stderr"; false; }
+  [ -z "$output" ]
 }
 
 @test "a symbolic link the slice added is not a file to mutate" {
@@ -484,9 +584,9 @@ green() { ev "$1" after -- true >/dev/null 2>&1; }
 # --- docs ---------------------------------------------------------------------------------------
 
 @test "the script's header names its usage and exit codes" {
-  sed -n 2,30p "$SCRIPTS/mutate-ranges.sh" | grep -q 'Usage: mutate-ranges.sh <slice-id> \[--file <path>\]'
-  sed -n 2,30p "$SCRIPTS/mutate-ranges.sh" | grep -q 'Exit 0'
-  sed -n 2,30p "$SCRIPTS/mutate-ranges.sh" | grep -q ' 3 '
+  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q 'Usage: mutate-ranges.sh <slice-id> \[--file <path>\]'
+  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q 'Exit 0'
+  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q ' 3 '
 }
 
 @test "test mode takes the ranges from mutate-ranges.sh, keeps the widening rule, and drops git diff -U0" {
