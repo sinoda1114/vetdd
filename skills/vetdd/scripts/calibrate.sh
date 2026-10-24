@@ -41,7 +41,7 @@
 # name every one the oracle imports); a runner that fails on the stub while loading it (native ESM
 # reports a missing named export as a link error) goes red for the wrong reason, so read the log.
 # Exit: 0 the calibration ended target_failure; 1 it did not; 2 usage or refused (nothing
-# changed); 3 the files could not be put back (state kept).
+# changed); 3 the files could not be put back, or plant could not hand the lock to its hold (state kept).
 set -u
 
 unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
@@ -311,31 +311,39 @@ take_lock() {
   if kill -0 "$opid" 2>/dev/null; then
     die "another calibration (slice $oslice, pid $opid) is running in this working tree; wait for it to end. If pid $opid is not calibrate.sh (check with: ps -p $opid), that run was killed and its pid reused: remove $lock and run: calibrate.sh restore $oslice"
   fi
-  if [ "$how" = restore ] && [ "$oslice" = "$slice" ]; then take_over "$owner"; return 0; fi
+  if [ "$oslice" = "$slice" ]; then
+    if [ "$how" = restore ]; then take_over "$owner"; return 0; fi
+    # A planted run killed during its checks, before it claimed the run: nothing changed yet.
+    if [ "$how" = planted ] && [ ! -d "$state/run.lock" ]; then take_over "$owner"; return 0; fi
+  fi
   die "a calibration of slice $oslice (pid $opid) was interrupted in this working tree and its files may still be parked; run: calibrate.sh restore $oslice"
 }
 # take_over <owner>: replace the lock read as <owner> with this run's. A guard link puts two takeovers
-# one after the other, and the owner is read again under it, so neither removes a lock the other made.
+# one after the other, and the owner is read again under it, so neither replaces a lock the other made;
+# the new owner goes in with one rename, so the lock never goes missing and no other run can claim it.
 take_over() {
   ln -s "$$:$slice" "$lock.takeover" 2>/dev/null \
     || die "another calibrate.sh is taking over the lock $lock; run again (if none is running, remove $lock.takeover)"
-  if [ "$(readlink "$lock" 2>/dev/null)" = "$1" ] && rm -f "$lock" && ln -s "$$:$slice" "$lock" 2>/dev/null; then
+  if [ "$(readlink "$lock" 2>/dev/null)" = "$1" ] && ln -s "$$:$slice" "$lock.new.$$" 2>/dev/null \
+     && mv -f "$lock.new.$$" "$lock"; then
     have_lock=1; took_over=1; rm -f "$lock.takeover"; return 0
   fi
-  rm -f "$lock.takeover"
+  rm -f "$lock.new.$$" "$lock.takeover"
   die "could not take over the lock $lock (another run claimed it); run again"
 }
 # release_lock: remove this run's lock, or, while hold=plant, hand it back to the plant hold (a
 # planted run that stops before its oracle runs leaves the mutation in place). The new owner is put
-# in place with one rename, so the lock never goes missing on the way.
+# in place with one rename, so the lock never goes missing on the way; when that fails the lock stays
+# under this (soon dead) pid, which this slice's planted or restore takes over, and it returns 1.
 hold=""
 release_lock() {
   [ "$have_lock" -eq 1 ] || return 0
   have_lock=0
   if [ "$hold" = plant ]; then
-    ln -s "plant:$slice" "$lock.new.$$" && mv -f "$lock.new.$$" "$lock" \
-      || { rm -f "$lock.new.$$"; warn "could not hold the working tree for planted $slice; run calibrate.sh restore $slice"; }
-    return 0
+    ln -s "plant:$slice" "$lock.new.$$" 2>/dev/null && mv -f "$lock.new.$$" "$lock" && return 0
+    rm -f "$lock.new.$$"
+    warn "could not hand the lock $lock to the plant hold; it stays under pid $$, which calibrate.sh planted $slice or restore $slice takes over"
+    return 1
   fi
   rm -f "$lock" || warn "could not remove the lock $lock; remove it by hand"
 }
@@ -479,7 +487,7 @@ case "$cmd" in
     ! unreadable "$state/oracle" "$state/others" || die "a file could not be fingerprinted; nothing was changed"
     echo plant > "$state/mode" && rm -f "$state/pid" || die "cannot write $state"
     trap - EXIT
-    hold=plant; release_lock  # the tree stays held for this slice's planted (or restore)
+    hold=plant; release_lock || exit 3  # the tree stays held for this slice's planted (or restore)
     echo "calibrate.sh: plant the mutation in the saved files now, then run: calibrate.sh planted $slice --oracle-file ... -- <command>"
     ;;
   planted)

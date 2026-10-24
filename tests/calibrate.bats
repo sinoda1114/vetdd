@@ -841,3 +841,49 @@ lock_path() { printf '%s/vetdd-calib/.lock' "$(git rev-parse --git-dir)"; }
   [ "$(cat a.js)" = "export const a = 1;" ]
   [ ! -e .vetdd/evidence/s1/meta.json ]
 }
+
+# --- review round 2 ----------------------------------------------------------------------------------
+
+@test "a takeover never leaves the tree unlocked: another slice started mid-takeover is refused (codex review 2)" {
+  export VETDD_TEST_HOOKS=1 CAL="$SCRIPTS/calibrate.sh" RCS="$BATS_TEST_TMPDIR/rcs.txt" LOCK="$(cd "$(git rev-parse --git-dir)" && pwd -P)/vetdd-calib/.lock"
+  printf '#!/bin/sh\nkill -9 "$VETDD_CALIBRATE_PID"\n' > killer.sh
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh killer.sh
+  # An rm that, when it removes the lock while a takeover is under way, starts another slice at once.
+  mkdir -p "$BATS_TEST_TMPDIR/shim"
+  printf '#!/bin/sh\nfor a in "$@"; do last="$a"; done\n/bin/rm "$@"; rc=$?\nif [ -z "${IN_SHIM:-}" ] && [ "$last" = "$LOCK" ] && [ -L "$LOCK.takeover" ]; then\n  IN_SHIM=1 "$CAL" unfix s2 --file helper.txt --oracle-file test.sh -- sh test.sh >/dev/null 2>&1; echo $? >> "$RCS"\nfi\nexit $rc\n' > "$BATS_TEST_TMPDIR/shim/rm"
+  chmod +x "$BATS_TEST_TMPDIR/shim/rm"
+  PATH="$BATS_TEST_TMPDIR/shim:$PATH" run cal restore s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -s "$RCS" ] || [ "$(cat "$RCS")" = 2 ] || { echo "s2 ran mid-takeover: exit $(cat "$RCS")"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -e .vetdd/evidence/s2/meta.json ]
+}
+
+@test "planted resumes after a planted run killed before it claimed the run (review 2 #2)" {
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --oracle-file test.sh
+  printf '41\n' > value.txt
+  # A planted run killed during its checks leaves its own dead pid on the lock, and no run.lock.
+  dead="$(sh -c 'echo $$')"
+  rm -f "$(lock_path)" && ln -s "$dead:s2" "$(lock_path)"
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -L "$(lock_path)" ]
+}
+
+@test "plant fails (exit 3) when it cannot hand the lock to the plant hold, and the tree stays locked (review 2 #3)" {
+  git add -A && git commit -q -m fixed
+  mkdir -p "$BATS_TEST_TMPDIR/shim"
+  printf '#!/bin/sh\nfor a in "$@"; do last="$a"; done\ncase "$last" in *.lock.new.*) exit 1 ;; esac\nexec /bin/ln "$@"\n' > "$BATS_TEST_TMPDIR/shim/ln"
+  chmod +x "$BATS_TEST_TMPDIR/shim/ln"
+  PATH="$BATS_TEST_TMPDIR/shim:$PATH" run cal plant s2 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$(readlink "$(lock_path)")" == *":s2" ]]
+  run cal plant s1 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 2 ]
+  printf '41\n' > value.txt
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+}
