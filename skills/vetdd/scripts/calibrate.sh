@@ -28,21 +28,27 @@
 # and restoring always writes those back, so neither line-ending conversion nor a staged edit can
 # alter what returns (stub puts a new file in place, so a hard link never keeps the stub). --file and
 # --oracle-file take regular files inside the repository (no directories, no symlinks, no newlines),
-# compared as files (-ef), so the oracle is never parked under another spelling. --seam, --oracle-version, --infra-exit, and --oracle-file pass through to
-# evidence.sh <slice> calibration. State lives in <git dir>/vetdd-calib/<slice>/, survives a killed
-# run, and its path is printed first. Fingerprints detect accidental damage; they are not a
+# compared as files (-ef), so the oracle is never parked under another spelling. --seam, --oracle-version,
+# --infra-exit, --test-report, and --oracle-file pass through to evidence.sh <slice> calibration, each
+# checked as evidence.sh does before anything is parked. State lives in <git dir>/vetdd-calib/<slice>/,
+# survives a killed run, and its path is printed first. One calibration at a time changes a working
+# tree: unfix, planted, stub, and restore hold <git dir>/vetdd-calib/.lock, a symbolic link naming the
+# pid and slice, and it stays held from plant to its planted, so a second slice can never save the
+# defect (or a mutation) as its "original" and write it back over the fix. A killed run leaves the lock
+# to its own restore. Fingerprints detect accidental damage; they are not a
 # security boundary (anyone who can write .git can already run hooks). The stub audit is a tripwire,
 # not a boundary: it stubs only the files named with --file (a product file left out is still real, so
 # name every one the oracle imports); a runner that fails on the stub while loading it (native ESM
 # reports a missing named export as a link error) goes red for the wrong reason, so read the log.
 # Exit: 0 the calibration ended target_failure; 1 it did not; 2 usage or refused (nothing
-# changed); 3 the files could not be put back (state kept).
+# changed); 3 the files could not be put back, or plant could not hand the lock to its hold (state kept).
 set -u
 
 unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" && [ -n "$here" ] || { echo "calibrate.sh: cannot locate itself" >&2; exit 2; }
 . "$here/lib/common.sh"
 . "$here/lib/tree-hash.sh"
+. "$here/lib/test-report.sh"
 vetdd_require_jq calibrate.sh
 
 # A name in a message (a file the user named) can hold control characters: show it filtered.
@@ -59,6 +65,8 @@ gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$gitdir" ] || 
 state="$gitdir/vetdd-calib/$slice"
 # The restore command (recovery after an interruption) keeps any content it replaces here.
 keep_replaced=0; replaced="$gitdir/vetdd-calib/$slice.replaced.$(date +%Y%m%d%H%M%S).$$"
+# The working tree's lock (a slice id never starts with a dot, so no slice is named .lock).
+lock="$gitdir/vetdd-calib/.lock"; have_lock=0; took_over=0
 
 # Literal pathspecs (a path with [ ] * ? is a name, not a glob), unquoted names, and whitespace
 # handling fixed, so neither the path nor the user's git config changes what is taken out.
@@ -90,7 +98,7 @@ rel() {
   printf '%s\n' "$path"
 }
 
-files=(); oracle=(); pass=(); argv=(); have_cmd=0
+files=(); oracle=(); pass=(); argv=(); have_cmd=0; have_report=0
 parse() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -115,8 +123,16 @@ parse() {
         # otherwise read as "the calibration did not go red" (exit 1).
         vetdd_is_slice_id "$2" || die "--oracle-version takes letters, digits, and . _ -"
         pass+=("$1" "$2"); shift 2 ;;
+      --test-report) [ $# -ge 2 ] || die "--test-report needs jest-json:<path>"
+        # evidence.sh's own checks, here before the fix is parked: its exit 2 would otherwise read as
+        # "the calibration did not go red". The path stays relative to the current directory, as evidence.sh reads it.
+        case "$2" in jest-json:?*) ;; *) die "--test-report takes jest-json:<path>" ;; esac
+        r="$(vetdd_report_rel "$top" "${2#jest-json:}")" \
+          || die "--test-report path is not a usable path inside the repository (a symbolic link, outside, through a file, or unreadable): ${2#jest-json:}"
+        vetdd_report_allowed "$top" "$r" || die "--test-report path must be an untracked file under .vetdd/reports/ (resolved to $r)"
+        have_report=1; pass+=("$1" "$2"); shift 2 ;;
       --) shift; argv=("$@"); have_cmd=1; return ;;
-      *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit)$(vetdd_split_hint "$1")" ;;
+      *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit, --test-report)$(vetdd_split_hint "$1")" ;;
     esac
   done
 }
@@ -271,11 +287,77 @@ restore() {
   mv "$state" "$state.done.$$" 2>/dev/null && rm -rf "$state.done.$$" || { warn "could not remove $state"; return 1; }
 }
 
+# take_lock [planted|restore]: claim the working tree's lock or die naming the run that holds it. The
+# link is made in one step (ln -s fails when the name exists), so its owner is never half written: <pid>:<slice>
+# while a run goes, plant:<slice> from plant to planted (the agent plants with no process running, and
+# no other slice may save or change the tree meanwhile). The slice's own planted takes over its plant
+# hold; its restore takes over that or a lock its killed run left. Liveness is kill -0, so the pid
+# namespace must be the one the lock was made in (a git dir shared with a container is not covered).
+take_lock() {
+  local how="${1:-}" owner opid oslice
+  mkdir -p "$(dirname -- "$lock")" || die "cannot create $(dirname -- "$lock")"
+  [ -L "$lock" ] || [ ! -e "$lock" ] || die "$lock is not a lock calibrate.sh made; inspect it and remove it by hand"
+  trap 'release_lock' EXIT
+  if ln -s "$$:$slice" "$lock" 2>/dev/null; then have_lock=1; return 0; fi
+  owner="$(readlink "$lock" 2>/dev/null)"; opid="${owner%%:*}"; oslice="${owner#*:}"
+  case "$opid" in plant) ;; ''|0*|*[!0-9]*) opid="" ;; esac
+  if [ -z "$opid" ] || ! vetdd_is_slice_id "$oslice"; then
+    die "the calibration lock $lock is unreadable; if no calibrate.sh is running in this working tree, remove it (rm $lock) and run again"
+  fi
+  if [ "$opid" = plant ]; then
+    if [ -n "$how" ] && [ "$oslice" = "$slice" ]; then take_over "$owner"; return 0; fi
+    die "slice $oslice has a mutation planted in this working tree, waiting for its run; run calibrate.sh planted $oslice (or calibrate.sh restore $oslice) first"
+  fi
+  if kill -0 "$opid" 2>/dev/null; then
+    die "another calibration (slice $oslice, pid $opid) is running in this working tree; wait for it to end. If pid $opid is not calibrate.sh (check with: ps -p $opid), that run was killed and its pid reused: remove $lock and run: calibrate.sh restore $oslice"
+  fi
+  if [ "$oslice" = "$slice" ]; then
+    if [ "$how" = restore ]; then take_over "$owner"; return 0; fi
+    # A planted run killed during its checks, before it claimed the run: nothing changed yet. A planted
+    # run or a restore that got further made run.lock, so the tree may be half put back.
+    if [ "$how" = planted ] && [ ! -d "$state/run.lock" ]; then take_over "$owner"; return 0; fi
+  fi
+  die "a calibration of slice $oslice (pid $opid) was interrupted in this working tree and its files may still be parked; run: calibrate.sh restore $oslice"
+}
+# take_over <owner>: replace the lock read as <owner> with this run's. A guard link puts two takeovers
+# one after the other, and the owner is read again under it, so neither replaces a lock the other made;
+# the new owner goes in with one rename, so the lock never goes missing and no other run can claim it.
+take_over() {
+  ln -s "$$:$slice" "$lock.takeover" 2>/dev/null \
+    || die "another calibrate.sh is taking over the lock $lock; run again (if none is running, remove $lock.takeover)"
+  if [ "$(readlink "$lock" 2>/dev/null)" = "$1" ] && ln -s "$$:$slice" "$lock.new.$$" 2>/dev/null \
+     && mv -f "$lock.new.$$" "$lock"; then
+    have_lock=1; took_over=1; rm -f "$lock.takeover"; return 0
+  fi
+  rm -f "$lock.new.$$" "$lock.takeover"
+  die "could not take over the lock $lock (another run claimed it); run again"
+}
+# release_lock: remove this run's lock, or, while hold=plant, hand it back to the plant hold (a
+# planted run that stops before its oracle runs leaves the mutation in place). The new owner is put
+# in place with one rename, so the lock never goes missing on the way; when that fails the lock stays
+# under this (soon dead) pid, which this slice's planted or restore takes over, and it returns 1.
+hold=""
+release_lock() {
+  [ "$have_lock" -eq 1 ] || return 0
+  have_lock=0
+  if [ "$hold" = plant ]; then
+    ln -s "plant:$slice" "$lock.new.$$" 2>/dev/null && mv -f "$lock.new.$$" "$lock" && return 0
+    rm -f "$lock.new.$$"
+    warn "could not hand the lock $lock to the plant hold; it stays under pid $$, which calibrate.sh planted $slice or restore $slice takes over"
+    return 1
+  fi
+  rm -f "$lock" || warn "could not remove the lock $lock; remove it by hand"
+}
+# on_exit: put the files back, then release the lock. When they cannot be put back, the lock stays for
+# this slice's restore, so no other slice runs on a tree that still holds a parked fix.
+on_exit() { restore || { have_lock=0; exit 3; }; hold=""; release_lock; }
+
 new_state() {
+  take_lock
   mkdir -p "$(dirname -- "$state")" || die "cannot create $(dirname -- "$state")"
   # mkdir without -p succeeds for exactly one caller, so it doubles as the lock for this slice.
   mkdir "$state" 2>/dev/null || die "a calibration for $slice is running or was interrupted; run: calibrate.sh restore $slice"
-  trap 'restore || exit 3' EXIT
+  trap 'on_exit' EXIT
   trap 'exit 130' INT TERM
   echo "calibrate.sh: saved state for $slice in $state"
   echo $$ > "$state/pid" && printf '%s\n' "${files[@]}" > "$state/files" || die "cannot write $state"
@@ -363,7 +445,8 @@ finish() {
   local rc="$1"
   trap '' INT TERM  # restoring must not be cut short
   trap - EXIT
-  restore || exit 3
+  restore || exit 3  # the lock stays for this slice's restore
+  hold=""; release_lock
   exit "$rc"
 }
 
@@ -373,7 +456,14 @@ case "$cmd" in
     new_files=()
     for f in "${files[@]}"; do
       if ! g ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
-        ! g check-ignore -q -- "$f" || die "$f is ignored by git and cannot be parked; unignore it or leave it out"
+        # Not through g: check-ignore refuses GIT_LITERAL_PATHSPECS (exit 128). It takes paths, not
+        # patterns, so a glob character is a name anyway; ./ keeps a leading : from reading as magic.
+        rc=0; GIT_LITERAL_PATHSPECS=0 git -C "$top" check-ignore -q -- "./$f" || rc=$?
+        case "$rc" in
+          0) die "$f is ignored by git and cannot be parked; unignore it or leave it out" ;;
+          1) ;;
+          *) die "git check-ignore failed on $f (exit $rc); nothing was changed" ;;
+        esac
         new_files+=("$f")
       fi
     done
@@ -398,12 +488,16 @@ case "$cmd" in
     ! unreadable "$state/oracle" "$state/others" || die "a file could not be fingerprinted; nothing was changed"
     echo plant > "$state/mode" && rm -f "$state/pid" || die "cannot write $state"
     trap - EXIT
+    hold=plant; release_lock || exit 3  # the tree stays held for this slice's planted (or restore)
     echo "calibrate.sh: plant the mutation in the saved files now, then run: calibrate.sh planted $slice --oracle-file ... -- <command>"
     ;;
   planted)
     parse "$@"; require_cmd; require_oracle
     [ ${#files[@]} -eq 0 ] || die "planted takes no --file; the saved set comes from plant"
     [ "$(cat "$state/mode" 2>/dev/null)" = plant ] || die "no planted state for $slice; run calibrate.sh plant first"
+    # The lock first, so another slice's run cannot change the tree under the checks below; a refusal
+    # from here until the oracle runs hands the tree back to the plant hold.
+    hold=plant; take_lock planted  # hold first: a signal right after the claim hands it back, never drops it
     now_oracle="$(oracle_prints)"; now_others="$(others)"
     ! printf '%s\n%s\n' "$now_oracle" "$now_others" | grep -q '^!' || die "a file could not be fingerprinted"
     [ "$now_oracle" = "$(cat "$state/oracle")" ] \
@@ -422,12 +516,13 @@ case "$cmd" in
     mkdir "$state/run.lock" 2>/dev/null || die "another planted run of $slice is running or was interrupted; run: calibrate.sh restore $slice"
     echo $$ > "$state/pid" || die "cannot claim $state"
     echo "calibrate.sh: saved state for $slice in $state"
-    trap 'restore || exit 3' EXIT
+    trap 'on_exit' EXIT
     trap 'exit 130' INT TERM
     run_oracle; finish $?
     ;;
   stub)
     parse "$@"; require_cmd; require_oracle; require_files
+    [ "$have_report" -eq 0 ] || die "stub takes no --test-report: the audit stubs the product, so its counts say nothing about the slice's tests"
     # Every extension is checked before anything is parked: a file with no stub changes nothing.
     for f in "${files[@]}"; do
       stub_text "$f" >/dev/null || die "$f has no stub for its extension (.ts .tsx .js .jsx .mjs .cjs .mts .cts, .py); nothing was changed"
@@ -442,13 +537,24 @@ case "$cmd" in
     run_oracle; finish $?
     ;;
   restore)
-    [ -d "$state" ] || die "nothing saved for $slice"
     pid="$(cat "$state/pid" 2>/dev/null)"
     if [ -n "$pid" ] && [ "$pid" != "$$" ] && kill -0 "$pid" 2>/dev/null; then
-      die "the calibration that owns $slice is still running (pid $pid); wait for it or stop it first"
+      # The pid may have been reused after a killed run: never ask to stop a process this script did not check.
+      die "the calibration that owns $slice is still running (pid $pid); wait for it to end. If pid $pid is not calibrate.sh (check with: ps -p $pid), that run was killed and its pid reused: remove $state/pid and run restore again"
     fi
+    take_lock restore
+    trap '' INT TERM  # restoring must not be cut short (an exit would release the lock mid-way)
+    if [ ! -d "$state" ]; then
+      [ "$took_over" -eq 1 ] || die "nothing saved for $slice"
+      release_lock
+      echo "calibrate.sh: nothing saved for $slice; removed the lock its interrupted run left"
+      exit 0
+    fi
+    # Marks a restore under way: if it stops half way, planted refuses to run on the half-restored tree.
+    mkdir -p "$state/run.lock" || die "cannot write $state"
     keep_replaced=1
-    restore || exit 3
+    restore || { have_lock=0; exit 3; }
+    release_lock
     echo "calibrate.sh: restored $slice"
     ;;
   *) die "unknown command: $cmd (unfix, plant, planted, stub, restore)" ;;

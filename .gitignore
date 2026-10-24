@@ -1,4 +1,4 @@
 .reference/
 .vetdd/
-node_modules/
+node_modules
 .3rd-review/

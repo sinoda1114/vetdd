@@ -102,7 +102,7 @@ EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
   sed -n '/^## Audits/,/^## /p' "$EVAL" | grep -q -- '-swap'
 }
 
-@test "calibrate.sh names --infra-exit in its usage and in the unknown-option message (N3)" {
-  grep -q 'unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit)' "$SCRIPTS/calibrate.sh"
+@test "calibrate.sh names --infra-exit in its usage and in the unknown-option message (N3), and --test-report there too (#5)" {
+  grep -q 'unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit, --test-report)' "$SCRIPTS/calibrate.sh"
   sed -n 13,14p "$SCRIPTS/calibrate.sh" | grep -q -- '--infra-exit'
 }
