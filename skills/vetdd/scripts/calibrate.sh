@@ -313,7 +313,8 @@ take_lock() {
   fi
   if [ "$oslice" = "$slice" ]; then
     if [ "$how" = restore ]; then take_over "$owner"; return 0; fi
-    # A planted run killed during its checks, before it claimed the run: nothing changed yet.
+    # A planted run killed during its checks, before it claimed the run: nothing changed yet. A planted
+    # run or a restore that got further made run.lock, so the tree may be half put back.
     if [ "$how" = planted ] && [ ! -d "$state/run.lock" ]; then take_over "$owner"; return 0; fi
   fi
   die "a calibration of slice $oslice (pid $opid) was interrupted in this working tree and its files may still be parked; run: calibrate.sh restore $oslice"
@@ -496,7 +497,7 @@ case "$cmd" in
     [ "$(cat "$state/mode" 2>/dev/null)" = plant ] || die "no planted state for $slice; run calibrate.sh plant first"
     # The lock first, so another slice's run cannot change the tree under the checks below; a refusal
     # from here until the oracle runs hands the tree back to the plant hold.
-    take_lock planted; hold=plant
+    hold=plant; take_lock planted  # hold first: a signal right after the claim hands it back, never drops it
     now_oracle="$(oracle_prints)"; now_others="$(others)"
     ! printf '%s\n%s\n' "$now_oracle" "$now_others" | grep -q '^!' || die "a file could not be fingerprinted"
     [ "$now_oracle" = "$(cat "$state/oracle")" ] \
@@ -549,6 +550,8 @@ case "$cmd" in
       echo "calibrate.sh: nothing saved for $slice; removed the lock its interrupted run left"
       exit 0
     fi
+    # Marks a restore under way: if it stops half way, planted refuses to run on the half-restored tree.
+    mkdir -p "$state/run.lock" || die "cannot write $state"
     keep_replaced=1
     restore || { have_lock=0; exit 3; }
     release_lock

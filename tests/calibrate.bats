@@ -887,3 +887,26 @@ lock_path() { printf '%s/vetdd-calib/.lock' "$(git rev-parse --git-dir)"; }
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(cat value.txt)" = 42 ]
 }
+
+# --- review round 3 ----------------------------------------------------------------------------------
+
+@test "planted does not resume over a restore that was killed half way (review 3 #1)" {
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --file sub/keep.txt --oracle-file test.sh
+  printf '41\n' > value.txt && printf 'mutated\n' > sub/keep.txt
+  # A mktemp that fails for the second file: restore stops half way (exit 3), as a kill there would,
+  # leaving its own pid on the lock and no temp file behind.
+  mkdir -p "$BATS_TEST_TMPDIR/shim"
+  printf '#!/bin/sh\ncase "$1" in */sub/keep.txt.*) exit 1 ;; esac\nexec "%s" "$@"\n' "$(command -v mktemp)" > "$BATS_TEST_TMPDIR/shim/mktemp"
+  chmod +x "$BATS_TEST_TMPDIR/shim/mktemp"
+  PATH="$BATS_TEST_TMPDIR/shim:$PATH" run cal restore s2
+  [ "$status" -eq 3 ]
+  [ "$(cat value.txt)" = 42 ] && [ "$(cat sub/keep.txt)" = mutated ] || { echo "the shim did not stop restore half way"; false; }
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"restore s2"* ]]
+  [ ! -e .vetdd/evidence/s2/meta.json ]
+  run cal restore s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat sub/keep.txt)" = keep ]
+}
