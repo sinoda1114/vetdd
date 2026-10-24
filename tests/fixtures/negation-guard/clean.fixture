@@ -1,0 +1,156 @@
+#!/usr/bin/env bats
+# Fixture for tests/negation-guard.bats: nothing here is a bare negation, so the scanner must report
+# no line. It is not run as a test file.
+
+# A function may end with the negation it returns; at the top level the scanner does not look.
+helper() { ! grep -q x "$1"; }
+! outside_a_test
+
+@test "the repository form" {
+  ! cmd || false
+  ! cmd arg | grep -q y || false
+  ! cmd || false; true
+  true && ! cmd || false
+  ! cmd || false  # a comment after it
+  ! cmd \
+    || false
+}
+
+@test "run with a bang" {
+  run ! cmd
+  run ! cmd arg
+}
+
+@test "tests and finds" {
+  [ ! -e x ]
+  [ ! -e x ] && [ ! -d y ]
+  [[ ! -e x ]]
+  [[ -n x && ! -e x ]]
+  [[ -n x || ! -e x ]]
+  test ! -e x
+  find . ! -type d
+  [ "$x" != y ]
+}
+
+@test "bangs inside strings" {
+  echo "! cmd"
+  echo '! cmd'
+  echo "a; ! cmd"
+  echo $'a; ! cmd'
+  run bash -c '! cmd'
+  x="$(printf '%s' "; ! cmd")"
+  x='
+! cmd
+'
+  x="
+  ! cmd
+"
+}
+
+@test "bangs inside comments" {
+  # ! cmd
+  true # ; ! cmd
+}
+
+@test "bangs inside heredocs" {
+  cat <<EOF >/dev/null
+! cmd
+  ! cmd
+EOF
+  cat <<'EOF' >/dev/null
+true; ! cmd
+EOF
+	cat <<-EOF >/dev/null
+	! cmd
+	EOF
+  cat << "END" >/dev/null
+! cmd
+END
+}
+
+@test "bangs in conditions" {
+  if ! cmd; then :; fi
+  if true && ! cmd; then :; fi
+  if false; then :; elif ! cmd; then :; fi
+  while ! true; do break; done
+  until ! false; do :; done
+  if ! cmd &&
+     ! other; then :; fi
+}
+
+@test "words that only look like a bang" {
+  echo !
+  echo x!
+  x=${y:-!}
+  : $((1 << 2)) $(( ! 0 ))
+}
+
+# Other helpers, in every form a function can be declared.
+function helper2 { ! grep -q x "$1"; }
+function helper3() { ! grep -q x "$1"; }
+
+@test "compound commands whose status counts" {
+  true || { ! cmd || false; }
+  { ! cmd || false; } 2>/dev/null
+  ! { true; } || false
+  case x in a) true; esac
+  case x in
+    a) true ;;
+    *) true
+  esac
+  if (true) then :; fi
+  while (false) do :; done
+}
+
+@test "array values and here-strings" {
+  args=(! cmd)
+  args=(if then else)
+  args=(
+    ! cmd   # a comment
+    'x)'
+  )
+  value=$(cat <<< "$input")
+  cat <<EOF - "$(printf x
+echo inner)" >/dev/null
+! cmd
+EOF
+}
+
+helper4() {
+  local x=1
+  ! grep -q x "$x"
+}
+
+helper5()
+{
+  ! grep -q x "$1"
+}
+
+@test "case and arithmetic inside \$( ), empty heredoc delimiters, functions defined in a test" {
+  # bash 5 reads a bare pattern ) inside $( ); bash 3.2 needs the (a) form.
+  x=$(case $y in a) echo;; esac)
+  x=$(case $y in (a) echo;; (*) (echo) ;; esac)
+  x=$( (( a << 1 )) )
+  cat <<"" >/dev/null
+! cmd
+
+  cat <<'' >/dev/null
+! cmd
+
+  absent() { ! grep -q x "$1"; }
+  absent2() {
+    : first
+    ! grep -q x "$1"
+  }
+}
+
+@test "case as a plain word inside \$( ) and array values" {
+  x=$(echo case)
+  x=$(printf '%s' case)
+  x=$("echo" case)
+  args=(if case)
+  args=(
+case
+  )
+  x=$(echo esac; case y in (y) echo ;; esac)
+}
