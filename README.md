@@ -73,7 +73,7 @@ evals/              eval の課題・rubric・実行結果（回帰セット）
 git clone https://github.com/sinoda1114/vetdd.git && vetdd/install.sh
 ```
 
-`install.sh` は前提のコマンドを確かめ、`~/.claude/skills/vetdd` に入れます（`CLAUDE_CONFIG_DIR` があればその下、`--dest` で場所を変えられます）。すでに入っている版は `~/.claude/skills-backup/vetdd-<日時>` へ移してから入れ替えます。同じ版なら何もしません。更新するときは `git pull` してからもう一度実行します。
+`install.sh` は前提のコマンドを確かめ、`~/.claude/skills/vetdd` に入れます（`CLAUDE_CONFIG_DIR` があればその下、`--dest` で場所を変えられます）。`--dest` の親は自分（または root）のもので、ほかの誰も書き込めない場所にします（`/tmp` の直下のような共有の場所は断ります）。すでに入っている版は `~/.claude/skills-backup/vetdd-<日時>` へ移してから入れ替え、入れ替えに失敗したときや途中で中断したときは元へ戻します。同じ版なら何もしません。更新するときは `git pull` してからもう一度実行します。
 
 判定者の codex は、ログインをファイルに保存している必要があります。判定者は利用者の codex 設定から切り離した専用の場所で動き、そこへ貸せるのはファイルのログインだけだからです。OS のキーチェーンに保存している場合は、`~/.codex/config.toml` に `cli_auth_credentials_store = "file"` を書いてから `codex login` をやり直します。ファイルのログインは平文で置かれ、同じ利用者の権限で動くプロセスなら確認なしに読めます。`ls -l ~/.codex/auth.json` で自分だけが読める（`-rw-------`）ことを確かめてください。判定者を使わない（eval をしない、test と verify を `blocked` で終える）なら、キーチェーンのままで構いません。
 

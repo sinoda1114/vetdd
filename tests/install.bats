@@ -45,6 +45,22 @@ same_as_tracked() {
   git -C "$SRC" ls-files | while IFS= read -r f; do cmp -s "$SRC/$f" "$1/$f" || { echo "differs: $f"; exit 1; }; done
 }
 
+# shim_final_move <shell code>: an mv and a perl that run <shell code> when they are asked to move the
+# new copy out of its temporary directory (an argument naming .vetdd-install.), then do the real work.
+shim_final_move() {
+  local d="$BATS_TEST_TMPDIR/movebin" t real
+  mkdir -p "$d"
+  for t in mv perl; do
+    real="$(command -v "$t")"
+    printf '#!/bin/sh\ncase "$*" in */.vetdd-install.*) %s ;; esac\nexec "%s" "$@"\n' "$1" "$real" > "$d/$t"
+    chmod +x "$d/$t"
+  done
+  printf '%s' "$d"
+}
+
+# gid_of <path>: the numeric group of <path>.
+gid_of() { ls -ldn "$1" | awk '{print $4}'; }
+
 @test "installs a copy of skills/vetdd and names the next step" {
   run "$INSTALL"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -85,7 +101,7 @@ same_as_tracked() {
 }
 
 @test "an install that is a link (a development checkout) is backed up as the link and replaced by a copy" {
-  mkdir -p "$CLAUDE_CONFIG_DIR/skills" "$BATS_TEST_TMPDIR/dev"
+  mkdir -p "$CLAUDE_CONFIG_DIR/skills" "$BATS_TEST_TMPDIR/dev" && old_skill "$BATS_TEST_TMPDIR/dev/SKILL.md"
   ln -s "$BATS_TEST_TMPDIR/dev" "$DEST"
   run "$INSTALL"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -146,11 +162,9 @@ same_as_tracked() {
 
 @test "r1: when the new copy cannot be put in place, the old install comes back" {
   mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
-  # A mv that fails only for the final step (moving the new copy out of the temporary directory).
-  mkdir -p "$BATS_TEST_TMPDIR/mvbin"
-  printf '#!/bin/sh\ncase "$1" in */.vetdd-install.*) exit 1 ;; esac\nexec /bin/mv "$@"\n' > "$BATS_TEST_TMPDIR/mvbin/mv"
-  chmod +x "$BATS_TEST_TMPDIR/mvbin/mv"
-  PATH="$BATS_TEST_TMPDIR/mvbin:$PATH" run "$INSTALL"
+  # Only the final step (moving the new copy out of the temporary directory) fails.
+  local mb; mb="$(shim_final_move 'exit 1')"
+  PATH="$mb:$PATH" run "$INSTALL"
   [ "$status" -eq 1 ] || { echo "$output"; false; }
   grep -qx old "$DEST/SKILL.md"
 }
@@ -290,4 +304,153 @@ same_as_tracked() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ -z "$(find "$DEST" ! -user "$(id -u)")" ]
   [ -x "$DEST/scripts/evidence.sh" ] && [ ! -x "$DEST/SKILL.md" ]
+}
+
+# Issue #48: a --dest in a shared place, behind a link, or racing another installer.
+
+@test "i48: a --dest directly in a shared sticky directory (/tmp) is refused, nothing created" {
+  [ -n "$(find /tmp/ -maxdepth 0 -perm -1002 -user 0)" ] || skip "/tmp is not a root-owned sticky shared directory here"
+  local d="/tmp/vetdd-i48-${BATS_TEST_TMPDIR##*/}-$$"
+  run "$INSTALL" --dest "$d"
+  [ -e "$d" ] && rm -rf "$d"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"someone else can write"* ]]
+}
+
+@test "i48: a --dest in a private directory under /tmp is accepted (a sticky ancestor is fine)" {
+  local d; d="$(mktemp -d /tmp/vetdd-i48.XXXXXX)"
+  run "$INSTALL" --dest "$d/vetdd"
+  local ok=0; same_as_tracked "$d/vetdd" || ok=1
+  rm -rf "$d"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$ok" -eq 0 ]
+}
+
+@test "i48: a --dest that is a link to a directory that is not a vetdd install is refused, untouched" {
+  mkdir -p "$CLAUDE_CONFIG_DIR/skills" "$BATS_TEST_TMPDIR/mine/notes"
+  printf 'keep\n' > "$BATS_TEST_TMPDIR/mine/notes/a.md"
+  ln -s "$BATS_TEST_TMPDIR/mine" "$DEST"
+  run "$INSTALL"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"not a vetdd install"* ]]
+  [ -L "$DEST" ] && [ -f "$BATS_TEST_TMPDIR/mine/notes/a.md" ] && [ ! -e "$BATS_TEST_TMPDIR/mine/SKILL.md" ]
+  [ ! -e "$CLAUDE_CONFIG_DIR/skills-backup" ]
+}
+
+@test "i48: the parent is resolved once: a link swapped after the checks does not move the install" {
+  mkdir -p "$BATS_TEST_TMPDIR/real-skills" "$BATS_TEST_TMPDIR/l" "$BATS_TEST_TMPDIR/shared"
+  chmod 777 "$BATS_TEST_TMPDIR/shared"
+  ln -s "$BATS_TEST_TMPDIR/real-skills" "$BATS_TEST_TMPDIR/l/skills"
+  # A find that, when the checks reach /, points the link at the shared directory (once).
+  local fb="$BATS_TEST_TMPDIR/findbin" realfind; realfind="$(command -v find)"
+  mkdir -p "$fb"
+  printf '#!/bin/sh\nif [ "$1" = / ] && [ ! -e "%s/swapped" ]; then : > "%s/swapped"; rm "%s"; ln -s "%s" "%s"; fi\nexec "%s" "$@"\n' \
+    "$fb" "$fb" "$BATS_TEST_TMPDIR/l/skills" "$BATS_TEST_TMPDIR/shared" "$BATS_TEST_TMPDIR/l/skills" "$realfind" > "$fb/find"
+  chmod +x "$fb/find"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/l/skills/vetdd"
+  [ -e "$fb/swapped" ]
+  [ ! -e "$BATS_TEST_TMPDIR/shared/vetdd" ]
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  same_as_tracked "$BATS_TEST_TMPDIR/real-skills/vetdd"
+}
+
+@test "i48: directories it creates for --dest are not writable by group or others, whatever the umask" {
+  umask 000
+  run "$INSTALL" --dest "$BATS_TEST_TMPDIR/made/a/b/vetdd"
+  umask 022
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -z "$(find "$BATS_TEST_TMPDIR/made" -type d \( -perm -g+w -o -perm -o+w \))" ]
+  same_as_tracked "$BATS_TEST_TMPDIR/made/a/b/vetdd"
+}
+
+@test "i48: the skills-backup directory it creates is not writable by group or others, whatever the umask" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  umask 000
+  run "$INSTALL"
+  umask 022
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -d "$CLAUDE_CONFIG_DIR/skills-backup" ]
+  [ -z "$(find "$CLAUDE_CONFIG_DIR/skills-backup" -maxdepth 0 \( -perm -g+w -o -perm -o+w \))" ]
+}
+
+@test "i48: backup names already taken (even twice) are skipped, never moved into" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local bk="$CLAUDE_CONFIG_DIR/skills-backup" ts=20260101-000000 db="$BATS_TEST_TMPDIR/datebin" n
+  mkdir -p "$bk/vetdd-$ts" "$bk/vetdd-$ts-1" "$db"
+  : > "$bk/vetdd-$ts/mark" && : > "$bk/vetdd-$ts-1/mark"
+  # A date with a fixed time that also takes the names an installer would try next (its pid).
+  printf '#!/bin/sh\nfor p in $PPID $(ps -o ppid= -p $PPID); do mkdir -p "%s/vetdd-%s-$p" && : > "%s/vetdd-%s-$p/mark"; done\necho %s\n' \
+    "$bk" "$ts" "$bk" "$ts" "$ts" > "$db/date"
+  chmod +x "$db/date"
+  PATH="$db:$PATH" run "$INSTALL"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  same_as_tracked "$DEST"
+  for n in "$bk"/vetdd-"$ts"*; do
+    [ ! -f "$n/mark" ] || [ "$(ls -A "$n")" = mark ] || { echo "moved into $n: $(ls -A "$n")"; false; }
+  done
+  [ "$(grep -lx old "$bk"/vetdd-"$ts"*/SKILL.md | wc -l | tr -d ' ')" -eq 1 ]
+}
+
+@test "i48: another installer creating --dest before the final move: it stops, never nests the copy" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local mb; mb="$(shim_final_move "mkdir -p '$DEST' && echo other > '$DEST/other.txt'")"
+  PATH="$mb:$PATH" run "$INSTALL"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ ! -e "$DEST/vetdd" ] && [ "$(ls -A "$DEST")" = other.txt ]
+  local b; b="$(ls -d "$CLAUDE_CONFIG_DIR"/skills-backup/vetdd-* | head -1)"
+  grep -qx old "$b/SKILL.md"
+  [[ "$output" == *"$b"* ]]
+}
+
+@test "i48: interrupted (Ctrl-C) between the backup and the final move, the old install comes back" {
+  mkdir -p "$DEST" && old_skill "$DEST/SKILL.md"
+  local mb; mb="$(shim_final_move 'kill -INT $PPID; kill -INT $$')"
+  PATH="$mb:$PATH" run "$INSTALL"
+  [ "$status" -ne 0 ] || { echo "$output"; false; }
+  grep -qx old "$DEST/SKILL.md"
+  [ -z "$(ls -A "$CLAUDE_CONFIG_DIR/skills" | grep -v '^vetdd$')" ]
+}
+
+# fake_upg <members> <other primary user, or empty>: an id that reports a group named after the user
+# (the gid of $BATS_TEST_TMPDIR/grp), and a getent that lists <members> in it and, if given, another
+# user whose primary group it is.
+fake_upg() {
+  local fb="$BATS_TEST_TMPDIR/upgbin" g realid; realid="$(command -v id)"
+  g="$(gid_of "$BATS_TEST_TMPDIR/grp")"
+  mkdir -p "$fb"
+  printf '#!/bin/sh\ncase "$1" in -un|-gn) echo me ;; -g) echo %s ;; *) exec "%s" "$@" ;; esac\n' "$g" "$realid" > "$fb/id"
+  printf '#!/bin/sh\ncase "$1" in group) echo "me:x:%s:%s" ;; passwd) echo "me:x:1:%s::/:/bin/sh"; [ -z "%s" ] || echo "%s:x:2:%s::/:/bin/sh" ;; esac\n' \
+    "$g" "$1" "$g" "$2" "$2" "$g" > "$fb/getent"
+  chmod +x "$fb/id" "$fb/getent"
+  printf '%s' "$fb"
+}
+
+@test "i48: a group-writable parent is accepted when the group is the user's own with no other member" {
+  mkdir -p "$BATS_TEST_TMPDIR/grp" && chmod 775 "$BATS_TEST_TMPDIR/grp"
+  local fb; fb="$(fake_upg "" "")"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/grp/vetdd"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "i48: a group-writable parent is refused when the user's own group has another member" {
+  mkdir -p "$BATS_TEST_TMPDIR/grp" && chmod 775 "$BATS_TEST_TMPDIR/grp"
+  local fb; fb="$(fake_upg "me,eve" "")"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/grp/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [ ! -e "$BATS_TEST_TMPDIR/grp/vetdd" ]
+}
+
+@test "i48: a group-writable parent is refused when another user has the user's own group as primary" {
+  mkdir -p "$BATS_TEST_TMPDIR/grp" && chmod 775 "$BATS_TEST_TMPDIR/grp"
+  local fb; fb="$(fake_upg "" eve)"
+  PATH="$fb:$PATH" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/grp/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "i48: a group-writable parent is refused when the group's members cannot be checked (no getent)" {
+  mkdir -p "$BATS_TEST_TMPDIR/grp" && chmod 775 "$BATS_TEST_TMPDIR/grp"
+  local fb; fb="$(fake_upg "" "")"
+  rm "$fb/getent"
+  PATH="$fb:$(without getent)" run "$INSTALL" --dest "$BATS_TEST_TMPDIR/grp/vetdd"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
 }

@@ -2,20 +2,24 @@
 # Install the vetdd skill from this checkout into Claude Code's skills directory.
 # Usage: install.sh [--dest <dir>]
 #   --dest   where the skill goes (default: ${CLAUDE_CONFIG_DIR:-~/.claude}/skills/vetdd); a relative
-#            path is taken from the current directory. Its parent must be the user's and not writable
-#            by others (a shared place such as /tmp), so nobody can swap a directory in between the
-#            steps below.
+#            path is taken from the current directory. Its parent must be the user's (or root's) and
+#            writable by nobody else, not even a shared sticky place such as /tmp (an ancestor may be
+#            one), so nobody can swap a directory or a link in between the steps below. An existing
+#            --dest, or the directory a link there points at, must be a vetdd install.
 # Steps: check the tools the scripts need (bash, git, jq, perl, node; all missing ones are named);
 # copy the files git tracks under skills/vetdd (all of them when the checkout is not a git
 # repository) into a private temporary directory beside <dest>; leave an install that matches that
 # copy (content, execute bits, links) alone; otherwise move the existing one (a directory, or a link
-# to a development checkout) to ${CLAUDE_CONFIG_DIR:-~/.claude}/skills-backup/vetdd-<time> and put
-# the copy in its place, moving the old one back when that fails. codex is not required to install,
+# to a development checkout) to ${CLAUDE_CONFIG_DIR:-~/.claude}/skills-backup/vetdd-<time> (-1, -2,
+# ... when taken) and put the copy in its place, moving the old one back when that fails or is
+# interrupted. Directories it creates are never writable by group or others. codex is not required to install,
 # but the separate judge needs it with a file login: a missing codex or login is reported, not fatal.
 # Exit: 0 installed or up to date; 1 a required tool is missing or a step failed (the install in
 # place is kept); 2 usage error.
 set -u
 unset CDPATH GIT_DIR GIT_WORK_TREE
+# Directories made below (the parents of --dest, skills-backup) are writable by the user alone.
+umask g-w,o-w
 
 die() { printf 'install.sh: %s\n' "$1" >&2; exit "${2:-1}"; }
 say() { printf 'install.sh: %s\n' "$1"; }
@@ -61,14 +65,24 @@ elif [ -n "$(find -H "$codex_home/auth.json" -maxdepth 0 \( -perm -g+r -o -perm 
   say "WARNING: your codex login ($codex_home/auth.json) is readable by others; run chmod 600 on it"
 fi
 
-# safe_dir <dir>: its real path and every ancestor up to / are the user's or root's and writable by no
-# one else: by others only when sticky and root's (/tmp), by the group only when the group is the
-# user's own (a user-private group) or the directory is sticky and root's. Sets bad to the first that is not.
+# own_group: the gid of a user-private group (named after the user, with no other member, listed or
+# as a primary group), whose write bit is the user's alone; empty when that cannot be checked (no getent).
 uid="$(id -u)"; own_group=""
-[ "$(id -gn)" != "$(id -un)" ] || own_group="$(id -g)"
+if [ "$(id -gn)" = "$(id -un)" ] && command -v getent >/dev/null 2>&1; then
+  me="$(id -un)"; gid="$(id -g)"
+  grp="$(getent group "$gid")" && [ -n "$grp" ] && members="${grp##*:}" \
+    && { [ -z "$members" ] || [ "$members" = "$me" ]; } \
+    && [ -z "$(getent passwd | awk -F: -v g="$gid" -v me="$me" '$4 == g && $1 != me')" ] \
+    && own_group="$gid"
+fi
+# safe_dir <real dir>: <real dir> (a path with no link in it) is the user's or root's and nobody else
+# can write to it (the group only when it is own_group), and so is every ancestor up to /, except
+# that an ancestor may be writable by all when it is sticky and root's (/tmp). Sets bad to the first
+# that is not.
 safe_dir() {
-  local d
-  d="$(cd "$1" 2>/dev/null && pwd -P)" || { bad="$1"; return 1; }
+  local d="$1"
+  [ -n "$(find "$d" -maxdepth 0 ! -perm -o+w \( ! -perm -g+w ${own_group:+-o -group "$own_group"} \) 2>/dev/null)" ] \
+    || { bad="$d"; return 1; }
   while :; do
     [ -n "$(find "$d" -maxdepth 0 \( -user "$uid" -o -user 0 \) \
       \( ! -perm -o+w -o \( -perm -1000 -user 0 \) \) \
@@ -78,20 +92,40 @@ safe_dir() {
     d="$(dirname -- "$d")"
   done
 }
+# real_dir <dir>: create <dir> if needed and print its real path, resolved once: the checks and
+# every later step use that same path, so a link swapped in between changes nothing.
+real_dir() { mkdir -p "$1" 2>/dev/null && (cd "$1" 2>/dev/null && pwd -P); }
+# move <from> <to>: rename(2), which never moves <from> into a directory already at <to> (mv would)
+# and fails on a link there; both must be on the same file system.
+move() { perl -e 'rename($ARGV[0], $ARGV[1]) or die "install.sh: cannot move $ARGV[0] to $ARGV[1]: $!\n"' "$1" "$2"; }
 
 parent="${dest%/*}"; [ -n "$parent" ] || parent=/
-mkdir -p "$parent" || die "cannot create $parent"
+parent="$(real_dir "$parent")" || die "cannot create or enter ${dest%/*}"
+dest="${parent%/}/${dest##*/}"
 safe_dir "$parent" \
   || die "$bad is not yours (or root's), or someone else can write to it; give a --dest under directories only you can change"
-# From here on the real path: a link in --dest is resolved once, after it was checked.
-dest="$(cd "$parent" && pwd -P)/${dest##*/}"; parent="${dest%/*}"; [ -n "$parent" ] || parent=/
-# A directory that is not a vetdd install (--dest naming the skills directory itself, say) is never moved away.
-if [ -d "$dest" ] && [ ! -L "$dest" ] && ! grep -qx 'name: vetdd' "$dest/SKILL.md" 2>/dev/null; then
+# A directory that is not a vetdd install (--dest naming the skills directory itself, or a link to
+# one, say) is never moved away.
+if [ -d "$dest" ] && ! grep -qx 'name: vetdd' "$dest/SKILL.md" 2>/dev/null; then
   die "$dest exists and is not a vetdd install; give --dest the vetdd directory itself (e.g. ~/.claude/skills/vetdd)"
 fi
 
 tmp="$(mktemp -d "$parent/.vetdd-install.XXXXXX")" || die "cannot create a temporary directory in $parent"
-trap 'rm -rf "$tmp"' EXIT
+# moved: where the old install is while nothing is at $dest. On any exit before the copy is in
+# place (a failure, Ctrl-C, a kill) it goes back, unless something else took $dest meanwhile.
+moved=""
+put_back() {
+  [ -n "$moved" ] || return 0
+  if [ ! -e "$dest" ] && [ ! -L "$dest" ] \
+     && { move "$moved" "$dest" 2>/dev/null || { [ ! -e "$dest" ] && [ ! -L "$dest" ] && mv "$moved" "$dest"; }; }; then
+    printf 'install.sh: moved the old install back to %s\n' "$dest" >&2
+  else
+    printf 'install.sh: the old install stays at %s\n' "$moved" >&2
+  fi
+  moved=""
+}
+trap 'put_back; rm -rf "$tmp"' EXIT
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
 new="$tmp/vetdd"
 # The checkout itself is a git repository: only what git tracks goes (no .DS_Store or scratch file).
 # A copy that is not one (an unpacked archive, even inside another repository) goes whole.
@@ -131,20 +165,24 @@ if [ -d "$dest" ] && [ ! -L "$dest" ] && diff -r "$new" "$dest" >/dev/null 2>&1 
    && [ "$(shape "$new")" = "$(shape "$dest")" ]; then
   say "$dest is up to date"
 else
-  b=""
   if [ -e "$dest" ] || [ -L "$dest" ]; then
-    backups="$conf/skills-backup"
-    mkdir -p "$backups" || die "cannot create $backups"
+    backups="$(real_dir "$conf/skills-backup")" || die "cannot create or enter $conf/skills-backup"
     safe_dir "$backups" || die "$bad is not yours (or root's), or someone else can write to it; the install in place is kept"
-    b="$backups/vetdd-$(date +%Y%m%d-%H%M%S)"
-    [ ! -e "$b" ] && [ ! -L "$b" ] || b="$b-$$"
-    mv "$dest" "$b" || die "cannot move the existing install to $b"
-    say "moved the existing install to $b"
+    # First into a fresh private directory (mv may copy across file systems, and nothing can be
+    # waiting there), then renamed to the first free vetdd-<time>[-n] beside it.
+    hold="$(mktemp -d "$backups/.vetdd-backup.XXXXXX")" || die "cannot create a directory in $backups"
+    mv "$dest" "$hold/vetdd" || { rmdir "$hold"; die "cannot move the existing install to $hold"; }
+    moved="$hold/vetdd"
+    stamp="$backups/vetdd-$(date +%Y%m%d-%H%M%S)"; b="$stamp"; n=0
+    while [ -e "$b" ] || [ -L "$b" ] || ! move "$moved" "$b" 2>/dev/null; do
+      n=$((n + 1)); [ "$n" -le 99 ] || { b=""; break; }
+      b="$stamp-$n"
+    done
+    if [ -n "$b" ]; then rmdir "$hold"; moved="$b"; fi
+    say "moved the existing install to $moved"
   fi
-  if ! mv "$new" "$dest"; then
-    [ -z "$b" ] || mv "$b" "$dest" || die "cannot put the new copy at $dest, nor move the old one back from $b"
-    die "cannot put the new copy at $dest; the install in place is kept"
-  fi
+  move "$new" "$dest" || die "cannot put the new copy at $dest"
+  moved=""
   say "installed $dest"
 fi
 say "next: in each project, run $dest/scripts/setup-project.sh"
