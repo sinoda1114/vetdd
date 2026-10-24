@@ -1,0 +1,118 @@
+#!/usr/bin/env bats
+# Fixture for tests/negation-guard.bats: every line that names `caught` holds a bare negation the
+# scanner must report (and no other line may be reported). It is not run as a test file.
+
+@test "indented" {
+  ! caught
+}
+
+@test "at the start of the line" {
+! caught
+}
+
+@test "a tab after the bang" {
+  !	caught
+}
+
+@test "|| false only in a trailing comment" {
+  ! caught # || false
+}
+
+@test "|| false only inside a string" {
+  ! caught "|| false"
+}
+
+@test "followed by || with something other than false" {
+  ! caught || true
+}
+
+@test "followed by &&" {
+  ! caught && true
+}
+
+@test "a negated pipeline" {
+  ! caught | cat
+}
+
+@test "after ;" {
+  true; ! caught
+}
+
+@test "after ; with no space" {
+  true;! caught
+}
+
+@test "after &&" {
+  true && ! caught
+}
+
+@test "after ||" {
+  false || ! caught
+}
+
+@test "after a background &" {
+  true & ! caught
+}
+
+@test "after then" {
+  if true; then ! caught; fi
+}
+
+@test "on its own line in an if body" {
+  if true; then
+    ! caught
+  fi
+}
+
+@test "after else" {
+  if false; then :; else ! caught; fi
+}
+
+@test "after do" {
+  for x in a; do ! caught; done
+}
+
+@test "in a while body" {
+  while true; do ! caught; break; done
+}
+
+@test "inside { }" {
+  { ! caught; }
+}
+
+@test "inside { } after ||" {
+  true || { ! caught; }
+}
+
+@test "inside a subshell" {
+  ( ! caught; true )
+}
+
+@test "in a case branch" {
+  case x in x) ! caught ;; esac
+}
+
+@test "continued on the next line" {
+  ! caught \
+    arg
+}
+
+@test "after a string that spans lines" {
+  x='a
+b'; ! caught
+}
+
+@test "after a heredoc" {
+  cat <<EOF >/dev/null
+text
+EOF
+  ! caught
+}
+
+@test "after an if whose condition negates" {
+  if ! true; then :; fi; ! caught
+}
+
+@test "after [[ ... && ... ]]" {
+  [[ -n x && -n y ]] && ! caught
+}

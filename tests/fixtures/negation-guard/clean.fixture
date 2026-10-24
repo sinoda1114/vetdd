@@ -1,0 +1,86 @@
+#!/usr/bin/env bats
+# Fixture for tests/negation-guard.bats: nothing here is a bare negation, so the scanner must report
+# no line. It is not run as a test file.
+
+# Outside @test the scanner does not look: a helper may end with a negation it returns.
+helper() { ! grep -q x "$1"; }
+! outside_a_test
+
+@test "the repository form" {
+  ! cmd || false
+  ! cmd arg | grep -q y || false
+  ! cmd || false; true
+  true && ! cmd || false
+  ! cmd || false  # a comment after it
+  ! cmd \
+    || false
+}
+
+@test "run with a bang" {
+  run ! cmd
+  run ! cmd arg
+}
+
+@test "tests and finds" {
+  [ ! -e x ]
+  [ ! -e x ] && [ ! -d y ]
+  [[ ! -e x ]]
+  [[ -n x && ! -e x ]]
+  [[ -n x || ! -e x ]]
+  test ! -e x
+  find . ! -type d
+  [ "$x" != y ]
+}
+
+@test "bangs inside strings" {
+  echo "! cmd"
+  echo '! cmd'
+  echo "a; ! cmd"
+  echo $'a; ! cmd'
+  run bash -c '! cmd'
+  x="$(printf '%s' "; ! cmd")"
+  x='
+! cmd
+'
+  x="
+  ! cmd
+"
+}
+
+@test "bangs inside comments" {
+  # ! cmd
+  true # ; ! cmd
+}
+
+@test "bangs inside heredocs" {
+  cat <<EOF >/dev/null
+! cmd
+  ! cmd
+EOF
+  cat <<'EOF' >/dev/null
+true; ! cmd
+EOF
+	cat <<-EOF >/dev/null
+	! cmd
+	EOF
+  cat << "END" >/dev/null
+! cmd
+END
+}
+
+@test "bangs in conditions" {
+  if ! cmd; then :; fi
+  if true && ! cmd; then :; fi
+  if false; then :; elif ! cmd; then :; fi
+  while ! true; do break; done
+  until ! false; do :; done
+  if ! cmd &&
+     ! other; then :; fi
+}
+
+@test "words that only look like a bang" {
+  echo !
+  echo x!
+  x=${y:-!}
+  : $((1 << 2)) $(( ! 0 ))
+}
