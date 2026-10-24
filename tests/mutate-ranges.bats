@@ -285,7 +285,7 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/h.js:1-3" ]
 }
 
-@test "a copy into a file that already existed, the source left unchanged, is not followed (one -C pair searches only for a new file)" {
+@test "known limit: a copy into a file that already existed, the source left unchanged, is not followed (-C -C searches only for a new file; change the expectation if that changes)" {
   printf '%s\n' 'export function keep() { return "unchanged line of the product"; }' > src/g.js
   printf '%s\n' 'export const other = "a file that was already there";' > src/h.js
   git add -A && git commit -q -m g

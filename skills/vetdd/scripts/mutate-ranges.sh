@@ -336,8 +336,11 @@ owned() {
 # tree) are followed with -w -M10 -C10 -C10, so a line they only reindented, moved (10 letters or
 # digits at least), or moved to another file stays the slice's; the second -C10 also finds a copy into
 # a file the copying commit created (or renamed) from a file it left unchanged, though not a copy into
-# a file that was already there. Lines are taken only from product files: a line copied out of an
-# oracle file is not the slice's. -w also ignores whitespace inside literals (#81).
+# a file that was already there; for a new file it compares every file of the tree, which takes
+# longer in a large repository. Lines are taken only from product files: a line copied out of an
+# oracle file is not the slice's, so when the slice wrote the very same line in a test and in product
+# code and blame names the test as the source of a copy, that line is left out (a known limit). -w
+# also ignores whitespace inside literals (#81).
 carried() {
   git -c core.quotePath=false blame --line-porcelain --no-textconv --no-ignore-revs-file -w -M10 -C10 -C10 \
     "$1..$c2" -- "$2" > "$tmp/later" 2> "$tmp/later.err" \
