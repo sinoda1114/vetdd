@@ -103,16 +103,30 @@ done
 . "$here/lib/text.sh"
 for a in ${allow[@]+"${allow[@]}"}; do
   err="$(vetdd_allow_secret_error "$a")" || die "$(printf '%s' "$err" | vetdd_printable)"
-  # The glob (before the last ":" when kinds follow) stays inside one half of the layout, and names
-  # something there: "*" or "c1/artifact/*" would stop the secret check for all of it.
+  # The glob (before the last ":" when kinds follow) stays inside one half of the layout, and names a
+  # literal entry there (tests, diff.patch, verify-artifacts, a slice): check-blind's * and ? cross
+  # "/", so "*", "c1/artifact/*", "c1/artifact/?*", or "c1/artifact/*/*" would stop the secret check
+  # for all of it.
   g="$a"; case "$a" in *:*) g="${a%:*}" ;; esac
   case "$g" in
     c1/artifact/?*|c1/evidence/?*|'c*/artifact/'?*|'c*/evidence/'?*) ;;
     *) g="" ;;
   esac
-  case "${g#*/*/}" in *[!*]*) ;; *) g="" ;; esac
-  [ -n "$g" ] || die "--allow-secrets $(printf '%s' "$a" | vetdd_printable): the glob must name paths under c1/artifact/ or c1/evidence/ (c*/... for an arena lane), and more than * below them (e.g. c1/artifact/tests/*:email)"
+  first="${g#*/*/}"; first="${first%%/*}"
+  case "$first" in ""|*'*'*|*'?'*|*'['*) g="" ;; esac
+  [ -n "$g" ] || die "--allow-secrets $(printf '%s' "$a" | vetdd_printable): the glob must name paths under c1/artifact/ or c1/evidence/ (c*/... for an arena lane) and start below them with a literal name, no * ? or [ (e.g. c1/artifact/tests/*:email)"
 done
+# The .claude rename, also applied to the globs (see below). An arena lane (--lane): arena-layout.sh
+# repeats each glob as given for the judge, and each lane picks its free name on its own, so a glob
+# naming .claude would match in the lane and miss in the judge's copy: write it as the name it is sent
+# under instead.
+RENAME='s{(?:(?<=^-)|(?<![\w.-]))\.claude(?=\\?/|\.(?![\w-])|[^\w.-]|$)}{$ENV{TOK}}g'
+if [ "$lane" -eq 1 ]; then
+  for a in ${allow[@]+"${allow[@]}"} ${awords[@]+"${awords[@]}"}; do
+    [ "$(printf '%s' "$a" | TOK=.agent perl -pe "$RENAME")" = "$a" ] \
+      || die "$(printf '%s' "$a" | vetdd_printable): an arena lane is judged with the glob as given, so name the directory as the lanes send it (.agent/, as their layouts show), not .claude/"
+  done
+fi
 [ ! -e "$out" ] && [ ! -L "$out" ] || die "--out $out exists; give a new directory"
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
@@ -202,7 +216,8 @@ for s in "${slices[@]}"; do
   # comparison with git's list would go wrong; a .git component in any case (.GIT on a
   # case-insensitive disk) would send the repository's own files past check-blind's .git rule.
   bad="$(jq -r '[.oracle.files[]? | .path | strings
-                 | select(split("/") | any(. == "" or . == "." or . == ".." or ascii_downcase == ".git"))] | .[0] // empty' \
+                 | select(. == "" or (split("/") | any(. == "" or . == "." or . == ".." or ascii_downcase == ".git")))]
+                | if length > 0 then "[" + .[0] + "]" else empty end' \
     "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)" || die "could not read the evidence of slice $s (its meta.json is malformed)" 1
   [ -z "$bad" ] || die "$(printf 'the record of slice %s names the oracle file %s, which is not a plain path from the repository root (no empty, . or .. component, and no .git one in any case, as evidence.sh records it); record the slice again instead of editing meta.json' \
     "$s" "$bad" | vetdd_printable)" 1
@@ -316,13 +331,24 @@ for v in ${varts[@]+"${varts[@]}"}; do
   vp="--verify-artifacts $(printf '%s' "$v" | vetdd_printable)"
   case "$v" in .vetdd/artifacts|.vetdd/artifacts/?*) ;; *) die "$vp: give a path from the repository root at or under .vetdd/artifacts/" ;; esac
   case "/$v/" in *//*|*/./*|*/../*) die "$vp: give a plain path at or under .vetdd/artifacts/ (no //, ./, ../, or trailing /)" ;; esac
+  # No link on the way, not even one that stays inside the repository (latest -> ../../src): what is
+  # sent is what lies under .vetdd/artifacts/ by name.
+  c=""; rest="$v/"
+  while [ -n "$rest" ]; do
+    c="$c${rest%%/*}"; rest="${rest#*/}"
+    [ ! -L "$root/$c" ] || die "$vp: $(printf '%s' "$c" | vetdd_printable) is a symbolic link; give the directory it names, under .vetdd/artifacts/"
+    c="$c/"
+  done
   vetdd_inside_repo "$root" "$v" && { [ -d "$root/$v" ] || { [ -f "$root/$v" ] && [ "$v" != .vetdd/artifacts ]; }; } \
-    || die "$vp: not a directory or regular file under .vetdd/artifacts/ of this repository (missing, a link, or outside)"
+    || die "$vp: not a directory or regular file under .vetdd/artifacts/ of this repository (missing, or outside)"
   while IFS= read -r -d '' f; do
     rel="${f#"$root"/}"
     if [ -L "$f" ] || { [ ! -f "$f" ] && [ ! -d "$f" ]; }; then
       die "$vp: $(printf '%s' "$rel" | vetdd_printable) is a symbolic link or not a regular file; only files and directories go to the judge"
     fi
+    # A name with a control character (a newline) would split the lists below: the oracle files' rule.
+    vetdd_inside_repo "$root" "$rel" \
+      || die "$vp: $(printf '%s' "$rel" | vetdd_printable) has a control character in its name; rename it"
     [ -f "$f" ] || continue
     ! is_env "$rel" || die "$vp: $(printf '%s' "$rel" | vetdd_printable) is a .env file, which may hold secrets and never goes to the judge"
     if vetdd_is_text "$f"; then
@@ -349,7 +375,11 @@ GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --binary --end-of-opt
 cp -- "$reply" "$C/artifact/reply.md" || die "cannot copy the reply" 1
 for f in ${vsrc[@]+"${vsrc[@]}"}; do
   dst="$C/artifact/verify-artifacts/${f#.vetdd/artifacts/}"
-  mkdir -p -- "$(dirname -- "$dst")" && cp -- "$root/$f" "$dst" || die "cannot copy the verify artifact $(printf '%s' "$f" | vetdd_printable)" 1
+  # Checked again right before the copy (the app may still write there); -P copies a link as a link,
+  # which check-blind then refuses, never the file it points to.
+  [ -f "$root/$f" ] && [ ! -L "$root/$f" ] \
+    || die "the verify artifact $(printf '%s' "$f" | vetdd_printable) changed since it was checked (now missing, a link, or not a regular file)" 1
+  mkdir -p -- "$(dirname -- "$dst")" && cp -P -- "$root/$f" "$dst" || die "cannot copy the verify artifact $(printf '%s' "$f" | vetdd_printable)" 1
 done
 
 ce_rc=0
@@ -442,7 +472,6 @@ done || die "could not rename a .claude directory in the layout" 1
 # A .claude path component (also JSON-escaped, on a removed line of the diff, and at the end of a path
 # or a sentence) goes under the free name chosen above: in text, and in the --allow-secrets and
 # --allow-words globs, which check-blind matches against the renamed paths.
-RENAME='s{(?:(?<=^-)|(?<![\w.-]))\.claude(?=\\?/|\.(?![\w-])|[^\w.-]|$)}{$ENV{TOK}}g'
 renamed() { printf '%s' "$1" | TOK="$tok" perl -pe "$RENAME"; }
 find "$out" -type f -print0 | while IFS= read -r -d '' f; do
   LC_ALL=C grep -Iq . "$f" 2>/dev/null || continue

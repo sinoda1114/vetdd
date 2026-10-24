@@ -842,7 +842,7 @@ rewrite_oracle_path() {
   ignored_oracle_slice
   mkdir -p cfg && printf 'K=v\n' > cfg/.env
   local p
-  for p in ignored//t2.sh ./ignored/t2.sh ignored/./t2.sh ignored/../ignored/t2.sh /ignored/t2.sh ignored/ cfg//.env ./.env; do
+  for p in ignored//t2.sh ./ignored/t2.sh ignored/./t2.sh ignored/../ignored/t2.sh /ignored/t2.sh ignored/ cfg//.env ./.env ''; do
     rewrite_oracle_path "$p"
     run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
     [ "$status" -eq 1 ] || { echo "$p: $output"; false; }
@@ -1026,7 +1026,8 @@ VERIFY_MD="$BATS_TEST_DIRNAME/../skills/vetdd/modes/verify.md"
 @test "#28: an --allow-secrets glob names paths under c1/artifact/ or c1/evidence/ (c*/ for an arena lane), never the whole layout" {
   local v
   for v in '*:email' '*' 'c1/*:email' 'c1/artifact/*:email' 'c1/evidence/**:email' 'artifact/tests/*:email' \
-           'c2/artifact/tests/*:email' '**/tests/*:email' 'c1/other/x:email'; do
+           'c2/artifact/tests/*:email' '**/tests/*:email' 'c1/other/x:email' 'c1/artifact/?*:email' 'c1/artifact/*/*:email' \
+           'c1/artifact/[!.]*:email' 'c1/evidence/?/runs/*:email' 'c1/artifact/tests*:email' 'c*/artifact/*/x:email'; do
     run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-secrets "$v" s1
     [ "$status" -eq 2 ] || { echo "$v: $output"; false; }
     [[ "$output" == *"--allow-secrets"* ]] || { echo "$v: $output"; false; }
@@ -1114,4 +1115,39 @@ VERIFY_MD="$BATS_TEST_DIRNAME/../skills/vetdd/modes/verify.md"
   local p; p="$(grep 'Planted defect' "$VERIFY_MD")"
   [[ "$p" == *'refuses'* ]] || { echo "$p"; false; }
   [[ "$p" == *'.gitignore'* ]]
+}
+
+# --- review round 1 (fix/judge-layout-verify) -------------------------------------------------------
+
+@test "r1: a link on the way to a --verify-artifacts path is refused, even one that points inside the repository (exit 2, nothing written)" {
+  mkdir -p src/cfg .vetdd/artifacts/due && printf 'x\n' > src/cfg/config
+  ln -s ../../../src .vetdd/artifacts/due/latest
+  [ -f .vetdd/artifacts/due/latest/cfg/config ]
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new src/cfg/config --verify-artifacts .vetdd/artifacts/due/latest/cfg s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"link"* ]] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+  rm .vetdd/artifacts/due/latest && rm -r .vetdd/artifacts && mkdir -p .vetdd/elsewhere/due && printf 'y\n' > .vetdd/elsewhere/due/a.txt
+  ln -s elsewhere .vetdd/artifacts
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --include-new src/cfg/config --verify-artifacts .vetdd/artifacts/due s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+}
+
+@test "r1: a verify artifact whose name holds a control character stops the build before anything is written (exit 2)" {
+  mkdir -p .vetdd/artifacts/due && printf 'x\n' > "$(printf '.vetdd/artifacts/due/a\nb.txt')"
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+}
+
+@test "r1: an arena lane (--lane) refuses an --allow-secrets or --allow-words glob naming .claude, which arena-layout repeats unrenamed" {
+  local f
+  for f in "--allow-secrets c1/artifact/tests/.claude/*:assignment" "--allow-words c*/artifact/tests/.claude/*:openai"; do
+    # shellcheck disable=SC2086
+    run JL --lane --before-close --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD $f s1
+    [ "$status" -eq 2 ] || { echo "$f: $output"; false; }
+    [[ "$output" == *".agent"* ]] || { echo "$f: $output"; false; }
+    [ ! -e "$OUT" ]
+  done
 }
