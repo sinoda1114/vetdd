@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # check-evidence rule 9b (FAIL): a test that ran (passed or failed) in an earlier run and is skipped or
-# todo in the latest run of the same command, read from the normalized copies of the runner's report
+# todo in the latest green (after or integrated) of the same command, read from the normalized copies of the runner's report
 # (evidence.sh --test-report). Rule 9c (WARN, never changes the exit code): skipped and todo counts of
 # the latest green, and a latest green without a report when another run of the slice recorded one.
 # Tripwires, not boundaries: a test that disappears, a changed command, and a slice that never asks
@@ -523,4 +523,36 @@ recv() {
   # The paragraph that states rule 9b names the oracle version; the 9c one says when a missing report warns.
   awk 'BEGIN{RS=""} /rule 9b fails/' "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q 'oracle version'
   awk 'BEGIN{RS=""} /WARN \(9c/' "$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md" | grep -q 'absent when another run of that command asked for one'
+}
+
+# --- #11 item 1: 9b compares each command's latest green, not whatever run came last -------------------
+
+@test "rule 9b still fails the green's skip when a calibration with a report is recorded after it (#11)" {
+  rec before "$PASS" 1
+  rec after "$(status_of c11skip "$T1" skipped)" 0
+  # calibrate.sh unfix (or planted) after the green, same command, its report has T1 running.
+  rec calibration "$PASS" 1
+  run check s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"9b: "*"$T1"*"run 1"*"run 2, the latest green"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"run 3"* ]]
+}
+
+@test "rule 9b still fails the green's skip when a calibration without a report is recorded after it (#11)" {
+  rec before "$PASS" 1
+  rec after "$(status_of c11skip2 "$T1" skipped)" 0
+  rec calibration - 1
+  run check s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"9b: "*"$T1"*"run 1"*"run 2"* ]]
+}
+
+@test "rule 9b does not compare a command that never went green (only red and calibration runs) (#11)" {
+  rec before "$PASS" 1 -t only-red
+  rec calibration "$(status_of c11red "$T1" skipped)" 1 -t only-red
+  rec before "$PASS" 1
+  rec after "$PASS" 0
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"9b: "* ]]
 }

@@ -28,9 +28,13 @@
 # and restoring always writes those back, so neither line-ending conversion nor a staged edit can
 # alter what returns (stub puts a new file in place, so a hard link never keeps the stub). --file and
 # --oracle-file take regular files inside the repository (no directories, no symlinks, no newlines),
-# compared as files (-ef), so the oracle is never parked under another spelling. --seam, --oracle-version, --infra-exit, and --oracle-file pass through to
-# evidence.sh <slice> calibration. State lives in <git dir>/vetdd-calib/<slice>/, survives a killed
-# run, and its path is printed first. Fingerprints detect accidental damage; they are not a
+# compared as files (-ef), so the oracle is never parked under another spelling. --seam, --oracle-version,
+# --infra-exit, --test-report, and --oracle-file pass through to evidence.sh <slice> calibration, each
+# checked as evidence.sh does before anything is parked. State lives in <git dir>/vetdd-calib/<slice>/,
+# survives a killed run, and its path is printed first. One calibration at a time changes a working
+# tree: unfix, plant (while it saves), planted, stub, and restore hold <git dir>/vetdd-calib/.lock, a
+# symbolic link naming the pid and slice, so a second slice parked mid-run can never save the defect as
+# its "original" and write it back over the fix. A killed run leaves the lock to its own restore. Fingerprints detect accidental damage; they are not a
 # security boundary (anyone who can write .git can already run hooks). The stub audit is a tripwire,
 # not a boundary: it stubs only the files named with --file (a product file left out is still real, so
 # name every one the oracle imports); a runner that fails on the stub while loading it (native ESM
@@ -43,6 +47,7 @@ unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" && [ -n "$here" ] || { echo "calibrate.sh: cannot locate itself" >&2; exit 2; }
 . "$here/lib/common.sh"
 . "$here/lib/tree-hash.sh"
+. "$here/lib/test-report.sh"
 vetdd_require_jq calibrate.sh
 
 # A name in a message (a file the user named) can hold control characters: show it filtered.
@@ -59,6 +64,8 @@ gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$gitdir" ] || 
 state="$gitdir/vetdd-calib/$slice"
 # The restore command (recovery after an interruption) keeps any content it replaces here.
 keep_replaced=0; replaced="$gitdir/vetdd-calib/$slice.replaced.$(date +%Y%m%d%H%M%S).$$"
+# The working tree's lock (a slice id never starts with a dot, so no slice is named .lock).
+lock="$gitdir/vetdd-calib/.lock"; have_lock=0; took_over=0
 
 # Literal pathspecs (a path with [ ] * ? is a name, not a glob), unquoted names, and whitespace
 # handling fixed, so neither the path nor the user's git config changes what is taken out.
@@ -115,8 +122,16 @@ parse() {
         # otherwise read as "the calibration did not go red" (exit 1).
         vetdd_is_slice_id "$2" || die "--oracle-version takes letters, digits, and . _ -"
         pass+=("$1" "$2"); shift 2 ;;
+      --test-report) [ $# -ge 2 ] || die "--test-report needs jest-json:<path>"
+        # evidence.sh's own checks, here before the fix is parked: its exit 2 would otherwise read as
+        # "the calibration did not go red". The path stays relative to the current directory, as evidence.sh reads it.
+        case "$2" in jest-json:?*) ;; *) die "--test-report takes jest-json:<path>" ;; esac
+        r="$(vetdd_report_rel "$top" "${2#jest-json:}")" \
+          || die "--test-report path is not a usable path inside the repository (a symbolic link, outside, through a file, or unreadable): ${2#jest-json:}"
+        vetdd_report_allowed "$top" "$r" || die "--test-report path must be an untracked file under .vetdd/reports/ (resolved to $r)"
+        pass+=("$1" "$2"); shift 2 ;;
       --) shift; argv=("$@"); have_cmd=1; return ;;
-      *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit)$(vetdd_split_hint "$1")" ;;
+      *) die "unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit, --test-report)$(vetdd_split_hint "$1")" ;;
     esac
   done
 }
@@ -271,11 +286,44 @@ restore() {
   mv "$state" "$state.done.$$" 2>/dev/null && rm -rf "$state.done.$$" || { warn "could not remove $state"; return 1; }
 }
 
+# take_lock [restore]: claim the working tree's lock or die naming the run that holds it. The link is
+# made in one step (ln -s fails when the name exists), so its pid and slice are never half written.
+# restore may take over a lock its own slice's killed run left (that pid is gone).
+take_lock() {
+  local owner opid oslice
+  mkdir -p "$(dirname -- "$lock")" || die "cannot create $(dirname -- "$lock")"
+  [ -L "$lock" ] || [ ! -e "$lock" ] || die "$lock is not a lock calibrate.sh made; inspect it and remove it by hand"
+  trap 'release_lock' EXIT
+  if ln -s "$$:$slice" "$lock" 2>/dev/null; then have_lock=1; return 0; fi
+  owner="$(readlink "$lock" 2>/dev/null)"; opid="${owner%%:*}"; oslice="${owner#*:}"
+  case "$opid" in ''|*[!0-9]*) opid="" ;; esac
+  if [ -z "$opid" ] || ! vetdd_is_slice_id "$oslice"; then
+    die "the calibration lock $lock is unreadable; if no calibrate.sh is running in this working tree, remove it (rm $lock) and run again"
+  fi
+  if kill -0 "$opid" 2>/dev/null; then
+    die "another calibration (slice $oslice, pid $opid) is running in this working tree; wait for it to end. If pid $opid is not calibrate.sh (check with: ps -p $opid), that run was killed and its pid reused: remove $lock and run: calibrate.sh restore $oslice"
+  fi
+  if [ "${1:-}" = restore ] && [ "$oslice" = "$slice" ]; then
+    rm -f "$lock" && ln -s "$$:$slice" "$lock" 2>/dev/null || die "could not take over the lock $lock; run again"
+    have_lock=1; took_over=1; return 0
+  fi
+  die "a calibration of slice $oslice (pid $opid) was interrupted in this working tree and its files may still be parked; run: calibrate.sh restore $oslice"
+}
+release_lock() {
+  [ "$have_lock" -eq 1 ] || return 0
+  have_lock=0
+  rm -f "$lock" || warn "could not remove the lock $lock; remove it by hand"
+}
+# on_exit: put the files back, then release the lock. When they cannot be put back, the lock stays for
+# this slice's restore, so no other slice runs on a tree that still holds a parked fix.
+on_exit() { restore || { have_lock=0; exit 3; }; release_lock; }
+
 new_state() {
+  take_lock
   mkdir -p "$(dirname -- "$state")" || die "cannot create $(dirname -- "$state")"
   # mkdir without -p succeeds for exactly one caller, so it doubles as the lock for this slice.
   mkdir "$state" 2>/dev/null || die "a calibration for $slice is running or was interrupted; run: calibrate.sh restore $slice"
-  trap 'restore || exit 3' EXIT
+  trap 'on_exit' EXIT
   trap 'exit 130' INT TERM
   echo "calibrate.sh: saved state for $slice in $state"
   echo $$ > "$state/pid" && printf '%s\n' "${files[@]}" > "$state/files" || die "cannot write $state"
@@ -363,7 +411,8 @@ finish() {
   local rc="$1"
   trap '' INT TERM  # restoring must not be cut short
   trap - EXIT
-  restore || exit 3
+  restore || exit 3  # the lock stays for this slice's restore
+  release_lock
   exit "$rc"
 }
 
@@ -373,7 +422,14 @@ case "$cmd" in
     new_files=()
     for f in "${files[@]}"; do
       if ! g ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
-        ! g check-ignore -q -- "$f" || die "$f is ignored by git and cannot be parked; unignore it or leave it out"
+        # Not through g: check-ignore refuses GIT_LITERAL_PATHSPECS (exit 128). It takes paths, not
+        # patterns, so a glob character is a name anyway; ./ keeps a leading : from reading as magic.
+        rc=0; GIT_LITERAL_PATHSPECS=0 git -C "$top" check-ignore -q -- "./$f" || rc=$?
+        case "$rc" in
+          0) die "$f is ignored by git and cannot be parked; unignore it or leave it out" ;;
+          1) ;;
+          *) die "git check-ignore failed on $f (exit $rc); nothing was changed" ;;
+        esac
         new_files+=("$f")
       fi
     done
@@ -398,6 +454,7 @@ case "$cmd" in
     ! unreadable "$state/oracle" "$state/others" || die "a file could not be fingerprinted; nothing was changed"
     echo plant > "$state/mode" && rm -f "$state/pid" || die "cannot write $state"
     trap - EXIT
+    release_lock  # the agent plants with the tree unlocked; planted takes the lock again
     echo "calibrate.sh: plant the mutation in the saved files now, then run: calibrate.sh planted $slice --oracle-file ... -- <command>"
     ;;
   planted)
@@ -418,11 +475,12 @@ case "$cmd" in
       if [ -x "$state/copies/$f" ]; then [ -x "$top/$f" ] || changed=1; else [ ! -x "$top/$f" ] || changed=1; fi
     done < "$state/files"
     [ "$changed" -eq 1 ] || die "no mutation was planted in the saved files"
+    take_lock
     # mkdir succeeds for exactly one caller, so two planted runs of one slice cannot both start.
     mkdir "$state/run.lock" 2>/dev/null || die "another planted run of $slice is running or was interrupted; run: calibrate.sh restore $slice"
     echo $$ > "$state/pid" || die "cannot claim $state"
     echo "calibrate.sh: saved state for $slice in $state"
-    trap 'restore || exit 3' EXIT
+    trap 'on_exit' EXIT
     trap 'exit 130' INT TERM
     run_oracle; finish $?
     ;;
@@ -442,13 +500,21 @@ case "$cmd" in
     run_oracle; finish $?
     ;;
   restore)
-    [ -d "$state" ] || die "nothing saved for $slice"
     pid="$(cat "$state/pid" 2>/dev/null)"
     if [ -n "$pid" ] && [ "$pid" != "$$" ] && kill -0 "$pid" 2>/dev/null; then
-      die "the calibration that owns $slice is still running (pid $pid); wait for it or stop it first"
+      # The pid may have been reused after a killed run: never ask to stop a process this script did not check.
+      die "the calibration that owns $slice is still running (pid $pid); wait for it to end. If pid $pid is not calibrate.sh (check with: ps -p $pid), that run was killed and its pid reused: remove $state/pid and run restore again"
+    fi
+    take_lock restore
+    if [ ! -d "$state" ]; then
+      [ "$took_over" -eq 1 ] || die "nothing saved for $slice"
+      release_lock
+      echo "calibrate.sh: nothing saved for $slice; removed the lock its interrupted run left"
+      exit 0
     fi
     keep_replaced=1
-    restore || exit 3
+    restore || { have_lock=0; exit 3; }
+    release_lock
     echo "calibrate.sh: restored $slice"
     ;;
   *) die "unknown command: $cmd (unfix, plant, planted, stub, restore)" ;;
