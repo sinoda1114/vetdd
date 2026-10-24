@@ -711,3 +711,51 @@ exec /bin/mv "$@"'
   run grep -c 'check_strip "\$p"' "$SCRIPTS/sanitize-candidates.sh"
   [ "$output" = "0" ]
 }
+
+@test "#54: --allow-words lets a product word through the self-check on the paths named; other paths still stop" {
+  printf '{"node_modules/baseline-browser-mapping": {"version": "2.8.0"}}\n' > "$SRC/package-lock.json"
+  run san --src "$SRC" --label c1 --dest "$DEST"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"artifact/package-lock.json:1: baseline"* ]]
+  [ ! -e "$DEST/c1" ]
+  run san --src "$SRC" --label c1 --dest "$DEST" --allow-words 'artifact/package-lock.json:baseline'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  cmp "$SRC/package-lock.json" "$DEST/c1/artifact/package-lock.json"
+  # The same word on the candidates directory: the glob gains the label in front.
+  run "$SCRIPTS/check-blind.sh" "$DEST" --profile judge
+  [ "$status" -eq 1 ]
+  run "$SCRIPTS/check-blind.sh" "$DEST" --profile judge --allow-words 'c*/artifact/package-lock.json:baseline'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf 'export const mode = "baseline";\n' > "$SRC/src/mode.js"
+  run san --src "$SRC" --label c1 --dest "$DEST" --allow-words 'artifact/package-lock.json:baseline'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"artifact/src/mode.js:1: baseline"* ]]
+}
+
+@test "#54: a malformed --allow-words is a usage error before anything is copied" {
+  local v
+  for v in 'foo' ':baseline' 'artifact/*:notaword' 'artifact/*:baseline,' 'artifact/*:b*'; do
+    run san --src "$SRC" --label c1 --dest "$DEST" --allow-words "$v"
+    [ "$status" -eq 2 ] || { echo "$v: $output"; false; }
+    [[ "$output" == *"--allow-words '$v'"* ]] || { echo "$v: $output"; false; }
+    [ -z "$(ls -A "$DEST" 2>/dev/null)" ] || { echo "$v: something was written"; false; }
+  done
+}
+
+@test "#54: --allow-words for a word sanitize redacts (a model name, a strip word) is a usage error" {
+  printf 'import OpenAI from "openai";\n' > "$SRC/src/client.js"
+  run san --src "$SRC" --label c1 --dest "$DEST" --allow-words 'artifact/src/*:openai'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'openai' is redacted"* ]] || { echo "$output"; false; }
+  run san --src "$SRC" --label c1 --dest "$DEST" --strip Baseline --allow-words 'artifact/*:baseline'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'baseline' is redacted"* ]] || { echo "$output"; false; }
+  [ ! -e "$DEST/c1" ]
+}
+
+@test "#54: a --strip word in none of the word lists cannot be allowed either (exit 2, nothing copied)" {
+  run san --src "$SRC" --label c1 --dest "$DEST" --strip feature-x --allow-words 'artifact/*:feature-x'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'feature-x' is not a checked word"* ]] || { echo "$output"; false; }
+  [ ! -e "$DEST/c1" ]
+}

@@ -802,11 +802,19 @@ c1/transcript.jsonl:3: secret: assignment" ]
 
 # --- usage triage: ordinary product words ----------------------------------------------------------
 
-@test "--final drops the origin words (one delivered change has no variant to hide) and keeps model names" {
+@test "--final drops variant and baseline (one delivered change has no variant to hide) and keeps winner and model names" {
   mkdir -p "$BATS_TEST_TMPDIR/f/c1"
-  printf '<Button variant="primary" />\n.x { align-items: baseline; }\nthe winner\n' > "$BATS_TEST_TMPDIR/f/c1/a.tsx"
+  printf '<Button variant="primary" />\n.x { align-items: baseline; }\n' > "$BATS_TEST_TMPDIR/f/c1/a.tsx"
   run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final
   [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # #44: "winner" can steer the judge, so --final keeps it; a product word passes by --allow-words.
+  printf 'the winner\n' > "$BATS_TEST_TMPDIR/f/c1/w.md"
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"w.md:1: winner"* ]]
+  run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final --allow-words 'c1/w.md:winner'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  rm "$BATS_TEST_TMPDIR/f/c1/w.md"
   printf 'written by Claude\n' > "$BATS_TEST_TMPDIR/f/c1/b.md"
   run "$SCRIPTS/check-blind.sh" "$BATS_TEST_TMPDIR/f" --profile judge --final
   [ "$status" -eq 1 ]
