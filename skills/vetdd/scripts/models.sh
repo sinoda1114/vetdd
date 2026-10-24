@@ -17,12 +17,9 @@
 # e.g. VETDD_MODEL_JUDGE=gpt-6-astra. Invalid overrides exit 2.
 
 set -euo pipefail
-unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
-case "${BASH_SOURCE[0]}" in */*) here="${BASH_SOURCE[0]%/*}" ;; *) here=. ;; esac
-here="$(cd "$here" && pwd)" && [ -f "$here/lib/common.sh" ] \
-  || { echo "models.sh: cannot find lib/common.sh beside it" >&2; exit 2; }
-# shellcheck source=lib/common.sh
-. "$here/lib/common.sh"
+# The ASCII letters and digits, spelled out (#50): the same list as lib/common.sh, which models.sh
+# does not read, so it runs alone (models.bats checks the two lists agree).
+VETDD_ALNUM=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 
 ROLES="author refactorer explorer arena-runner judge judge-effort"
 
@@ -40,8 +37,8 @@ declare_default() {
 
 invalid() { echo "models.sh: invalid model name for $1: $2" >&2; exit 2; }
 
-# One model name: ASCII letters, digits (VETDD_ALNUM, lib/common.sh), and . _ : / - ; must start with
-# a letter or digit so it can never be read as a command-line option.
+# One model name: ASCII letters, digits, and . _ : / - ; must start with a letter or digit so it can
+# never be read as a command-line option.
 check_name() {
   case "$2" in
     ""|[!"$VETDD_ALNUM"]*|*[!"$VETDD_ALNUM"._:/-]*) invalid "$1" "$2" ;;

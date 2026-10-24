@@ -133,17 +133,18 @@ m() { "$SCRIPTS/models.sh" "$@"; }
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
-@test "#50: models.sh runs as bash models.sh from its own directory (it reads lib/common.sh beside it)" {
-  cd "$SCRIPTS"
+@test "#50: models.sh runs alone (a copy, a symlink), and its ASCII list is the one lib/common.sh has" {
   unset VETDD_MODEL_JUDGE
-  run bash models.sh judge
-  [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "$output" = "gpt-6-sol" ]
-}
-
-@test "#50: models.sh run away from lib/common.sh (a copy alone) stops with exit 2 and says why" {
   cp "$SCRIPTS/models.sh" "$BATS_TEST_TMPDIR/models.sh"
-  run "$BATS_TEST_TMPDIR/models.sh" judge
-  [ "$status" -eq 2 ] || { echo "$output"; false; }
-  [[ "$output" == *"cannot find lib/common.sh"* ]] || { echo "$output"; false; }
+  ln -s "$SCRIPTS/models.sh" "$BATS_TEST_TMPDIR/models-link.sh"
+  local s
+  for s in "$BATS_TEST_TMPDIR/models.sh" "$BATS_TEST_TMPDIR/models-link.sh"; do
+    run "$s" judge
+    [ "$status" -eq 0 ] || { echo "$s: $output"; false; }
+    [ "$output" = "gpt-6-sol" ]
+  done
+  local mine theirs
+  mine="$(sed -n 's/^VETDD_ALNUM=//p' "$SCRIPTS/models.sh")"
+  theirs="$(sed -n 's/^VETDD_ALNUM=//p' "$SCRIPTS/lib/common.sh")"
+  [ -n "$mine" ] && [ "$mine" = "$theirs" ] || { echo "models.sh [$mine] lib/common.sh [$theirs]"; false; }
 }
