@@ -1,5 +1,7 @@
 // StrykerJS for vetdd's mutation audit (modes/test.md "Audits" › "Mutation", run in Close step 2).
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { relative } from "node:path";
 
 // The command runner runs one command per mutant and reads only its exit code (0 = survived).
 // The vitest runner is not used: with vitest 5 it reported killable mutants as Survived (vetdd #20).
@@ -14,6 +16,13 @@ if (tests.length === 0) {
 if (process.platform === "win32") {
   throw new Error("this config single-quotes test paths for POSIX sh; cmd.exe would keep the quotes (vetdd #21)");
 }
+// Each vitest list gets VETDD_MUTATION_LIST_TIMEOUT_MS milliseconds (default 120000) before it is stopped:
+// a vitest config or globalSetup that hangs would otherwise hang Stryker before its first mutant (vetdd #23).
+const timeoutText = process.env.VETDD_MUTATION_LIST_TIMEOUT_MS ?? "120000";
+if (!/^[1-9][0-9]{0,8}$/.test(timeoutText)) {
+  throw new Error(`VETDD_MUTATION_LIST_TIMEOUT_MS takes a whole number of milliseconds above 0, got ${JSON.stringify(timeoutText)}`);
+}
+const listTimeout = Number(timeoutText);
 const option = tests.find((p) => p.startsWith("-"));
 if (option !== undefined) {
   throw new Error(`a test path in VETDD_MUTATION_TESTS starts with - and would be read as an option: ${JSON.stringify(option)}`);
@@ -21,13 +30,25 @@ if (option !== undefined) {
 // vitest selects every test file whose path contains a filter (relative, ignoring letter case, by the
 // project's own include): ask vitest itself which files each path selects, and refuse a path that does
 // not select exactly one, so only the slice's own tests face the mutants.
+// A path as the file system has it, so a path vitest lists and the project directory compare.
+const real = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+const project = real(process.cwd());
 for (const p of tests) {
   let listed;
   try {
     // The filter goes before the flags: --json takes an optional value and would read a path after it
     // as the file to write. With nothing after it, the list goes to standard output.
-    listed = execFileSync("npx", ["--no-install", "vitest", "list", p, "--filesOnly", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    listed = execFileSync("npx", ["--no-install", "vitest", "list", p, "--filesOnly", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: listTimeout });
   } catch (e) {
+    if (e.code === "ETIMEDOUT") {
+      throw new Error(`VETDD_MUTATION_TESTS: vitest list for ${JSON.stringify(p)} did not finish within ${listTimeout} ms (a vitest config or globalSetup that hangs?); fix it, or allow more with VETDD_MUTATION_LIST_TIMEOUT_MS`);
+    }
     throw new Error(`VETDD_MUTATION_TESTS: could not list the test files ${JSON.stringify(p)} selects (vitest list failed): ${e.message}`);
   }
   let files;
@@ -36,8 +57,10 @@ for (const p of tests) {
   } catch (e) {
     throw new Error(`VETDD_MUTATION_TESTS: could not read the list of test files ${JSON.stringify(p)} selects: ${e.message}`);
   }
-  // One file once, wherever several projects list it; a sandbox an interrupted Stryker left is not the project.
-  const selected = [...new Set(files)].filter((f) => !f.split(/[\\/]/).includes(".stryker-tmp"));
+  // One file once, wherever several projects list it; a sandbox an interrupted Stryker left in the project
+  // is not the project (judged by the path inside the project: the project may itself lie below a
+  // directory named .stryker-tmp).
+  const selected = [...new Set(files)].filter((f) => !relative(project, real(f)).split(/[\\/]/).includes(".stryker-tmp"));
   if (selected.length !== 1) {
     throw new Error(`VETDD_MUTATION_TESTS: ${JSON.stringify(p)} selects ${selected.length} test files (${JSON.stringify(selected)}); name the slice's test file so it selects exactly one`);
   }

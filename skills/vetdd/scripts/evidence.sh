@@ -29,7 +29,9 @@
 #   runs/<seq>-mutation.json (normalized: config.mutate, config.testRunner, config.command when the
 #   command runner ran,
 #   and each file's source and mutants). A marked
-#   run is never a red. It never changes the outcome.
+#   run is never a red. It never changes the outcome. A report that is not usable is recorded invalid,
+#   with a warning that says why (lib/mutation-report.sh: a report over 64 MiB, one with another hard
+#   link, a runner that is not one of Stryker's, a --mutate entry that is not <file>:<first>-<last>, ...).
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -154,7 +156,9 @@ if [ -n "$mreport_opt" ]; then
     || die "--mutation-report path is not a usable path inside the repository (a symbolic link, outside, through a file, or unreadable): $mreport_opt"
   vetdd_report_allowed "$root" "$mreport_rel" \
     || die "--mutation-report path must be an untracked file under .vetdd/reports/ (resolved to $mreport_rel)"
-  [ "$mreport_rel" != "$report_rel" ] || die "--mutation-report and --test-report must be different files"
+  # Compared ignoring letter case: on a case-insensitive file system M.json and m.json are one file.
+  [ "$(printf '%s' "$mreport_rel" | LC_ALL=C tr 'A-Z' 'a-z')" != "$(printf '%s' "$report_rel" | LC_ALL=C tr 'A-Z' 'a-z')" ] \
+    || die "--mutation-report and --test-report must be different files (compared ignoring letter case)"
 fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
