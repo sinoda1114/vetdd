@@ -342,7 +342,7 @@ first_link() {
   done
   return 1
 }
-vsrc=()
+vsrc=(); ferr=0
 for v in ${varts[@]+"${varts[@]}"}; do
   vp="--verify-artifacts $(printf '%s' "$v" | vetdd_printable)"
   case "$v" in .vetdd/artifacts|.vetdd/artifacts/?*) ;; *) die "$vp: give a path from the repository root at or under .vetdd/artifacts/" ;; esac
@@ -354,6 +354,10 @@ for v in ${varts[@]+"${varts[@]}"}; do
   fi
   vetdd_inside_repo "$root" "$v" && { [ -d "$root/$v" ] || { [ -f "$root/$v" ] && [ "$v" != .vetdd/artifacts ]; }; } \
     || die "$vp: not a directory or regular file under .vetdd/artifacts/ of this repository (missing, or outside)"
+  # Listed into a file first, so a find that could not read a directory stops the build instead of
+  # leaving the files below it out unseen.
+  vlist="$tmpd/verify-artifacts"
+  find "$root/$v" -print0 > "$vlist" 2>/dev/null || ferr=1
   while IFS= read -r -d '' f; do
     rel="${f#"$root"/}"
     if [ -L "$f" ] || { [ ! -f "$f" ] && [ ! -d "$f" ]; }; then
@@ -366,6 +370,11 @@ for v in ${varts[@]+"${varts[@]}"}; do
     case "$(printf '%s' "${rel##*/}" | tr '[:upper:]' '[:lower:]')" in
       .git|node_modules) die "$vp: $(printf '%s' "$rel" | vetdd_printable) is named .git or node_modules, which never goes to the judge; give the artifact paths below it that matter" ;;
     esac
+    # An unreadable file would pass for one that is not text, and an unreadable directory would hide
+    # what is below it: either way the judge would get less than the reply cites.
+    if [ ! -r "$f" ] || { [ -d "$f" ] && [ ! -x "$f" ]; }; then
+      die "$vp: $(printf '%s' "$rel" | vetdd_printable) cannot be read; make it readable (chmod u+r, and u+x for a directory) or leave it out"
+    fi
     [ -f "$f" ] || continue
     ! is_env "$rel" || die "$vp: $(printf '%s' "$rel" | vetdd_printable) is a .env file, which may hold secrets and never goes to the judge"
     if vetdd_is_text "$f"; then
@@ -373,7 +382,8 @@ for v in ${varts[@]+"${varts[@]}"}; do
     else
       printf 'judge-layout.sh: verify artifact left on the machine (not text, which the blind check of the judge input cannot read): %s\n' "$rel" | vetdd_printable >&2
     fi
-  done < <(find "$root/$v" -print0)
+  done < "$vlist"
+  [ "${ferr:-0}" -eq 0 ] || die "$vp: find could not list all of it (a directory below it cannot be read); make it readable or leave it out"
 done
 
 # The missing directories, then --out itself, one level at a time and each new (no -p, so nothing put

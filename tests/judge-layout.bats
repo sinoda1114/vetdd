@@ -1169,3 +1169,23 @@ VERIFY_MD="$BATS_TEST_DIRNAME/../skills/vetdd/modes/verify.md"
     [ ! -e "$OUT" ]
   done
 }
+
+# --- PR #88 threads --------------------------------------------------------------------------------
+
+@test "PR88: an unreadable file or directory under a --verify-artifacts path stops the build (exit 2), nothing written" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads every file"
+  mkdir -p .vetdd/artifacts/due/sub && printf 'x\n' > .vetdd/artifacts/due/a.txt && printf 'y\n' > .vetdd/artifacts/due/sub/b.txt
+  chmod 000 .vetdd/artifacts/due/a.txt
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due s1
+  chmod 644 .vetdd/artifacts/due/a.txt
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"due/a.txt"*"cannot be read"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"not text"* ]] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+  chmod 000 .vetdd/artifacts/due/sub
+  run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --verify-artifacts .vetdd/artifacts/due s1
+  chmod 755 .vetdd/artifacts/due/sub
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"due/sub"*"cannot be read"* ]] || { echo "$output"; false; }
+  [ ! -e "$OUT" ]
+}
