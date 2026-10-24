@@ -264,11 +264,13 @@ else
     # waiting there), then renamed to the first free vetdd-<time>[-n] beside it.
     hold="$(mktemp -d "$backups/.vetdd-backup.XXXXXX")" || die "cannot create a directory in $backups"
     held=1; moved="$hold/vetdd"
-    # A failed mv leaves $dest in place; across file systems it may also leave a partial copy in
-    # $hold, which is then not the old install: put_back must not take it for one.
+    # A failed mv leaves $dest in place. Across file systems it copies, then removes the original,
+    # so it may also leave a copy in $hold: partial (the copy failed) or the complete one ($dest
+    # then partly removed). put_back must not take either for the old install, nor say which it is.
     if ! { mv "$dest" "$moved" || went "$dest" "$moved"; }; then
       moved=""
-      rmdir "$hold" 2>/dev/null || say "a partial copy of the existing install may be left in $hold"
+      rmdir "$hold" 2>/dev/null \
+        || say "a copy of the existing install, complete or partial, is left in $hold; compare it with $dest before removing either"
       die "cannot move the existing install to $hold; it stays at $dest as mv left it"
     fi
     stamp="$backups/vetdd-$(date +%Y%m%d-%H%M%S)"; b="$stamp"; n=0

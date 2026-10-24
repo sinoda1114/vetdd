@@ -638,7 +638,8 @@ fake_linux_acl() {
   [ "$status" -eq 1 ] || { echo "$output"; false; }
   grep -qx old "$DEST/SKILL.md"
   [[ "$output" != *"the old install stays at"* ]]
-  [[ "$output" == *"partial copy"* ]]
+  # The copy may be the complete one (mv fails while removing the original): never called partial only.
+  [[ "$output" == *"complete or partial"* ]] && [[ "$output" == *"compare"* ]]
 }
 
 # fake_upg <members> <other primary user, or empty>: an id that reports a group named after the user
