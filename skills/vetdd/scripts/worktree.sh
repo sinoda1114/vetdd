@@ -4,23 +4,28 @@
 # worker's copy. Run it from the main repository.
 # Usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <the unit's test command>]
 #          makes ../<repo>.vetdd-wt/<slice> on a new branch vetdd/<slice> at <ref> (default HEAD) and
-#          prints its path; --link links an ignored path of the main repository into it (node_modules);
+#          prints its path; --link links an ignored path of the main repository into it (node_modules;
+#          never .vetdd or a path under it, a .git, or a path with a control character);
 #          the command, run from the repository root, is recorded in the git directory, outside any
 #          working tree ($GIT_COMMON_DIR/vetdd-swarm/<slice>.cmd), for `evidence.sh <slice> integrated
 #          --rerun`, with a checksum of the shared git config and hooks for `check`
 #        worktree.sh check <slice>
 #          before the parent merges vetdd/<slice>: refuses (exit 1) a branch that touches .vetdd/,
 #          a .gitattributes or .gitmodules, or a submodule, and a shared git config or hooks that
-#          changed since add (a worker's git config would run in the parent's merge)
-#        worktree.sh remove <slice> [--keep-branch] [--no-evidence]
-#          refuses while the worktree holds uncommitted work; brings back every .vetdd/evidence/<id>/
+#          changed since add (a worker's git config would run in the parent's merge); it prints the
+#          commit it checked ("vetdd/<slice> can be merged at <commit>"): merge that commit
+#        worktree.sh remove <slice> [--keep-branch] [--no-evidence] [--at <commit>]
+#          refuses while the worktree holds uncommitted work or a submodule; brings back every .vetdd/evidence/<id>/
 #          (also one recorded under another slice id; with none, it refuses unless --no-evidence),
 #          .vetdd/artifacts/, and .vetdd/notes/ (a file the main repository already has must be the
 #          same: nothing is overwritten, and on any difference nothing is copied); then removes the
 #          worktree, and its branch once merged into HEAD (an unmerged branch is kept and named;
 #          --keep-branch keeps a merged one too, until the integrated runs pass)
-#        worktree.sh review <slice>
-#          after `remove <slice> --keep-branch`: checks out vetdd/<slice> again at the same path in a
+#          (--at: only while vetdd/<slice> is still at the commit check printed; a branch that moved
+#          means a worker is still at work)
+#        worktree.sh review <slice> [--at <commit>]
+#          after `remove <slice> --keep-branch`: checks out vetdd/<slice> (detached at --at, the commit
+#          check printed, which the branch must still be at; else at its tip) again at the same path in a
 #          worktree the parent makes (its own .git, never a runner's), with the main repository's
 #          .vetdd/evidence/<slice>/ and .vetdd/notes/, so the lane can be checked and laid out for the
 #          judge (parallel/arena.md); remove it again with `remove <slice> --keep-branch`
@@ -34,8 +39,9 @@ die() { printf 'worktree.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
+. "$here/lib/text.sh"
 
-usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] [--no-evidence] | review <slice> | list"
+usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] [--no-evidence] [--at <commit>] | review <slice> [--at <commit>] | list"
 [ $# -ge 1 ] || die "$usage"
 cmd="$1"; shift
 
@@ -50,6 +56,9 @@ p() { printf '%s' "$1" | vetdd_printable; }
 slice_arg() {
   [ $# -ge 1 ] || die "$usage"
   vetdd_is_slice_id "$1" || die "invalid slice id: $(p "$1")"
+  # foo..bar, foo., and foo.lock pass the slice id check, but vetdd/<slice> must be a branch name too.
+  git check-ref-format "refs/heads/vetdd/$1" \
+    || die "slice id $(p "$1") does not make a valid branch name (vetdd/$(p "$1")); see git help check-ref-format"
 }
 
 # safe_wtroot: <repo>.vetdd-wt is the user's own private directory (not a link, not writable by group or
@@ -64,17 +73,29 @@ safe_wtroot() {
   fi
 }
 
+# phys <base dir> <path>: <path> (taken from <base dir> when it is relative, as git writes it with
+# worktree.useRelativePaths) with every directory in it resolved, or nothing when it does not exist.
+phys() {
+  local t
+  case "$2" in /*) t="$2" ;; *) t="$1/$2" ;; esac
+  (cd -P -- "$t" 2>/dev/null && pwd -P)
+}
 # admin_dir <path>: the git directory git keeps for the worktree at <path> ($common/worktrees/<name>),
 # found from the main repository's side and checked against the worktree's .git file. The parent never
 # lets a worker's .git choose which git directory (and so which config, hooks, or fsmonitor) runs.
 admin_dir() {
-  local a found=""
+  local a g found=""
   for a in "$common"/worktrees/*/; do
     a="${a%/}"
-    [ -f "$a/gitdir" ] && [ "$(cat "$a/gitdir")" = "$1/.git" ] && { found="$a"; break; }
+    [ -f "$a/gitdir" ] || continue
+    g="$(cat "$a/gitdir")"
+    case "$g" in */.git) ;; *) continue ;; esac
+    [ "$(phys "$a" "${g%/.git}")" = "$1" ] && { found="$a"; break; }
   done
-  [ -n "$found" ] || return 1
-  [ -f "$1/.git" ] && [ ! -L "$1/.git" ] && [ "$(cat "$1/.git")" = "gitdir: $found" ] || return 1
+  [ -n "$found" ] && [ -f "$1/.git" ] && [ ! -L "$1/.git" ] || return 1
+  g="$(cat "$1/.git")"
+  case "$g" in "gitdir: "?*) ;; *) return 1 ;; esac
+  [ "$(phys "$1" "${g#gitdir: }")" = "$found" ] || return 1
   printf '%s' "$found"
 }
 # wgit_run <admin dir> <path> <git args...>: git on a worker's tree with the parent's git directory and
@@ -100,6 +121,20 @@ shared_sum() {
       done
     fi
   } | pgit hash-object --stdin
+}
+
+# at_commit <option value>: an --at value, the full commit id check printed, or a usage error.
+at_commit() {
+  printf '%s' "$1" | grep -Eqx '[0-9a-f]{40}([0-9a-f]{24})?' && pgit rev-parse -q --verify "$1^{commit}" >/dev/null \
+    || die "--at takes the full commit id check printed: $(p "$1")"
+  printf '%s' "$1"
+}
+# branch_at <slice> <commit>: refuses (exit 1) unless vetdd/<slice> is at <commit>.
+branch_at() {
+  local now
+  now="$(pgit rev-parse -q --verify "refs/heads/vetdd/$1^{commit}")" || now="nothing"
+  [ "$now" = "$2" ] \
+    || die "vetdd/$(p "$1") moved since check (it is at $now, not at $2): a worker may still be at work; stop it, then check the branch again" 1
 }
 
 # files_under <dir>: each regular file below <dir>, relative to it, NUL-separated.
@@ -134,7 +169,16 @@ case "$cmd" in
       [ "$seen" -le 1 ] || die "--link $(p "$a") is named twice"
     done
     for l in ${links[@]+"${links[@]}"}; do
+      # A new line would split the list of links remove reads, and the exclude rule.
+      ! vetdd_has_control "$l" || die "--link takes a path without control characters or new lines: $(p "$l")"
       case "/$l/" in //*|*/../*|*/./*) die "--link takes a relative path without . or ..: $(p "$l")" ;; esac
+      # Any case: a case-insensitive file system takes .VETDD for .vetdd. The worker's .vetdd holds its
+      # evidence, which remove copies back, and remove refuses a link under it; a .git would make a
+      # repository whose git settings run in the parent's git status.
+      case "/$(printf '%s' "$l" | tr 'A-Z' 'a-z')/" in
+        /.vetdd/*) die "--link $(p "$l"): .vetdd and what is under it are the worker's own, never linked" ;;
+        */.git/*) die "--link $(p "$l"): a .git is never linked: a worker's git would read it" ;;
+      esac
       [ -e "$root/$l" ] || die "--link $(p "$l") does not exist in the main repository"
       case "${l##*/}" in .env*) die "--link $(p "$l"): a file that may hold secrets is never shared with a worker" ;; esac
       git -C "$root" ls-files --error-unmatch -- "$l" >/dev/null 2>&1 && die "--link $(p "$l") is tracked; only an ignored path can be linked"
@@ -176,11 +220,13 @@ case "$cmd" in
   check)
     slice_arg "$@"; slice="$1"; shift
     [ $# -eq 0 ] || die "$usage"
-    pgit rev-parse -q --verify "refs/heads/vetdd/$slice" >/dev/null || die "no branch vetdd/$(p "$slice")" 1
+    # One commit for every look: the branch can move while check runs.
+    sha="$(pgit rev-parse -q --verify "refs/heads/vetdd/$slice^{commit}")" || die "no branch vetdd/$(p "$slice")" 1
     [ -f "$swarmdir/$slice.sum" ] || die "no record of worktree.sh add for $(p "$slice")" 1
     [ "$(shared_sum)" = "$(cat "$swarmdir/$slice.sum")" ] \
       || die "the shared git config, hooks, or info/attributes changed since worktree.sh add $(p "$slice"); a worker's git settings would run in your merge: look at $(p "$common/config") and $(p "$common/hooks") before merging anything" 1
-    names="$(pgit diff --name-only --no-renames --no-ext-diff -z HEAD...vetdd/"$slice" | tr '\0' '\n')" \
+    # pipefail: a diff that fails must not read as a diff with nothing in it.
+    names="$(set -o pipefail; pgit diff --name-only --no-renames --no-ext-diff -z HEAD..."$sha" | tr '\0' '\n')" \
       || die "cannot read the changes of vetdd/$(p "$slice")" 1
     bad=""
     while IFS= read -r f; do
@@ -193,18 +239,25 @@ case "$cmd" in
 $names
 EOF_NAMES
     # A submodule (gitlink, mode 160000) on either side.
-    links="$(pgit diff --raw --no-renames --no-ext-diff HEAD...vetdd/"$slice" | awk '$1 == ":160000" || $2 == "160000" { sub(/^[^\t]*\t/, ""); print }')"
+    links="$(set -o pipefail; pgit diff --raw --no-renames --no-ext-diff HEAD..."$sha" | awk '$1 == ":160000" || $2 == "160000" { sub(/^[^\t]*\t/, ""); print }')" \
+      || die "cannot read the changes of vetdd/$(p "$slice")" 1
     bad="$bad$links"
     [ -z "$bad" ] || die "vetdd/$(p "$slice") touches what a unit never changes (.vetdd/, .gitattributes, .gitmodules, a submodule); do not merge it:
 $(p "$bad")" 1
-    printf 'vetdd/%s can be merged\n' "$(p "$slice")"
+    # Merge this commit, not the branch: a branch that moved after check is never merged unchecked.
+    printf 'vetdd/%s can be merged at %s\n' "$(p "$slice")" "$sha"
     ;;
 
   remove)
     slice_arg "$@"; slice="$1"; shift
-    keep=0; noev=0
+    keep=0; noev=0; at=""
     while [ $# -gt 0 ]; do
-      case "$1" in --keep-branch) keep=1; shift ;; --no-evidence) noev=1; shift ;; *) die "$usage" ;; esac
+      case "$1" in
+        --keep-branch) keep=1; shift ;;
+        --no-evidence) noev=1; shift ;;
+        --at) [ $# -ge 2 ] || die "--at needs the commit check printed"; at="$(at_commit "$2")" || exit 2; shift 2 ;;
+        *) die "$usage" ;;
+      esac
     done
     path="$wtroot/$slice"
     git -C "$root" worktree list --porcelain | grep -qxF "worktree $path" || die "no worker worktree for $(p "$slice") at $(p "$path")"
@@ -218,9 +271,25 @@ $(p "$bad")" 1
         [ -n "$l" ] && [ -L "$path/$l" ] && [ "$(readlink "$path/$l")" = "$root/$l" ] && excl+=(":(exclude,literal)$l")
       done < "$wgit/vetdd-links"
     fi
+    [ -z "$at" ] || branch_at "$slice" "$at"
+    # A submodule in the index (a gitlink the worker added) is a repository git status goes into, and
+    # it would run that repository's own config (its filters). A nested repository that is not one is
+    # only an untracked directory to git status. The index is read, nothing else.
+    nested="$(set -o pipefail; wgit_run "$wgit" "$path" ls-files -s -z | tr '\0' '\n' | awk '$1 == "160000" && !found++ { sub(/^[^\t]*\t/, ""); print }')" \
+      || die "cannot read the index of $(p "$path")" 1
+    [ -z "$nested" ] || die "the worktree of $(p "$slice") holds a nested repository, a submodule ($(p "$nested")); git status would run its git config, so nothing was run there: take it out of the index and the worktree first" 1
     head="$(wgit_run "$wgit" "$path" symbolic-ref -q HEAD)" || head="(detached)"
-    [ "$head" = "refs/heads/vetdd/$slice" ] \
-      || die "the worktree of $(p "$slice") is on $(p "$head"), not vetdd/$(p "$slice"); put its commits on that branch first, or they would be lost" 1
+    # A review worktree is detached at the commit review recorded in its git directory. A worker can
+    # write that record too, so the commit must also be on the branch: no commit is lost either way.
+    if [ -f "$wgit/vetdd-review" ] && [ "$head" = "(detached)" ]; then
+      rvc="$(wgit_run "$wgit" "$path" rev-parse -q --verify HEAD)" || rvc=""
+      [ -n "$rvc" ] && [ "$rvc" = "$(cat "$wgit/vetdd-review")" ] \
+        && pgit merge-base --is-ancestor "$rvc" "refs/heads/vetdd/$slice" 2>/dev/null \
+        || die "the review worktree of $(p "$slice") is not at the commit it was made at, or that commit is not on vetdd/$(p "$slice"); nothing was removed" 1
+    else
+      [ "$head" = "refs/heads/vetdd/$slice" ] \
+        || die "the worktree of $(p "$slice") is on $(p "$head"), not vetdd/$(p "$slice"); put its commits on that branch first, or they would be lost" 1
+    fi
     dirty="$(wgit_run "$wgit" "$path" status --porcelain --untracked-files=all -- . "${excl[@]}")" \
       || die "cannot read the status of $(p "$path")" 1
     [ -z "$dirty" ] || die "the worktree of $(p "$slice") has uncommitted work; commit it (or discard it) first:
@@ -285,13 +354,25 @@ $(p "$dirty")" 1
 
   review)
     slice_arg "$@"; slice="$1"; shift
-    [ $# -eq 0 ] || die "$usage"
+    at=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --at) [ $# -ge 2 ] || die "--at needs the commit check printed"; at="$(at_commit "$2")" || exit 2; shift 2 ;;
+        *) die "$usage" ;;
+      esac
+    done
     pgit rev-parse -q --verify "refs/heads/vetdd/$slice" >/dev/null || die "no branch vetdd/$(p "$slice")"
+    # One commit for every look and for the checkout: the branch can move meanwhile.
+    if [ -n "$at" ]; then branch_at "$slice" "$at"; sha="$at"
+    else sha="$(pgit rev-parse -q --verify "refs/heads/vetdd/$slice^{commit}")" || die "no branch vetdd/$(p "$slice")"; fi
     ! pgit rev-parse -q --verify "refs/tags/vetdd/$slice" >/dev/null \
       || die "a tag shares the name vetdd/$(p "$slice"); delete or rename it first, so the branch is what is checked out" 1
     # The evidence and notes come from the main repository, never from the branch (in any case).
-    ! pgit ls-tree -r --name-only "refs/heads/vetdd/$slice" | grep -qi '^\.vetdd/' \
-      || die "vetdd/$(p "$slice") tracks files under .vetdd/; a lane never does: leave it out of the arena" 1
+    # .vetdd itself too: a tracked link there would send the copies below out of the worktree.
+    tracked="$(set -o pipefail; pgit ls-tree -r -z --name-only "$sha" | tr '\0' '\n')" \
+      || die "cannot read the files of vetdd/$(p "$slice")" 1
+    ! printf '%s\n' "$tracked" | grep -Eqi '^\.vetdd(/|$)' \
+      || die "vetdd/$(p "$slice") tracks .vetdd or files under it; a lane never does: leave it out of the arena" 1
     for d in "$root/.vetdd/evidence/$slice" "$root/.vetdd/notes"; do
       [ ! -d "$d" ] || [ -z "$(find "$d" -type l -print 2>/dev/null | head -n 1)" ] \
         || die "$(p "${d#"$root"/}") holds a link; nothing is copied through a link" 1
@@ -301,9 +382,11 @@ $(p "$dirty")" 1
     [ -d "$root/.vetdd/evidence/$slice" ] && [ ! -L "$root/.vetdd/evidence/$slice" ] \
       || die "no evidence for $(p "$slice") in the main repository; bring it back with worktree.sh remove $(p "$slice") --keep-branch"
     safe_wtroot
-    pgit worktree add -q "$path" "vetdd/$slice" || die "git worktree add failed" 1
+    pgit worktree add -q --detach "$path" "$sha" || die "git worktree add failed" 1
     # Anything that fails from here takes the worktree away again.
     undo() { pgit worktree remove --force "$path" >/dev/null 2>&1; die "$1" 1; }
+    # remove takes a review worktree detached at this commit (a runner's is on its branch).
+    wgit="$(admin_dir "$path")" && printf '%s\n' "$sha" > "$wgit/vetdd-review" || undo "cannot record the commit of the review worktree"
     { mkdir -p "$path/.vetdd/evidence" && cp -R -- "$root/.vetdd/evidence/$slice" "$path/.vetdd/evidence/$slice"; } \
       || undo "cannot copy the evidence of $(p "$slice")"
     if [ -d "$root/.vetdd/notes" ]; then
