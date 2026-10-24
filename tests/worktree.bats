@@ -442,3 +442,46 @@ b"; do
   grep -q 'merge --no-ff --no-overwrite-ignore -m "Merge vetdd/<slice>" <the commit check printed>' "$sw"
   grep -q 'npm ci' "$sw"
 }
+
+# --- PR review round 1 (#38, #40) ------------------------------------------------------------------
+
+@test "#38 r1: check fails (exit 1) when it cannot read the branch's changes, never 'can be merged'" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  # The commit is there, its tree is not: git diff fails.
+  local t; t="$(git rev-parse 'vetdd/sa^{tree}')"
+  rm -f ".git/objects/${t:0:2}/${t:2}"
+  run WT check sa
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" != *"can be merged"* ]]
+}
+
+@test "#38 r1: remove --at <commit> refuses a branch that moved since check (a worker still at work)" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && unit sa test.sh value.txt 42)
+  local at; at="$(git rev-parse vetdd/sa)"
+  (cd "$WTROOT/sa" && printf 'more\n' > more.txt && git add more.txt && git commit -qm more)
+  run WT remove sa --keep-branch --at "$at"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"moved"* ]]
+  [ -d "$WTROOT/sa" ]
+  run WT remove sa --keep-branch --at "$(git rev-parse vetdd/sa)"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#38 r1: an ignored directory holding a .git (a dependency checked out from git) does not stop remove" {
+  WT add sa >/dev/null
+  mkdir -p "$WTROOT/sa/ignored/dep/.git"
+  # An untracked nested repository is only an untracked directory: remove counts it as work and runs
+  # nothing of its config.
+  (cd "$WTROOT/sa" && git init -q loose && cd loose && printf 'a\n' > f && git add f && git commit -qm n \
+    && git config filter.evil.clean "touch '$BATS_TEST_TMPDIR/ran'; cat" && printf '* filter=evil\n' > .git/info/attributes \
+    && printf 'b\n' > f && touch -t 200001010000 f)
+  run WT remove sa --no-evidence
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"uncommitted"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/ran" ]
+  rm -rf "$WTROOT/sa/loose"
+  run WT remove sa --no-evidence
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

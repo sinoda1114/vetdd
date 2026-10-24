@@ -4,8 +4,8 @@
 # --keep-branch), with its design note at .vetdd/notes/<lane>-design.md.
 # Usage: arena-layout.sh --out <new dir> --base <ref> [--allow-secrets <glob>[:<kind>,...]]...
 #                        [--allow-binary <path>]... [--allow-words <glob>:<word>[,<word>]...]... <lane>...
-#   For each lane: worktree.sh check again, then, in a worktree the parent makes (worktree.sh review,
-#   never the runner's own), check-evidence.sh --before-close <lane> is the gate (exit 1: the lane is
+#   For each lane: worktree.sh check again, then, in a worktree the parent makes at the commit check
+#   passed (worktree.sh review --at, never the runner's own), check-evidence.sh --before-close <lane> is the gate (exit 1: the lane is
 #   not green and stays out, named in <out>/gate.txt, which names the commit check passed for each green
 #   lane; a branch that moves before its lane is laid out stops the build; any other failure stops it too); a green lane
 #   gets judge-layout.sh --before-close with its design note as the reply (--allow-secrets,
@@ -118,7 +118,7 @@ for l in "${lanes[@]}"; do
   # The commit check passed: the lane is gated and laid out at it, and merged at it (gate.txt names it).
   sha="${ck##* }"
   printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}([0-9a-f]{24})?$' || die "worktree.sh check $(p "$l") named no commit" 1
-  rv="$("$here/worktree.sh" review "$l" 2>"$out/errs/$l.review")" \
+  rv="$("$here/worktree.sh" review "$l" --at "$sha" 2>"$out/errs/$l.review")" \
     || { vetdd_printable < "$out/errs/$l.review" >&2; die "cannot make a review worktree for $(p "$l")" 1; }
   cur="$l"
   grc=0

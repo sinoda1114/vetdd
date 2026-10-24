@@ -421,3 +421,36 @@ sneak() {
   grep -q 'cover every lane' "$ar"
   grep -q 'merge --no-ff --no-overwrite-ignore -m "Merge vetdd/<lane>" <the commit gate.txt names>' "$ar"
 }
+
+# --- PR review round 1 (#40) -----------------------------------------------------------------------
+
+@test "#40 r1: review --at <commit> checks out that commit, not the branch's tip, and remove takes it away after the branch moves" {
+  lane ar-a1b2c3 42
+  local at; at="$(git rev-parse vetdd/ar-a1b2c3)"
+  run WT review ar-a1b2c3 --at "$at"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(git -C "$WTROOT/ar-a1b2c3" rev-parse HEAD)" = "$at" ]
+  # The branch moves to another tree after the checkout: the review worktree still holds the commit.
+  local idx="$BATS_TEST_TMPDIR/m.idx" blob tree c
+  blob="$(printf '7\n' | git hash-object -w --stdin)"
+  GIT_INDEX_FILE="$idx" git read-tree vetdd/ar-a1b2c3
+  GIT_INDEX_FILE="$idx" git update-index --cacheinfo "100644,$blob,value.txt"
+  tree="$(GIT_INDEX_FILE="$idx" git write-tree)"; c="$(git commit-tree "$tree" -p vetdd/ar-a1b2c3 -m moved)"
+  git update-ref refs/heads/vetdd/ar-a1b2c3 "$c"
+  [ "$(cat "$WTROOT/ar-a1b2c3/value.txt")" = 42 ]
+  [ "$(git -C "$WTROOT/ar-a1b2c3" rev-parse HEAD)" = "$at" ]
+  run WT remove ar-a1b2c3 --keep-branch
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -e "$WTROOT/ar-a1b2c3" ]
+  # A commit the branch is no longer at is refused: it moved since check.
+  run WT review ar-a1b2c3 --at "$at"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"moved"* ]]
+  [ ! -e "$WTROOT/ar-a1b2c3" ]
+}
+
+@test "#40 r1: arena-layout reviews each lane at the commit check passed" {
+  grep -q 'review "$l" --at "$sha"' "$SCRIPTS/arena-layout.sh"
+  grep -q 'remove <lane> --keep-branch --at <the commit check printed>' "$SCRIPTS/../parallel/arena.md"
+  grep -q 'remove <slice> --keep-branch --at <the commit check printed>' "$SCRIPTS/../parallel/swarm.md"
+}
