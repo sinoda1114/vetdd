@@ -41,6 +41,9 @@ jobs:
           command -v jq perl git node
       - name: bats
         run: npm test
+        env:
+          # The locale tests (#50) must run here, never skip: this is the one job that can see them.
+          REQUIRE_UTF8_LOCALE_TESTS: "1"
 
   fixture:
     # fixtures/ts-kata is the practice target the dogfood runs use: it must install, test, and audit clean.

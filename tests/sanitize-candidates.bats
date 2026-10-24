@@ -759,3 +759,42 @@ exec /bin/mv "$@"'
   [[ "$output" == *"'feature-x' is not a checked word"* ]] || { echo "$output"; false; }
   [ ! -e "$DEST/c1" ]
 }
+
+# --- #50: locale ------------------------------------------------------------------------------------
+
+@test "#50: a strip word with an invalid UTF-8 byte after main is not taken for main, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  local x; x="$(printf '\377')"
+  printf 'by main%sline\n' "$x" > "$SRC/NOTES.md"
+  LC_ALL="$loc" run san --src "$SRC" --label c1 --dest "$DEST" --strip "main${x}line"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat "$DEST/c1/artifact/NOTES.md")" = "by [redacted]" ] || { od -c "$DEST/c1/artifact/NOTES.md"; false; }
+}
+
+@test "#50: init.defaultBranch with an invalid UTF-8 byte does not protect the word before the byte, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  git config --global init.defaultBranch "trunk$(printf '\377')line"
+  printf 'by trunk\n' > "$SRC/NOTES.md"
+  LC_ALL="$loc" run san --src "$SRC" --label c1 --dest "$DEST" --strip trunk
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat "$DEST/c1/artifact/NOTES.md")" = "by [redacted]" ]
+}
+
+@test "#50: a strip word with an invalid UTF-8 byte after the placeholder still goes to --words-out, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  local x; x="$(printf '\377')"
+  LC_ALL="$loc" run san --src "$SRC" --label c1 --dest "$DEST" --strip "redacted${x}day" --words-out "$BATS_TEST_TMPDIR/w.txt"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(LC_ALL=C sort "$BATS_TEST_TMPDIR/w.txt" | LC_ALL=C tr '\n' ,)" = "kata-app-1,redacted${x}day," ] || { od -c "$BATS_TEST_TMPDIR/w.txt"; false; }
+}
+
+@test "#50: --allow-words keeps a word that a strip word with an invalid UTF-8 byte only starts with, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  local x; x="$(printf '\377')"
+  LC_ALL="$loc" run san --src "$SRC" --label c1 --dest "$DEST" --strip "variant${x}x" --allow-words '*:variant'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

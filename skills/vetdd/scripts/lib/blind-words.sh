@@ -15,11 +15,15 @@ VETDD_FINAL_ORIGIN_WORDS="winner"
 
 # vetdd_word_file <file> <word>...: write the words, lower-cased, longest first (so a longer word
 # that contains a shorter one is redacted whole).
-vetdd_word_file() {
-  local f="$1"; shift
+# Byte-wise (LC_ALL=C), as the matchers read the file: under a UTF-8 locale the macOS awk stops at an
+# invalid UTF-8 byte and drops every word after it, and its tolower would fold É, which the
+# matchers' tolower leaves, so the word would never match (#50).
+vetdd_word_file() (
+  export LC_ALL=C
+  f="$1"; shift
   printf '%s\n' "$@" | awk '{ gsub(/^[ \t]+|[ \t\r]+$/, ""); if ($0 != "" && $0 !~ /^#/) print length($0) "\t" tolower($0) }' \
     | sort -rn -k1,1 | cut -f2- | awk '!seen[$0]++' > "$f"
-}
+)
 
 # VETDD_AWK_LEAD: the awk function lead(s, p), shared by both matchers: 1 when the text before
 # position p of s (lower-cased) ends at a word boundary. That is the line start, a character that
@@ -164,7 +168,8 @@ EOF_W
     case "$known" in *" $lw "*) ok=1 ;; esac
     for x in "$@"; do
       [ "$ok" -eq 0 ] || break
-      [ "$(printf '%s' "$x" | tr 'A-Z' 'a-z')" != "$lw" ] || ok=1
+      # LC_ALL=C: under a UTF-8 locale the macOS tr stops at an invalid UTF-8 byte (#50).
+      [ "$(printf '%s' "$x" | LC_ALL=C tr 'A-Z' 'a-z')" != "$lw" ] || ok=1
     done
     [ "$ok" -eq 1 ] || { printf "%s\n" "--allow-words '$v': '$w' is not a checked word"; return 1; }
   done

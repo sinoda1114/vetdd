@@ -386,8 +386,10 @@ in_tree_hooks_path_gets_no_line() {
 
 # #64 review round 2
 @test "#64: a hooksPath with a byte that is not UTF-8 is printed whole, not cut at that byte" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
   git config --global core.hooksPath "$HOME/no-dir-a$(printf '\377')b-64"
-  LC_ALL=en_US.UTF-8 run setup_project
+  LC_ALL="$loc" run setup_project
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"no-dir-a"*"b-64"* ]] || { echo "$output"; false; }
 }

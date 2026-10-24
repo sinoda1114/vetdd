@@ -154,7 +154,9 @@ words_for() {
   union=" $union "
   local keep=()
   for w in $base_words ${extra_words[@]+"${extra_words[@]}"}; do
-    lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
+    # LC_ALL=C: an extra word may hold any byte, and under a UTF-8 locale the macOS tr stops at an
+    # invalid UTF-8 one, so acme<byte>corp would be taken for acme (#50).
+    lw="$(printf '%s' "$w" | LC_ALL=C tr 'A-Z' 'a-z')"
     case "$union" in *" $lw "*) ;; *) keep+=("$w") ;; esac
   done
   # Every word allowed: "-", the one mark that skips the scan. A list that could not be built is an
