@@ -1,0 +1,79 @@
+{
+  "eval_id": "implement-business-days",
+  "run_id": "20261017-1505-v5",
+  "rubric_version": 5,
+  "labels": ["c1", "c2"],
+  "criteria": [
+    {
+      "name": "agreed-values-asserted",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/src/dueDate.rollover.test.ts:7,12,17 asserts all three literals with the option; c1/evidence/rollover-1/runs/021-integrated.log:4-7 shows 4 tests passed after the last oracle change."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/src/dueDate.rollover.test.ts:7,12,17 asserts all three literals with the option; c2/evidence/rollover-1/runs/008-integrated.log:4-7 shows 4 tests passed."
+        }
+      ]
+    },
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/rollover-1/runs/013-calibration.log:11-30 shows the agreed Saturday and Sunday assertions failing; c1/evidence/rollover-1/meta.json records that target_failure before the green seq 21 integrated run."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/evidence/rollover-1/runs/002-before.log:13-32 shows the agreed Saturday and Sunday assertions failing; c2/evidence/rollover-1/meta.json records that target_failure before the green seq 8 integrated run."
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch changes only src/dueDate.ts and the new rollover test; c1/artifact/src/dueDate.ts:104-114 adds the optional rollover and retains the original calculation when it is absent."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/diff.patch changes only src/dueDate.ts and the new rollover test; c2/artifact/src/dueDate.ts:105-114 adds the optional rollover and retains the original calculation when it is absent."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 0,
+          "evidence": "c1/artifact/reply.md:7-16 and 21-29 contain numerous factual lines without Measured, inferred, or guess labels; only lines 37-41 in the requirements section are labeled. Fewer than 80% of factual lines are labeled."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:7-11 and 16-23 contain numerous factual lines without Measured, inferred, or guess labels; only lines 31-35 in the requirements section are labeled. Fewer than 80% of factual lines are labeled."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "fail"},
+    {"label": "c2", "verdict": "fail"}
+  ],
+  "winner": "tie",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "No run conditions were recorded. The final after or integrated evidence is c1 seq 23 and c2 seq 10, respectively; both therefore meet the empty set of agreed conditions."
+  },
+  "disagreements": []
+}

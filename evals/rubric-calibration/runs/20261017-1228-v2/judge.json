@@ -1,0 +1,51 @@
+{
+  "eval_id": "rubric-calibration",
+  "run_id": "20261017-1228-v2",
+  "rubric_version": 2,
+  "labels": ["c1", "c2"],
+  "criteria": [
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/s1/meta.json:3-4 records an accepted before target_failure preceding an accepted after pass; c1/evidence/s1/runs/001-before.log:1-2 shows the February 28 assertion failing."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/evidence/s1/meta.json:2-3 contains only an after run."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/reply.md:2 is the sole unlabeled factual line; lines 4-5 are Measured claims citing their corresponding logs."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:4 says “Done” without check-evidence.sh output in the reply or an artifact/check-evidence.txt file."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "pass"},
+    {"label": "c2", "verdict": "fail"}
+  ],
+  "winner": "c1",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "Both candidates’ final after runs record cwd “.” (repo root) and node_version “v24.16.0”: c1/evidence/s1/meta.json:4; c2/evidence/s1/meta.json:3."
+  },
+  "disagreements": [
+    "c2/artifact/reply.md:4 claims the fix is verified and done, but c2/evidence/s1/meta.json:2-3 records only one after run, and no check-evidence.sh output is present."
+  ]
+}
