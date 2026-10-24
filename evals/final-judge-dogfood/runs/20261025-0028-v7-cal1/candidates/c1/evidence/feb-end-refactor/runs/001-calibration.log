@@ -1,0 +1,40 @@
+
+> ts-kata@0.0.0 test
+> vitest run
+
+
+ RUN  v5.0.1 /private/tmp/[redacted]/-Users-sinoda-dev/cdd0f79b-61f9-4552-8489-14fa490c0aa9/scratchpad/kata-dogfood
+
+ ❯ src/dueDate.test.ts (0 test)
+ ❯ src/invoice.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/dueDate.test.ts [ src/dueDate.test.ts ]
+Error: Cannot find module './dueDate.js' imported from /private/tmp/[redacted]/-Users-sinoda-dev/cdd0f79b-61f9-4552-8489-14fa490c0aa9/scratchpad/kata-dogfood/src/dueDate.test.ts
+ ❯ src/dueDate.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import { closingDate, paymentDueDate } from "./dueDate.js";
+       | ^
+      3|
+      4| describe("closingDate", () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/invoice.test.ts [ src/invoice.test.ts ]
+Error: Cannot find module './dueDate.js' imported from /private/tmp/[redacted]/-Users-sinoda-dev/cdd0f79b-61f9-4552-8489-14fa490c0aa9/scratchpad/kata-dogfood/src/invoice.ts
+ ❯ src/invoice.ts:1:1
+      1| import { type ClosingDay, closingDate, paymentDueDate } from "./dueDat…
+       | ^
+      2|
+      3| export type InvoiceTerms = {
+ ❯ src/invoice.test.ts:2:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  no tests
+   Start at  07:56:21
+   Duration  107ms (worker 97%, environment 3%)
+

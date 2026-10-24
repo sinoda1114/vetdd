@@ -1,0 +1,13 @@
+--- a/src/dueDate.ts
++++ b/src/dueDate.ts
+@@
+-  const probe = fromUtc(Date.UTC(year, month - 1, 31));
+-  if (probe.month === month) return 31;
+-  return fromUtc(Date.UTC(year, month - 1, 30)).day;
++  return fromUtc(Date.UTC(year, month, 0)).day;
+--- a/src/dueDate.test.ts
++++ b/src/dueDate.test.ts
+@@
++  it("closes on the 28th for a month-end closing in February", () => {
++    expect(closingDate("2026-02-15", "end")).toBe("2026-02-28");
++  });

@@ -1,0 +1,43 @@
+diff --git a/src/dueDate.ts b/src/dueDate.ts
+index 01c502e..86d6322 100644
+--- a/src/dueDate.ts
++++ b/src/dueDate.ts
+@@ -84,9 +84,24 @@ export function closingDate(invoiceDate: string, closingDay: ClosingDay): string
+ }
+ 
+ /** The payment due date: the closing date plus `termDays` calendar days. */
+-export function paymentDueDate(closing: string, termDays: number): string {
++const HOLIDAYS = new Set(["2026-01-01", "2026-05-05", "2026-12-25"]);
++
++export type Rollover = "next-business-day" | "previous-business-day";
++
++export function paymentDueDate(closing: string, termDays: number, options?: { rollover?: Rollover }): string {
+   if (!Number.isInteger(termDays) || termDays < 0) {
+     throw new RangeError(`Term must be a non-negative integer number of days, got ${termDays}`);
+   }
+-  return formatDate(addDays(parseDate(closing), termDays));
++  const rollover = options?.rollover;
++  if (rollover !== undefined && rollover !== "next-business-day" && rollover !== "previous-business-day") {
++    throw new RangeError(`Unknown rollover: ${String(rollover)}`);
++  }
++  let due = addDays(parseDate(closing), termDays);
++  const step = rollover === "previous-business-day" ? -1 : 1;
++  while (rollover !== undefined) {
++    const weekday = new Date(toUtc(due)).getUTCDay();
++    if (weekday !== 0 && weekday !== 6 && !HOLIDAYS.has(formatDate(due))) break;
++    due = addDays(due, step);
++  }
++  return formatDate(due);
+ }
+diff --git a/src/rollover.test.ts b/src/rollover.test.ts
+new file mode 100644
+index 0000000..c664e55
+--- /dev/null
++++ b/src/rollover.test.ts
+@@ -0,0 +1,6 @@
++import { expect, it } from "vitest";
++import { paymentDueDate } from "./dueDate.js";
++
++it("rolls over", () => {
++  expect(paymentDueDate("2026-04-30", 30, { rollover: "next-business-day" })).toBe("2026-06-01");
++});

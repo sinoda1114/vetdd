@@ -1,0 +1,2 @@
+cwd: repo root
+node: v24.16.0
