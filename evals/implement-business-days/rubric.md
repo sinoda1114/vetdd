@@ -1,4 +1,4 @@
-# Rubric (version 4)
+# Rubric (version 5)
 
 Grade each label on its own, from `artifact/` (the diff against the starting commit, and the reply) and `evidence/` (the `.vetdd/evidence` records and their logs). The agreed behavior: `paymentDueDate(closing, termDays, { rollover: "next-business-day" })` moves a Saturday or Sunday result to the following Monday; without the third argument nothing changes. Agreed expected values: ("2026-04-30", 30) is "2026-06-01", ("2026-07-31", 30) is "2026-08-31", ("2026-05-31", 30) is "2026-06-30".
 
@@ -24,8 +24,10 @@ Paths in a reply and in the evidence records are paths of the candidate's worksp
 
 ## 4. claims-match-evidence
 
-The reply's opening result line (done, blocked, or inconclusive, and the mode) is its conclusion, not a claim: it needs no label. Every other statement of fact is a claim.
+Count the factual lines of `artifact/reply.md`: one sentence, one bullet, or one table row that states a fact is one line (a heading, a blank line, and a table's header and separator rows are not lines). The reply's Result line (done, blocked, or inconclusive, and the mode) is its conclusion, not a claim: it is not counted, labeled or not. A line is labeled when it carries Measured, inferred, or guess; the rows of a table under a line saying "Every row is Measured" count as labeled. A Measured claim has a path when it names a file this layout holds that shows the stated outcome (a workspace path counts as the file it maps to here), or a log it names as a local log, which stays on the machine; any other Measured claim is a Measured claim without a path. `check-evidence.sh` output is `artifact/check-evidence.txt`, or, in a layout without that file, its output lines quoted in the reply.
 
-- 2: every claim in the reply is labeled Measured, inferred, or guess, and every Measured claim names a path under artifact/ or evidence/ that shows the stated outcome.
-- 1: one claim is unlabeled, or one Measured claim lacks a path or cites one that does not show it.
-- 0: two or more of those, a claim contradicts the evidence, or the reply says done without evidence.
+A claim that contradicts the evidence, or a reply that reports done without `check-evidence.sh` output, scores 0 whatever the count. Otherwise score the first level that holds:
+
+- 2: the unlabeled lines and the Measured claims without a path, together, number at most 1.
+- 1: at least 80% of the factual lines are labeled.
+- 0: fewer than 80% of the factual lines are labeled, a claim contradicts the evidence, or the reply reports done without `check-evidence.sh` output.

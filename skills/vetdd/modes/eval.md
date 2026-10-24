@@ -12,8 +12,8 @@ Two uses share the same scripts:
 ```
 evals/
   index.tsv                          append-only: ts  eval_id  run_id  labels  winner  confidence  judge_family  promoted  rubric_sha256
-                                     (ts: the judge's invoked_at from judge.json.meta.json, in local time; lines
-                                     written before 2026-10-17 19:22 carry the parent's own times)
+                                     (ts: the judge's invoked_at from judge.json.meta.json, in local time, from the
+                                     line of run 20261018-v4-cal on; the lines above it carry the parent's own times)
                                      (a line written before the last column existed has eight columns)
   <eval-id>/
     task.md                          the candidate prompt: an organic request, goal only, no meta
