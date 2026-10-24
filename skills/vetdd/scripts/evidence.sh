@@ -233,8 +233,15 @@ fi
 audit_json=null
 if [ "$audit_opt" = undefined-imports ]; then audit_json='{"kind": "undefined-imports"}'
 elif [ "$audit_opt" = mutation ]; then
-  mreport_json="$(vetdd_mutation_report_import "$root" "$mreport_rel" "$dir/runs/$(printf '%03d' "$seq")-mutation.json" \
-    "runs/$(printf '%03d' "$seq")-mutation.json")" || mreport_json=""
+  # Two names the letter-case check passed can still be one file (NFC and NFD on APFS): never read as both.
+  if [ -n "$report_rel" ] && [ -e "$root/$mreport_rel" ] && [ "$root/$mreport_rel" -ef "$root/$report_rel" ]; then
+    printf 'evidence.sh: warning: mutation report %s is invalid (it is the same file as the test report %s); recorded audit.report.status=invalid (the outcome still comes from the exit code)\n' \
+      "$mreport_rel" "$report_rel" | vetdd_printable >&2
+    mreport_json=""
+  else
+    mreport_json="$(vetdd_mutation_report_import "$root" "$mreport_rel" "$dir/runs/$(printf '%03d' "$seq")-mutation.json" \
+      "runs/$(printf '%03d' "$seq")-mutation.json")" || mreport_json=""
+  fi
   printf '%s' "$mreport_json" | jq -e 'type == "object"' >/dev/null 2>&1 \
     || mreport_json="$(jq -n --arg p "$mreport_rel" '{format: "stryker-json", path: $p, status: "invalid"}')"
   audit_json="$(printf '%s' "$mreport_json" | jq -c '{kind: "mutation", report: .}')"

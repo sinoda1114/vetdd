@@ -72,13 +72,16 @@
 #               and its mutated files still hold the source it mutated, and, when its command is
 #               npx [--no-install] vitest run with single-quoted or plain file filters, it names at least
 #               one and each is the end of an oracle file path of the final oracle, whole components
-#               (ignoring ASCII letter case, as vitest does), so another test does not get the slice's
-#               kills; with no such run, a mutation
+#               (ignoring ASCII letter case, as vitest does), so a filter that names another test file
+#               is caught; with no such run, a mutation
 #               note written after the final oracle first ran. Ignored mutants are a WARN (10c). Asked
 #               of a slice whose final oracle has a JS or TS file (.js .jsx .mjs .cjs .ts .tsx .mts
 #               .cts), and of any other slice with a mutation run or note. A tripwire, not a boundary: it trusts the
-#               report (what Stryker mutated and how it ran), a command of another shape (a verify wrapper,
-#               options) is not read, and the ranges are the judge's to check.
+#               report (what Stryker mutated and how it ran), a vitest command it cannot read (options,
+#               double quotes, a non-ASCII, // or .. path) is a WARN, a command without vitest (a verify
+#               wrapper) is not read, a filter that matches can still select more files (the ts-kata
+#               config refuses that), and the ranges are the judge's to check. A mutated source with a
+#               bidirectional or invisible character is a WARN.
 # Stall:    (11) every handover file (.vetdd/evidence/<slice>/handover-<n>.md, handover.sh: the mark of
 #               a redesign) has each heading. A record that holds more stalls (lib/stall.sh with the
 #               default K = 2) than handovers is a WARN, not a FAIL: the agreement can change K, and
@@ -365,30 +368,35 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
   end'
 
 # Rule 10c, on the copy of the judged run (its sha256 checked), with $o the paths of the final oracle and
-# $root the repository: which test files its command ran against the mutants. "none" for a vitest run
-# with no file filter (every test file), "other" for a filter that is not the end of an oracle file path
-# at a component boundary, or an absolute one that does not end with one (vitest selects every file whose path holds a filter, ignoring letter case;
-# the ts-kata config makes each select exactly one, and names the files from the project directory),
-# "ok", or "skip" for no command or one of another shape: a verify wrapper, a vitest command with
-# options, double quotes, or anything but plain words and single-quoted ones, and a filter with a
-# non-ASCII character (vitest folds its case, jq cannot). The judge reads those.
+# $root the repository: which test files its command ran against the mutants. Each file filter of an
+# npx [--no-install] vitest run command (plain words and single-quoted ones) is a match when it is the end
+# of an oracle file path at a component boundary (an absolute one: when it ends with one), ignoring ASCII
+# letter case as vitest does; unreadable when it is an option, holds a non-ASCII character (vitest folds
+# its case, jq cannot), // or a . or .. component; else no match. The answer: "other" when a filter
+# matches no oracle file, "none" for no filter (every test file), "unread" for an unreadable filter or a
+# vitest command of another shape (options, double quotes, other shell syntax), "ok", or "skip" for no
+# command or one without vitest (a verify wrapper): the judge reads that. A tripwire, not a boundary:
+# vitest selects every file whose path holds a filter, so a filter that matches can still select more
+# files; the ts-kata config refuses one that selects more than one, a config without that check does not.
 COMMAND_FILTERS='
   def nodots: if startswith("./") then .[2:] | nodots else . end;
+  # On the filter as written ($r) and with the repository and leading ./ taken off (.).
+  def unreadable($r): ($r | startswith("-")) or ($r | explode | any(.[]; . > 126)) or ($r | test("//"))
+    or (split("/") | any(.[]; . == "." or . == ".."));
   (.config.command // null) as $c
-  | if ($c | type) != "string" then "skip"
+  | if ($c | type) != "string" or ($c | test("vitest") | not) then "skip"
     else (($c | capture("^npx (--no-install )?vitest run(?<rest>( +([A-Za-z0-9._/@+=:,%~^][A-Za-z0-9._/@+=:,%~^-]*|\u0027([^\u0027]|\u0027\\\\\u0027\u0027)*\u0027))*) *$"))? // null) as $m
-      | if $m == null then "skip"
+      | if $m == null then "unread"
         else [$m.rest | scan("\u0027((?:[^\u0027]|\u0027\\\\\u0027\u0027)*)\u0027|([^ \u0027]+)") | (.[0] // .[1])
-              | gsub("\u0027\\\\\u0027\u0027"; "\u0027") | ltrimstr($root + "/") | nodots] as $t
-          | if any($t[]; explode | any(.[]; . > 126)) then "skip"
-            else ($o | map("/" + ascii_downcase)) as $paths
-            | if ($t | length) == 0 then "none"
-              # An absolute filter (the repository may be spelled through a link) ends with an oracle path.
-              elif all($t[]; ascii_downcase as $f | $f != "" and $f != "/"
-                       and (if $f | startswith("/") then any($paths[]; . as $p | $f | endswith($p))
-                            else any($paths[]; endswith("/" + $f)) end)) then "ok"
-              else "other" end
-            end
+              | gsub("\u0027\\\\\u0027\u0027"; "\u0027") | {r: ., n: (ltrimstr($root + "/") | nodots)}] as $t
+          | ($o | map("/" + ascii_downcase)) as $paths
+          | [$t[] | .r as $r | .n | select(unreadable($r) | not) | ascii_downcase] as $plain
+          | if any($plain[]; . as $f | $f == "" or $f == "/"
+                   or (if $f | startswith("/") then any($paths[]; . as $p | $f | endswith($p))
+                       else any($paths[]; endswith("/" + $f)) end | not)) then "other"
+            elif ($t | length) == 0 then "none"
+            elif ($plain | length) < ($t | length) then "unread"
+            else "ok" end
         end
     end'
 
@@ -633,9 +641,14 @@ check_mutation() {
       elif [ -n "$tr" ] && [ "$tr" != command ]; then
         printf '%s\n' "10c: mutation run $seq ran Stryker's $tr runner, not the command runner; Stryker's vitest runner reported killable mutants as Survived with vitest 5 (vetdd #20), so read its survivors before trusting them" >> "$warn_file"
       fi
+      # A source with a character that hides or reorders text reads otherwise to the judge than to the toolchain.
+      if ! jq -e "$VETDD_JQ_CLEAN"' all(.files[]?.source; type != "string" or cleantext)' "$root/$rel" >/dev/null 2>&1; then
+        printf '%s\n' "10c: mutation run $seq mutated a file whose source holds a bidirectional or invisible character; it may read otherwise than it runs, so look at that file's bytes" >> "$warn_file"
+      fi
       # The tests that faced the mutants are the slice's own (#16): a mutant another test kills is not the slice's.
       case "$(jq -r --arg root "$root" --argjson o "$(printf '%s' "$out" | jq -c '.copy.oracle // []')" "$COMMAND_FILTERS" "$root/$rel" 2>/dev/null || echo error)" in
         ok|skip) ;;
+        unread) printf '%s\n' "10c: mutation run $seq ran a vitest command that 10c cannot read (an option, double quotes, a non-ASCII, // or .. path, or other shell syntax), so it did not check that only the slice's own test files faced the mutants; the judge reads the command in the copy" >> "$warn_file" ;;
         none) echo "10c: mutation run $seq ran its mutants against every test file (its vitest run command names no test file), so a mutant another test kills counts for the slice; set VETDD_MUTATION_TESTS to the slice's own test files and run the mutation audit again" ;;
         other) echo "10c: mutation run $seq ran its mutants against test files outside the slice's oracle files (a file filter of its vitest run command is not the end of an oracle file path), so a mutant another test kills counts for the slice; set VETDD_MUTATION_TESTS to the slice's own test files and run the mutation audit again" ;;
         *) echo "10c: could not read which tests mutation run $seq ran against its mutants (its copy is malformed); run the mutation audit again" ;;

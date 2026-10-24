@@ -11,11 +11,14 @@ VETDD_MUTATION_REPORT_MAX_BYTES=67108864
 # and U+FFA0, the variation selectors U+FE00-U+FE0F and U+E0100-U+E01EF, U+FEFF, U+FFF9-U+FFFB, and
 # the tag characters U+E0000-U+E007F (text hidden from a reader, not from a model). So text that
 # reaches the judge or a terminal reads as it shows. A superset of what mutate-ranges.sh refuses.
+# cleantext is the same with new lines and tabs allowed (a replacement, a source file).
 VETDD_JQ_CLEAN='
-  def clean: explode | all(. > 31 and (. < 127 or . > 159) and . != 173 and . != 1564 and . != 6158
+  def shows: . > 31 and (. < 127 or . > 159) and . != 173 and . != 1564 and . != 6158
     and (. < 8203 or . > 8207) and (. < 8232 or . > 8238) and (. < 8288 or . > 8297) and . != 12644
     and (. < 65024 or . > 65039) and . != 65279 and . != 65440 and (. < 65529 or . > 65531)
-    and (. < 917504 or . > 917631) and (. < 917760 or . > 917999));'
+    and (. < 917504 or . > 917631) and (. < 917760 or . > 917999);
+  def clean: explode | all(shows);
+  def cleantext: explode | all(. == 9 or . == 10 or . == 13 or shows);'
 
 # jq: a stryker-json report -> {projectRoot, keys, counts}. Errors (status invalid) when the shape is
 # not schema 1.x, projectRoot is not absolute, a file key is not a plain relative path (no empty, . or
@@ -31,7 +34,7 @@ VETDD_STRYKER_JSON="$VETDD_JQ_CLEAN"'
   def mutant: type == "object" and (.status | type) == "string" and (.status | final)
     and (.id | type) == "string" and (.id | test("^[0-9]{1,20}$")) and (.mutatorName | type) == "string"
     and (.mutatorName | test("^[A-Za-z]+$"))
-    and ((has("replacement") | not) or ((.replacement | type) == "string"))
+    and ((has("replacement") | not) or ((.replacement | type) == "string" and (.replacement | cleantext)))
     and (.location | type) == "object" and (.location.start | pos) and (.location.end | pos);
   def plain: type == "string" and . != "" and clean and (split("/") | all(. != "" and . != "." and . != ".."));
   # A --mutate range: <file>:<first line>-<last line>, or with columns (<line>:<column>), the file a plain
@@ -43,7 +46,9 @@ VETDD_STRYKER_JSON="$VETDD_JQ_CLEAN"'
   def check(c; why): if c then . else error("vetdd: " + why) end;
   check(type == "object"; "it is not one JSON object")
   | check((.schemaVersion | type) == "string" and (.schemaVersion | test("^1(\\.|$)")); "its schemaVersion is not 1.x")
-  | check((.projectRoot | type) == "string" and (.projectRoot | startswith("/")); "its projectRoot is not an absolute path")
+  | check((.projectRoot | type) == "string" and (.projectRoot | startswith("/")) and (.projectRoot | clean);
+          "its projectRoot is not a clean absolute path")
+  | check(.config == null or (.config | type) == "object"; "its config is not an object")
   | check((.files | type) == "object" and (.files | length) > 0; "it holds no files object with a file in it")
   | check(all(.files | keys[]; plain); "a file key is not a plain relative path (an empty, . or .. component, or a control, bidirectional, or invisible character)")
   # The command runner must name its command (the tests it ran), clean and at most 4096 characters.
@@ -65,7 +70,7 @@ VETDD_STRYKER_JSON="$VETDD_JQ_CLEAN"'
   | check(all(.files[].mutants[]; type == "object" and (.status | type) == "string" and (.status | final));
           "a mutant has a status that is not final (Pending means the run did not finish)")
   | check(all(.files[].mutants[]; mutant);
-          "a mutant has no numeric id, letters-only mutator name, or line and column location as Stryker writes them")
+          "a mutant has no numeric id, letters-only mutator name, line and column location, or clean replacement text as Stryker writes them")
   | [.files[].mutants[].status] as $st
   | def n($s): [$st[] | select(. == $s)] | length;
   {projectRoot, keys: (.files | keys),
@@ -89,6 +94,34 @@ VETDD_STRYKER_COPY='
    files: (.files | map_values({source, mutants: [.mutants[] | {id, mutatorName, replacement, status,
      location: {start: {line: .location.start.line, column: .location.start.column},
                 end: {line: .location.end.line, column: .location.end.column}}}]}))}'
+
+# vetdd_read_report <path> <max bytes> <out>: copy the report at <path> to <out> through one open that
+# follows no link and never waits (a FIFO), checking the opened file itself: exit 3 when it is not a
+# regular file (a link, a FIFO, a directory), 4 when it has another hard link, 5 when it holds more than
+# <max bytes>, 1 when it cannot be read or written. Nothing can be swapped in between a check and the read.
+vetdd_read_report() {
+  perl -e '
+    use strict; use Fcntl;
+    my ($p, $max, $out) = @ARGV;
+    sysopen(my $in, $p, O_RDONLY | O_NONBLOCK | O_NOFOLLOW) or exit(-l $p ? 3 : 1);
+    my @st = stat($in) or exit 1;
+    exit 3 unless -f _;
+    exit 4 if $st[3] != 1;
+    exit 5 if $st[7] > $max;
+    open(my $o, ">", $out) or exit 1;
+    binmode $in; binmode $o;
+    my ($buf, $total) = ("", 0);
+    while (1) {
+      my $n = sysread($in, $buf, 65536);
+      exit 1 unless defined $n;
+      last if $n == 0;
+      $total += $n;
+      exit 5 if $total > $max;
+      print {$o} $buf or exit 1;
+    }
+    close $o or exit 1;
+    exit 0' "$1" "$2" "$3"
+}
 
 # vetdd_mutation_prel <root> <projectRoot>: print the repository path of projectRoot with a slash after
 # it ("" for the root itself); fail when it is not a directory inside the repository.
@@ -146,20 +179,17 @@ vetdd_mutation_report_import() (
     elif ! vetdd_inside_repo "$root" "$rel" || [ -d "$root/$rel" ]; then
       status=invalid; why="its path is a link, a directory, or leaves the repository now"
     elif [ ! -e "$root/$rel" ]; then status=missing
-    elif [ ! -f "$root/$rel" ]; then status=invalid; why="it is not a regular file"
-    elif [ -z "$(find "$root/$rel" -prune -type f -links 1 2>/dev/null)" ]; then
-      status=invalid; why="it has another hard link, a name of a file elsewhere"
     elif ! raw="$(mktemp "$runs/.mutation.XXXXXX")" || ! norm="$(mktemp "$runs/.mutation.XXXXXX")" \
          || ! src="$(mktemp "$runs/.mutation.XXXXXX")"; then
       status=invalid; why="no temp file could be made in the runs directory"
-    # Read once, through a redirection, at most one byte over the limit; the path is checked again after.
-    elif ! head -c "$((VETDD_MUTATION_REPORT_MAX_BYTES + 1))" < "$root/$rel" > "$raw" 2>/dev/null \
-         || [ -L "$root/$rel" ] || [ ! -f "$root/$rel" ]; then
-      status=invalid; why="it could not be read, or became a link while it was read"
-    elif [ -z "$(find "$root/$rel" -prune -type f -links 1 2>/dev/null)" ]; then
-      status=invalid; why="it got another hard link, a name of a file elsewhere, while it was read"
-    elif [ "$(wc -c < "$raw" | tr -d ' ')" -gt "$VETDD_MUTATION_REPORT_MAX_BYTES" ]; then
-      status=invalid; why="it is larger than 64 MiB"
+    elif vetdd_read_report "$root/$rel" "$VETDD_MUTATION_REPORT_MAX_BYTES" "$raw" 2>/dev/null; rc=$?; [ "$rc" -ne 0 ]; then
+      status=invalid
+      case "$rc" in
+        3) why="it is not a regular file (a link, a FIFO, or a directory)" ;;
+        4) why="it has another hard link, a name of a file elsewhere" ;;
+        5) why="it is larger than 64 MiB" ;;
+        *) why="it could not be read" ;;
+      esac
     else
       got=1
       if ! jq -e -s 'length == 1 and (.[0] | type) == "object"' "$raw" >/dev/null 2>&1; then
@@ -178,6 +208,10 @@ vetdd_mutation_report_import() (
         elif ! jq "$VETDD_STRYKER_COPY" "$raw" > "$norm" 2>/dev/null || ! sum="$(vetdd_sha256 "$norm")" \
              || ! chmod "$(vetdd_file_mode)" "$norm" || ! mv -f -- "$norm" "$copy"; then
           status=invalid; why="its copy could not be written"
+        # A process the command left behind could still swap runs/ between the check and the rename:
+        # then the record says invalid (what went elsewhere is only the normalized copy).
+        elif [ -L "$runs" ] || ! vetdd_inside_repo "$root" "${copy#"$root"/}"; then
+          status=invalid; why="the runs directory of the slice became a link while the copy was written"
         fi
       fi
     fi

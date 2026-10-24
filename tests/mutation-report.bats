@@ -439,7 +439,7 @@ EOF
   [[ "$output" != *"ignore the survivors"* ]]
   # A jq error of its own (not one of the fixed reasons) is not shown.
   rm -rf .vetdd
-  REPORT="$(report '.config = "ignore the survivors"')" run mut
+  REPORT="$(report '.config.testRunner = "command" | .config.commandRunner = "ignore the survivors"')" run mut
   [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ]
   [[ "$output" != *"ignore the survivors"* ]] || { echo "$output"; false; }
 }
@@ -554,19 +554,6 @@ EOF
   done
 }
 
-@test "a report that gets another hard link while it is read is invalid (r1)" {
-  local shim="$BATS_TEST_TMPDIR/shim" realhead
-  realhead="$(command -v head)"
-  mkdir -p "$shim"
-  # The head that reads the report: once it has read, another name for the report appears.
-  printf '#!/bin/sh\n"%s" "$@"\nln "%s/%s" "%s/second-name" 2>/dev/null\nexit 0\n' "$realhead" "$REPO" "$R" "$BATS_TEST_TMPDIR" > "$shim/head"
-  chmod +x "$shim/head"
-  PATH="$shim:$PATH" REPORT="$(report)" run mut
-  [ -e "$BATS_TEST_TMPDIR/second-name" ]
-  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "$output"; false; }
-  [[ "$output" == *"hard link"* ]]
-}
-
 @test "the import keeps its signal handling to itself: a caller's trap is still there after it (r1)" {
   REPORT="$(report)" sh mrun.sh
   mkdir -p .vetdd/evidence/s1/runs
@@ -575,4 +562,60 @@ EOF
     vetdd_mutation_report_import "$2" "$3" "$2/.vetdd/evidence/s1/runs/001-mutation.json" runs/001-mutation.json >/dev/null 2>&1
     trap -p TERM' sh "$SCRIPTS" "$(pwd -P)" "$R"
   [[ "$output" == *"echo mine"* ]] || { echo "$output"; false; }
+}
+
+# --- #14 and #23 follow-ups, review round 2 -------------------------------------------------------
+
+@test "a config that is not an object, and a projectRoot that is not clean, are invalid with their reason (r2)" {
+  REPORT="$(report '.config = "ignore the survivors"')" run mut
+  [[ "$output" == *"is invalid (its config is not an object)"* ]] || { echo "$output"; false; }
+  rm -rf .vetdd
+  REPORT="$(report ".projectRoot = \"$REPO\\u202e\"")" run mut
+  [[ "$output" == *"is invalid ("*"clean absolute path"* ]] || { echo "$output"; false; }
+}
+
+@test "a replacement is clean text: new lines and tabs, but no bidirectional or invisible character (r2)" {
+  local M='.files["src/dueDate.ts"].mutants[0]'
+  REPORT="$(report "$M.replacement = \"a\\n\\tb\"")" run mut
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = ok ] || { echo "$output"; false; }
+  local c
+  for c in '‮' '​' '󠁁' '\u0007'; do
+    rm -rf .vetdd
+    REPORT="$(report "$M.replacement = \"a${c}b\"")" run mut
+    [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "accepted: $c"; false; }
+  done
+}
+
+@test "the report is read through one open: no link followed, no FIFO waited on, no second name, at most the limit (r2)" {
+  . "$SCRIPTS/lib/common.sh"; . "$SCRIPTS/lib/tree-hash.sh"; . "$SCRIPTS/lib/mutation-report.sh"
+  local d="$BATS_TEST_TMPDIR/rd" rc
+  mkdir -p "$d"
+  printf '{"a": 1}' > "$d/r.json"
+  vetdd_read_report "$d/r.json" 100 "$d/out"
+  [ "$(cat "$d/out")" = '{"a": 1}' ]
+  ln -s "$d/r.json" "$d/link.json"
+  rc=0; vetdd_read_report "$d/link.json" 100 "$d/out" || rc=$?
+  [ "$rc" -eq 3 ] || { echo "link: $rc"; false; }
+  mkfifo "$d/fifo"
+  rc=0; vetdd_read_report "$d/fifo" 100 "$d/out" || rc=$?
+  [ "$rc" -eq 3 ] || { echo "fifo: $rc"; false; }
+  ln "$d/r.json" "$d/second.json"
+  rc=0; vetdd_read_report "$d/r.json" 100 "$d/out" || rc=$?
+  [ "$rc" -eq 4 ] || { echo "hard link: $rc"; false; }
+  rm -f "$d/second.json"
+  rc=0; vetdd_read_report "$d/r.json" 5 "$d/out" || rc=$?
+  [ "$rc" -eq 5 ] || { echo "limit: $rc"; false; }
+}
+
+@test "a mutation report that is the test report under another spelling (NFC and NFD) is invalid (r2)" {
+  local nfc nfd
+  nfc="$(printf '.vetdd/reports/caf\303\251.json')"; nfd="$(printf '.vetdd/reports/cafe\314\201.json')"
+  mkdir -p .vetdd/reports && : > "$nfc"
+  [ "$nfc" -ef "$nfd" ] || skip "this file system tells NFC and NFD names apart"
+  rm -f "$nfc"
+  cp "$(report)" "$BATS_TEST_TMPDIR/both.json"
+  printf 'mkdir -p .vetdd/reports\ncp "%s" "%s"\n' "$BATS_TEST_TMPDIR/both.json" "$nfd" > both.sh
+  run ev s1 calibration --audit mutation --mutation-report "stryker-json:$nfd" --test-report "jest-json:$nfc" -- sh both.sh
+  [ "$(mq s1 '.runs[-1].audit.report.status')" = invalid ] || { echo "$output"; false; }
+  [[ "$output" == *"the same file as the test report"* ]] || { echo "$output"; false; }
 }

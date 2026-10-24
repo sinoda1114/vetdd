@@ -39,9 +39,12 @@ const real = (p) => {
   }
 };
 const project = real(process.cwd());
-// vitest list <p> --filesOnly --json, its standard output. It runs in a process group of its own, so on
-// the time limit the whole group is stopped: npx runs vitest in a child, which a signal to npx alone
-// would leave running.
+// vitest list <p> --filesOnly --json, its standard output (at most LIST_MAX bytes). It runs in a process
+// group of its own, so the whole group can be stopped: npx runs vitest in a child, which a signal to npx
+// alone would leave running. The group is stopped on the time limit, and when this process is stopped
+// or exits first (a Ctrl-C reaches only the terminal's own group, and a timer dies with this process).
+const LIST_MAX = 16 * 1024 * 1024;
+const STOP_ON = ["SIGINT", "SIGTERM", "SIGHUP"];
 const list = (p) =>
   new Promise((resolve, reject) => {
     // The filter goes before the flags: --json takes an optional value and would read a path after it
@@ -49,24 +52,49 @@ const list = (p) =>
     const child = spawn("npx", ["--no-install", "vitest", "list", p, "--filesOnly", "--json"], { stdio: ["ignore", "pipe", "pipe"], detached: true });
     let out = "";
     let err = "";
-    let late = false;
-    child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
-    child.stderr.setEncoding("utf8").on("data", (d) => (err += d));
-    const timer = setTimeout(() => {
-      late = true;
+    let why = "";
+    const stop = () => {
       try {
         process.kill(-child.pid, "SIGKILL");
       } catch {
         // The group is already gone.
       }
-    }, listTimeout);
-    child.on("error", (e) => {
+    };
+    // Stopped itself: stop the group, then go as the signal would have taken this process.
+    const onSignal = (sig) => {
+      stop();
+      cleanup();
+      process.kill(process.pid, sig);
+    };
+    const cleanup = () => {
       clearTimeout(timer);
+      process.off("exit", stop);
+      for (const sig of STOP_ON) process.off(sig, onSignal);
+    };
+    process.on("exit", stop);
+    for (const sig of STOP_ON) process.on(sig, onSignal);
+    const timer = setTimeout(() => {
+      why = "late";
+      stop();
+    }, listTimeout);
+    const take = (d, isOut) => {
+      if (isOut) out += d;
+      else err += d;
+      if (out.length + err.length > LIST_MAX && why === "") {
+        why = "large";
+        stop();
+      }
+    };
+    child.stdout.setEncoding("utf8").on("data", (d) => take(d, true));
+    child.stderr.setEncoding("utf8").on("data", (d) => take(d, false));
+    child.on("error", (e) => {
+      cleanup();
       reject(e);
     });
     child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      if (late) reject(Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }));
+      cleanup();
+      if (why === "late") reject(Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }));
+      else if (why === "large") reject(new Error(`vitest list wrote more than 16 MiB; that is not a list of test files`));
       else if (code !== 0) reject(new Error(`exit ${code ?? signal}: ${err.trim()}`));
       else resolve(out);
     });
