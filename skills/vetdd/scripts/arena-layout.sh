@@ -9,7 +9,8 @@
 #   not green and stays out, named in <out>/gate.txt; any other failure stops the build); a green lane
 #   gets judge-layout.sh --before-close with its design note as the reply (--allow-secrets,
 #   --allow-binary, and --allow-words go to it: write a secret or a word glob as c*/..., since each
-#   lane is checked as c1 and then judged as c<k>; the printed judge.sh command repeats them). The green lanes
+#   lane is checked as c1 and then judged as c<k>; one written for a label (c1/...) is a usage
+#   error; the printed judge.sh command repeats them). The green lanes
 #   go side by side as <out>/candidates/c1..cN in an order drawn from /dev/urandom, sent as recorded;
 #   <out>/variants.json keeps the map ({"c1": "<lane>", ...}). A lane id ends in a random suffix
 #   (<slice>-<6 or more hex digits>, parallel/arena.md step 1): the id the candidate carries says
@@ -32,14 +33,26 @@ vetdd_require_jq arena-layout.sh
 p() { printf '%s' "$1" | vetdd_printable; }
 
 out=""; base=""; lanes=(); jl_args=(); allow=(); awords=()
+# one_label_glob <flag> <value>: refuse a glob written for one label (c1/..., c12/...): each lane is
+# checked as c1 and judged as c<k>, so it would pass the lane checks and then cover one label only.
+one_label_glob() {
+  local g="${2%:*}"
+  case "$2" in *:*) ;; *) g="$2" ;; esac
+  case "${g%%/*}" in
+    c|c*[!0-9]*) return 0 ;;
+    c*) die "$1 $(p "$2"): write the glob as c*/..., not for one label: each lane is checked as c1 and judged as c<k> (parallel/arena.md)" ;;
+  esac
+}
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift 2 ;;
     --base) [ $# -ge 2 ] || die "--base needs a git ref"; base="$2"; shift 2 ;;
-    --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; allow+=("$2"); jl_args+=(--allow-secrets "$2"); shift 2 ;;
+    --allow-secrets) [ $# -ge 2 ] || die "--allow-secrets needs <glob>[:<kind>,...]"; one_label_glob "$1" "$2"
+      allow+=("$2"); jl_args+=(--allow-secrets "$2"); shift 2 ;;
     --allow-binary) [ $# -ge 2 ] || die "--allow-binary needs a repository path"; jl_args+=(--allow-binary "$2"); shift 2 ;;
     --allow-words) [ $# -ge 2 ] || die "--allow-words needs <glob>:<word>,..."
       . "$here/lib/blind-words.sh"; err="$(vetdd_allow_words_error "$2")" || die "$err"
+      one_label_glob "$1" "$2"
       jl_args+=(--allow-words "$2"); awords+=("$2"); shift 2 ;;
     -*) die "unknown option: $(p "$1")" ;;
     *) lanes+=("$1"); shift ;;

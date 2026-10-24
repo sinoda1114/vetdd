@@ -752,3 +752,10 @@ exec /bin/mv "$@"'
   [[ "$output" == *"'baseline' is redacted"* ]] || { echo "$output"; false; }
   [ ! -e "$DEST/c1" ]
 }
+
+@test "#54: a --strip word in none of the word lists cannot be allowed either (exit 2, nothing copied)" {
+  run san --src "$SRC" --label c1 --dest "$DEST" --strip feature-x --allow-words 'artifact/*:feature-x'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'feature-x' is not a checked word"* ]] || { echo "$output"; false; }
+  [ ! -e "$DEST/c1" ]
+}

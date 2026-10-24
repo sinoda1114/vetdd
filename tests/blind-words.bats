@@ -116,3 +116,18 @@ redact_line() { printf '%s\n' "$1" > "$IN"; vetdd_redact "$W" "$IN"; }
   [ "$output" = "feature-x
 alpha-lane" ]
 }
+
+@test "vetdd_word_lines reads a file with an invalid UTF-8 byte under a UTF-8 locale" {
+  printf '\377\376 junk\n feature-x \n' > "$BATS_TEST_TMPDIR/extra.txt"
+  LC_ALL=en_US.UTF-8 run vetdd_word_lines "$BATS_TEST_TMPDIR/extra.txt"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | sed -n 2p)" = "feature-x" ] || { printf '%s\n' "$output" | od -c; false; }
+}
+
+@test "vetdd_allow_words_error matches an extra word whole: one with a space inside makes neither half known" {
+  run vetdd_allow_words_error 'c1/*:my' 'my feature'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"'my' is not a checked word"* ]]
+  run vetdd_allow_words_error 'c1/*:Feature-X' 'feature-x'
+  [ "$status" -eq 0 ]
+}
