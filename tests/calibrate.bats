@@ -170,7 +170,10 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   mkdir -p ignored && printf 'x\n' > ignored/new.txt
   run cal unfix s1 --file value.txt --file ignored/new.txt --oracle-file test.sh -- sh test.sh
   [ "$status" -eq 2 ]
-  [[ "$output" == *"ignored"* ]]
+  # calibrate.sh's own refusal, before any state is saved (#1: git add -N refused it later, with
+  # git's own word "ignored", while the guard itself never fired).
+  [[ "$output" == *"ignored/new.txt is ignored by git and cannot be parked"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"saved state"* ]]
   [ "$(cat value.txt)" = "42" ]
   [ -f ignored/new.txt ]
   [ ! -e "$(state_dir s1)" ]
@@ -415,6 +418,10 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   [ "$status" -eq 2 ]
   [[ "$output" == *"still running"* ]]
   [ -d "$(state_dir s1)" ]
+  # A reused pid must not lead to stopping an unrelated process (#1): the way out is the pid file.
+  [[ "$output" != *"stop it"* ]]
+  [[ "$output" == *"ps -p $$"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"vetdd-calib/s1/pid"* ]]
 }
 
 @test "R44: plant refuses when a fingerprint cannot be taken" {
@@ -615,4 +622,291 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   LC_ALL="$loc" run cal planted s2 --seam unit --oracle-version 1 --oracle-file test.sh -- sh test.sh
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(mq s2 '.runs[-1].outcome')" = "target_failure" ]
+}
+
+# --- #5: --test-report reaches evidence.sh from unfix and planted ------------------------------------
+
+# A test command that writes a jest-json report and passes only when value.txt holds 42.
+report_oracle() {
+  printf '#!/bin/sh\nmkdir -p .vetdd/reports\ncp "%s" .vetdd/reports/r.json\n[ "$(cat value.txt)" = "42" ]\n' \
+    "$BATS_TEST_DIRNAME/fixtures/reports/vitest5-pass.json" > rtest.sh
+}
+
+@test "unfix forwards --test-report: the calibration run records the runner's counts (#5)" {
+  report_oracle
+  run cal unfix s1 --file value.txt --file helper.txt --oracle-file rtest.sh --test-report jest-json:.vetdd/reports/r.json -- sh rtest.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.runs[-1].kind')" = calibration ]
+  [ "$(mq s1 '.runs[-1].tests.status')" = ok ]
+  [ "$(mq s1 '.runs[-1].tests.total')" -gt 0 ]
+  [ "$(cat value.txt)" = 42 ]
+}
+
+@test "planted forwards --test-report: the calibration run records the runner's counts (#5)" {
+  report_oracle
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --oracle-file rtest.sh
+  printf '41\n' > value.txt
+  run cal planted s2 --oracle-file rtest.sh --test-report jest-json:.vetdd/reports/r.json -- sh rtest.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s2 '.runs[-1].tests.status')" = ok ]
+  [ "$(cat value.txt)" = 42 ]
+}
+
+@test "a --test-report evidence.sh would refuse is a usage error (exit 2) before the fix is parked (#5)" {
+  report_oracle
+  local bad
+  # Not jest-json:, outside .vetdd/reports/, a tracked file, a directory.
+  mkdir -p .vetdd/reports/dir
+  for bad in r.json jest-json: jest-json:r.json jest-json:test.sh jest-json:.vetdd/reports/dir; do
+    run cal unfix s1 --file value.txt --oracle-file rtest.sh --test-report "$bad" -- sh rtest.sh
+    [ "$status" -eq 2 ] || { echo "accepted --test-report [$bad]: $output"; false; }
+    [[ "$output" == *"--test-report"* ]]
+    [[ "$output" != *"unknown option"* ]]
+    [[ "$output" != *"saved state"* ]]
+    [ "$(cat value.txt)" = 42 ]
+    [ ! -e "$(state_dir s1)" ]
+    [ ! -e .vetdd/evidence/s1/meta.json ]
+  done
+  run cal unfix s1 --file value.txt --oracle-file rtest.sh --test-report
+  [ "$status" -eq 2 ]
+}
+
+@test "planted refuses a bad --test-report before running, and keeps the planted state for a corrected run (#5)" {
+  report_oracle
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --oracle-file rtest.sh
+  printf '41\n' > value.txt
+  run cal planted s2 --oracle-file rtest.sh --test-report jest-json:out.json -- sh rtest.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--test-report"* ]]
+  [ "$(cat value.txt)" = 41 ]
+  [ -d "$(state_dir s2)" ]
+  [ ! -e .vetdd/evidence/s2/meta.json ]
+  run cal planted s2 --oracle-file rtest.sh --test-report jest-json:.vetdd/reports/r.json -- sh rtest.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+}
+
+# --- #1 (R57): one calibration at a time in a working tree -------------------------------------------
+
+lock_path() { printf '%s/vetdd-calib/.lock' "$(git rev-parse --git-dir)"; }
+
+@test "while one slice is calibrating, another slice's plant, unfix, and restore are refused, so no fix is lost (#1 R57)" {
+  export CAL="$SCRIPTS/calibrate.sh" RCS="$BATS_TEST_TMPDIR/rcs.txt"
+  # A state of s3 that restore would simply remove (no file list, no mode).
+  mkdir -p "$(state_dir s3)"
+  # The oracle of s1: while s1's fix is taken out, try the other slices, then fail (the red).
+  printf '#!/bin/sh\n"$CAL" plant s2 --file value.txt --oracle-file test.sh >/dev/null 2>"$RCS.err"; echo "plant $?" >> "$RCS"\n"$CAL" unfix s4 --file helper.txt --oracle-file test.sh -- sh test.sh >/dev/null 2>>"$RCS.err"; echo "unfix $?" >> "$RCS"\n"$CAL" restore s3 >/dev/null 2>>"$RCS.err"; echo "restore $?" >> "$RCS"\nexit 1\n' > nested.sh
+  git add nested.sh
+  run cal unfix s1 --file value.txt --oracle-file nested.sh -- sh nested.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat "$RCS")" = "$(printf 'plant 2\nunfix 2\nrestore 2')" ] || { cat "$RCS" "$RCS.err"; false; }
+  # Each refusal names the running slice.
+  [ "$(grep -c 'slice s1' "$RCS.err")" -eq 3 ] || { cat "$RCS.err"; false; }
+  [ ! -e "$(state_dir s2)" ]
+  [ ! -e "$(state_dir s4)" ]
+  [ -d "$(state_dir s3)" ]
+  [ "$(cat value.txt)" = 42 ]
+  [ "$(cat helper.txt)" = helper ]
+  # The lock goes with the run.
+  [ ! -e "$(lock_path)" ] && [ ! -L "$(lock_path)" ]
+}
+
+@test "the working tree's lock is released after a run, a refusal, and a planted run; plant leaves it to planted (#1 R57)" {
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ]
+  [ ! -L "$(lock_path)" ]
+  run cal unfix s1 --file sub/keep.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ ! -L "$(lock_path)" ]
+  git add -A && git commit -q -m fixed
+  run cal plant s2 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 0 ]
+  # Held for the planted run to come, by no live process.
+  [ "$(readlink "$(lock_path)")" = "plant:s2" ]
+  printf '41\n' > value.txt
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ]
+  [ ! -L "$(lock_path)" ]
+}
+
+@test "a killed calibration keeps the lock until its own restore, which names the way out (#1 R57)" {
+  export VETDD_TEST_HOOKS=1
+  printf '#!/bin/sh\nkill -9 "$VETDD_CALIBRATE_PID"\n' > killer.sh
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh killer.sh
+  [ "$(cat value.txt)" = 0 ]
+  run cal unfix s2 --file helper.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"slice s1"*"calibrate.sh restore s1"* ]] || { echo "$output"; false; }
+  [ ! -e "$(state_dir s2)" ]
+  run cal restore s2
+  [ "$status" -eq 2 ]
+  run cal restore s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -L "$(lock_path)" ]
+  run cal unfix s2 --file helper.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "restore of a slice clears the lock its killed run left after the state was already gone (#1 R57)" {
+  export VETDD_TEST_HOOKS=1
+  printf '#!/bin/sh\nkill -9 "$VETDD_CALIBRATE_PID"\n' > killer.sh
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh killer.sh
+  run cal restore s1
+  [ "$status" -eq 0 ]
+  # The run was killed between removing its state and releasing the lock.
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh killer.sh
+  rm -rf "$(state_dir s1)"
+  printf '42\n' > value.txt
+  [ -L "$(lock_path)" ]
+  run cal restore s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"lock"* ]]
+  [ ! -L "$(lock_path)" ]
+}
+
+# --- review round 1 ----------------------------------------------------------------------------------
+
+@test "between plant and planted, another slice cannot plant, unfix, or stub the same tree (review 1 #2)" {
+  git add -A && git commit -q -m fixed
+  printf '42\n' > other.txt && git add other.txt && git commit -q -m other
+  cal plant s2 --file value.txt --oracle-file test.sh
+  printf '41\n' > value.txt
+  # s1 would save the mutation as its original and later write it over the fix.
+  run cal plant s1 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"slice s2"*"planted s2"* ]] || { echo "$output"; false; }
+  [ ! -e "$(state_dir s1)" ]
+  printf '7\n' > other.txt
+  run cal unfix s3 --file other.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ "$(cat other.txt)" = 7 ]
+  printf '7\n' > other.js
+  run cal stub s4 --file other.js --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ "$(cat other.js)" = 7 ]
+  # Put the tree outside s2's saved set back as it was at plant.
+  printf '42\n' > other.txt && rm -f other.js
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -L "$(lock_path)" ]
+  run cal plant s1 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 0 ]
+}
+
+@test "a planted run refused before it starts keeps the plant's hold on the tree (review 1 #2)" {
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --oracle-file test.sh
+  # Nothing planted yet: planted refuses, and the tree stays held for s2.
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [ "$(readlink "$(lock_path)")" = "plant:s2" ]
+  run cal restore s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -L "$(lock_path)" ]
+}
+
+@test "restore never takes over a lock while another takeover is in progress (codex review 1)" {
+  export VETDD_TEST_HOOKS=1
+  printf '#!/bin/sh\nkill -9 "$VETDD_CALIBRATE_PID"\n' > killer.sh
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh killer.sh
+  ln -s "1:s1" "$(lock_path).takeover"
+  run cal restore s1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"taking over"* ]] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 0 ]
+  rm -f "$(lock_path).takeover"
+  run cal restore s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -L "$(lock_path).takeover" ]
+}
+
+@test "a lock naming pid 0 is unreadable, not a running calibration (review 1 D2)" {
+  mkdir -p "$(dirname "$(lock_path)")" && ln -s "0:s9" "$(lock_path)"
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unreadable"* ]] || { echo "$output"; false; }
+}
+
+@test "stub takes no --test-report: the audit is not a run to count (review 1 D1)" {
+  printf 'export const a = 1;\n' > a.js
+  report_oracle
+  run cal stub s1 --file a.js --oracle-file rtest.sh --test-report jest-json:.vetdd/reports/r.json -- sh rtest.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--test-report"* ]]
+  [ "$(cat a.js)" = "export const a = 1;" ]
+  [ ! -e .vetdd/evidence/s1/meta.json ]
+}
+
+# --- review round 2 ----------------------------------------------------------------------------------
+
+@test "a takeover never leaves the tree unlocked: another slice started mid-takeover is refused (codex review 2)" {
+  export VETDD_TEST_HOOKS=1 CAL="$SCRIPTS/calibrate.sh" RCS="$BATS_TEST_TMPDIR/rcs.txt" LOCK="$(cd "$(git rev-parse --git-dir)" && pwd -P)/vetdd-calib/.lock"
+  printf '#!/bin/sh\nkill -9 "$VETDD_CALIBRATE_PID"\n' > killer.sh
+  run cal unfix s1 --file value.txt --oracle-file test.sh -- sh killer.sh
+  # An rm that, when it removes the lock while a takeover is under way, starts another slice at once.
+  mkdir -p "$BATS_TEST_TMPDIR/shim"
+  printf '#!/bin/sh\nfor a in "$@"; do last="$a"; done\n/bin/rm "$@"; rc=$?\nif [ -z "${IN_SHIM:-}" ] && [ "$last" = "$LOCK" ] && [ -L "$LOCK.takeover" ]; then\n  IN_SHIM=1 "$CAL" unfix s2 --file helper.txt --oracle-file test.sh -- sh test.sh >/dev/null 2>&1; echo $? >> "$RCS"\nfi\nexit $rc\n' > "$BATS_TEST_TMPDIR/shim/rm"
+  chmod +x "$BATS_TEST_TMPDIR/shim/rm"
+  PATH="$BATS_TEST_TMPDIR/shim:$PATH" run cal restore s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -s "$RCS" ] || [ "$(cat "$RCS")" = 2 ] || { echo "s2 ran mid-takeover: exit $(cat "$RCS")"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -e .vetdd/evidence/s2/meta.json ]
+}
+
+@test "planted resumes after a planted run killed before it claimed the run (review 2 #2)" {
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --oracle-file test.sh
+  printf '41\n' > value.txt
+  # A planted run killed during its checks leaves its own dead pid on the lock, and no run.lock.
+  dead="$(sh -c 'echo $$')"
+  rm -f "$(lock_path)" && ln -s "$dead:s2" "$(lock_path)"
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -L "$(lock_path)" ]
+}
+
+@test "plant fails (exit 3) when it cannot hand the lock to the plant hold, and the tree stays locked (review 2 #3)" {
+  git add -A && git commit -q -m fixed
+  mkdir -p "$BATS_TEST_TMPDIR/shim"
+  printf '#!/bin/sh\nfor a in "$@"; do last="$a"; done\ncase "$last" in *.lock.new.*) exit 1 ;; esac\nexec /bin/ln "$@"\n' > "$BATS_TEST_TMPDIR/shim/ln"
+  chmod +x "$BATS_TEST_TMPDIR/shim/ln"
+  PATH="$BATS_TEST_TMPDIR/shim:$PATH" run cal plant s2 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$(readlink "$(lock_path)")" == *":s2" ]]
+  run cal plant s1 --file value.txt --oracle-file test.sh
+  [ "$status" -eq 2 ]
+  printf '41\n' > value.txt
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = 42 ]
+}
+
+# --- review round 3 ----------------------------------------------------------------------------------
+
+@test "planted does not resume over a restore that was killed half way (review 3 #1)" {
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --file sub/keep.txt --oracle-file test.sh
+  printf '41\n' > value.txt && printf 'mutated\n' > sub/keep.txt
+  # A mktemp that fails for the second file: restore stops half way (exit 3), as a kill there would,
+  # leaving its own pid on the lock and no temp file behind.
+  mkdir -p "$BATS_TEST_TMPDIR/shim"
+  printf '#!/bin/sh\ncase "$1" in */sub/keep.txt.*) exit 1 ;; esac\nexec "%s" "$@"\n' "$(command -v mktemp)" > "$BATS_TEST_TMPDIR/shim/mktemp"
+  chmod +x "$BATS_TEST_TMPDIR/shim/mktemp"
+  PATH="$BATS_TEST_TMPDIR/shim:$PATH" run cal restore s2
+  [ "$status" -eq 3 ]
+  [ "$(cat value.txt)" = 42 ] && [ "$(cat sub/keep.txt)" = mutated ] || { echo "the shim did not stop restore half way"; false; }
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"restore s2"* ]]
+  [ ! -e .vetdd/evidence/s2/meta.json ]
+  run cal restore s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat sub/keep.txt)" = keep ]
 }
