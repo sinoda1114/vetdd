@@ -62,23 +62,35 @@ fi
 
 # A core.hooksPath (often a global one) makes git ignore the repository's own hooks. Print one line
 # for the hooksPath pre-commit that runs this install's hook: never a file of the repository, which
-# could carry any hook. The line skips with a warning when the install is gone, so a removed vetdd
-# blocks no commit; the hook does nothing in a repository without .vetdd/evidence. git expands ~
-# (--type=path). core.hooksPath is never changed.
+# could carry any hook. The line skips with a warning when the install is gone or not executable, so
+# a removed vetdd blocks no commit; the hook does nothing in a repository without .vetdd/evidence.
+# git expands ~ (--type=path). core.hooksPath is never changed.
+raw_hooks_path="$(git -C "$root" config --get core.hooksPath 2>/dev/null || true)"
 hooks_path="$(git -C "$root" config --type=path --get core.hooksPath 2>/dev/null || true)"
-if [ -n "$hooks_path" ]; then
+if [ -n "$raw_hooks_path" ] && [ -z "$hooks_path" ]; then
+  say "WARNING: git cannot expand core.hooksPath '$raw_hooks_path' (an unknown ~user?), and git commit fails on it the same way. Fix or unset core.hooksPath, then run setup-project.sh again."
+elif [ -n "$hooks_path" ]; then
   case "$hooks_path" in /*) ;; *) hooks_path="$root/$hooks_path" ;; esac
   real_hooks="$(cd "$hooks_path" 2>/dev/null && pwd -P || true)"
+  real_root="$(cd "$root" && pwd -P)"
   # The path goes between double quotes in sh, with \ " $ ` escaped.
   quoted="$(printf '%s' "$hook_src" | sed 's/[\\"$`]/\\&/g')"
-  chain="vetdd_hook=\"$quoted\"; if [ -x \"\$vetdd_hook\" ]; then \"\$vetdd_hook\" \"\$@\" || exit \$?; else echo \"vetdd: \$vetdd_hook not found; skipped\" >&2; fi"
+  chain="vetdd_hook=\"$quoted\"; if [ -x \"\$vetdd_hook\" ]; then \"\$vetdd_hook\" \"\$@\" || exit \$?; elif [ -e \"\$vetdd_hook\" ]; then echo \"vetdd: \$vetdd_hook not executable; skipped\" >&2; else echo \"vetdd: \$vetdd_hook not found; skipped\" >&2; fi"
   if [ -n "$real_hooks" ] && [ "$real_hooks" = "$common/hooks" ]; then
     : # hooksPath is this repository's own hooks directory: git runs the hook as installed.
-  elif [ "${hooks_path%/.husky/_}" != "$hooks_path" ]; then
-    # .husky/pre-commit is a tracked file shared with the team; this install's path does not belong there.
-    say "WARNING: core.hooksPath is husky's ('$hooks_path'), so git ignores $hook_dst. vetdd prints no line for .husky/pre-commit, a file shared with the team; run check-evidence.sh before committing instead."
+  elif [ -z "$real_hooks" ]; then
+    # In a linked worktree a relative .git/hooks lands under the .git file: no line can name it.
+    say "WARNING: core.hooksPath is '$hooks_path', which is not a directory, so git runs no hook from it and ignores $hook_dst. Make it a directory (or fix or unset core.hooksPath), then run setup-project.sh again for the line to put in its pre-commit."
+  elif case "$real_hooks/" in "$common"/*) false ;; "$real_root"/*) true ;; *) false ;; esac; then
+    # A hooks dir in the work tree (husky's .husky or .husky/_, a .githooks) is shared with the team;
+    # this machine's install path does not belong there.
+    say "WARNING: core.hooksPath ('$hooks_path') is inside the work tree, so git ignores $hook_dst. vetdd prints no line for a hook there (husky's or a tracked hooks dir, shared with the team); run check-evidence.sh before committing instead."
   elif grep -qF -- "$quoted" "$hooks_path/pre-commit" 2>/dev/null; then
-    say "core.hooksPath is '$hooks_path'; $hooks_path/pre-commit mentions the vetdd hook (check that the line comes before any exit)"
+    if [ -x "$hooks_path/pre-commit" ]; then
+      say "core.hooksPath is '$hooks_path'; $hooks_path/pre-commit mentions the vetdd hook (check that the line comes before any exit)"
+    else
+      say "WARNING: core.hooksPath is '$hooks_path'; $hooks_path/pre-commit mentions the vetdd hook but is not executable, so git does not run it (chmod +x it)"
+    fi
   else
     say "WARNING: core.hooksPath is set to '$hooks_path', so git ignores $hook_dst. To run vetdd's check, put this line in $hooks_path/pre-commit, before any exit in that file (create it with #!/bin/sh first and make it executable if it does not exist; core.hooksPath was not changed):"
     printf '    %s\n' "$chain"

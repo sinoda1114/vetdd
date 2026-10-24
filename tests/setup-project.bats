@@ -218,3 +218,102 @@ global_hooks_path() { mkdir -p "$HOME/hooks" && git config --global core.hooksPa
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"vetdd pre-commit"* ]] || { echo "$output"; false; }
 }
+
+# #64: a hooksPath inside the work tree (husky 9's .husky/_, husky 8's .husky, a tracked .githooks) holds
+# files shared with the team: no line with this machine's install path, a pointer to check-evidence.sh.
+in_tree_hooks_path_gets_no_line() {
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*"$1"*check-evidence.sh* ]] || { echo "$output"; false; }
+  [ -z "$(chain_line "$output")" ] || { echo "$output"; false; }
+  [[ "$output" != *'"$@"'* ]] || { echo "$output"; false; }
+}
+
+@test "#64: core.hooksPath .husky (husky 8) prints no line" {
+  mkdir -p .husky
+  git config core.hooksPath .husky
+  in_tree_hooks_path_gets_no_line .husky
+  [ ! -e .husky/pre-commit ]
+}
+
+@test "#64: core.hooksPath .githooks (a tracked hooks dir) prints no line" {
+  mkdir -p .githooks
+  git config core.hooksPath .githooks
+  in_tree_hooks_path_gets_no_line .githooks
+  [ ! -e .githooks/pre-commit ]
+}
+
+@test "#64: core.hooksPath .husky/_/ with a trailing slash prints no line" {
+  mkdir -p .husky/_
+  git config core.hooksPath .husky/_/
+  in_tree_hooks_path_gets_no_line .husky/_/
+}
+
+@test "#64: an absolute hooksPath whose physical path is inside the work tree prints no line" {
+  mkdir -p .githooks
+  ln -s "$REPO/.githooks" "$BATS_TEST_TMPDIR/linked-hooks"
+  git config --global core.hooksPath "$BATS_TEST_TMPDIR/linked-hooks"
+  in_tree_hooks_path_gets_no_line linked-hooks
+}
+
+@test "#64: a hooksPath inside the git dir (not the hooks dir) still gets the line" {
+  mkdir -p .git/myhooks
+  git config core.hooksPath .git/myhooks
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*".git/myhooks/pre-commit"* ]] || { echo "$output"; false; }
+  [ -n "$(chain_line "$output")" ] || { echo "$output"; false; }
+}
+
+@test "#64: in a linked worktree, a relative .git/hooks is not a directory: said so, no line" {
+  git config core.hooksPath .git/hooks
+  git worktree add -q "$BATS_TEST_TMPDIR/wt" -b wt
+  cd "$BATS_TEST_TMPDIR/wt"
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*"not a directory"* ]] || { echo "$output"; false; }
+  [ -z "$(chain_line "$output")" ] || { echo "$output"; false; }
+  [ -f "$BATS_TEST_TMPDIR/wt/.git" ]
+}
+
+@test "#64: a hooksPath that does not exist is said so, with no line" {
+  git config --global core.hooksPath "$HOME/no-such-hooks"
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*"$HOME/no-such-hooks"*"not a directory"* ]] || { echo "$output"; false; }
+  [ -z "$(chain_line "$output")" ] || { echo "$output"; false; }
+  [ ! -e "$HOME/no-such-hooks" ]
+}
+
+@test "#64: a hooksPath with a ~user git cannot expand gets a warning" {
+  git config --global core.hooksPath '~vetdd-no-such-user-64/hooks'
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*"cannot expand"*"~vetdd-no-such-user-64/hooks"* ]] || { echo "$output"; false; }
+  [ -z "$(chain_line "$output")" ] || { echo "$output"; false; }
+}
+
+@test "#64: through the line, an installed hook without the exec bit is skipped as not executable" {
+  global_hooks_path
+  cp -R "$SCRIPTS" "$BATS_TEST_TMPDIR/noexec"
+  run "$BATS_TEST_TMPDIR/noexec/setup-project.sh"
+  chain_into_global_hooks "$output"
+  chmod -x "$BATS_TEST_TMPDIR/noexec/hooks/pre-commit"
+  mkdir -p .vetdd/evidence/-bad && printf '{}\n' > .vetdd/evidence/-bad/meta.json
+  printf 'x\n' > noexec.txt && git add noexec.txt
+  run git commit -q -m noexec
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"not executable; skipped"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"not found"* ]] || { echo "$output"; false; }
+}
+
+@test "#64: a hooksPath pre-commit that mentions the hook but is not executable gets a warning" {
+  global_hooks_path
+  run setup_project
+  chain_into_global_hooks "$output"
+  chmod -x "$HOME/hooks/pre-commit"
+  run setup_project
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *WARNING*"$HOME/hooks/pre-commit"*"not executable"* ]] || { echo "$output"; false; }
+  [ -z "$(chain_line "$output")" ] || { echo "$output"; false; }
+}
