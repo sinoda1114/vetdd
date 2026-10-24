@@ -39,9 +39,14 @@ make_repo() {
 # - the macOS tools (BSD tr, awk) stop at an invalid UTF-8 byte ("Illegal byte sequence") under a
 #   UTF-8 locale and cut the rest of their input: only with the macOS tools (GNU tr reads bytes).
 # Run the suite under bash 3.2 with LANG and LC_ALL set to en_US.UTF-8 to see both (CI's
-# bats-bash32 job runs on macOS with LANG=en_US.UTF-8).
+# bats-bash32 job runs on macOS with LANG=en_US.UTF-8). With VETDD_REQUIRE_UTF8_LOCALE=1 (that job
+# sets it), a machine without one fails the test instead of skipping it.
 utf8_locale() {
-  locale -a 2>/dev/null | grep -ixE '(en_US|ja_JP)\.utf-?8' | LC_ALL=C sort | head -1
+  local l
+  l="$(locale -a 2>/dev/null | grep -ixE '(en_US|ja_JP)\.utf-?8' | LC_ALL=C sort | head -1)"
+  [ -n "$l" ] || [ "${VETDD_REQUIRE_UTF8_LOCALE:-}" != 1 ] \
+    || { echo "no en_US or ja_JP UTF-8 locale, and VETDD_REQUIRE_UTF8_LOCALE=1" >&2; return 1; }
+  [ -z "$l" ] || printf '%s\n' "$l"
 }
 
 meta() { cat "$REPO/.vetdd/evidence/$1/meta.json"; }

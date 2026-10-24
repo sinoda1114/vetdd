@@ -132,3 +132,11 @@ m() { "$SCRIPTS/models.sh" "$@"; }
   LC_ALL="$loc" VETDD_MODEL_JUDGE=Gpt-6.1:x/y_z run m judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+@test "#50: models.sh runs as bash models.sh from its own directory (it reads lib/common.sh beside it)" {
+  cd "$SCRIPTS"
+  unset VETDD_MODEL_JUDGE
+  run bash models.sh judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "gpt-6-sol" ]
+}

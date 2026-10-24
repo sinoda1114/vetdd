@@ -17,6 +17,9 @@
 # e.g. VETDD_MODEL_JUDGE=gpt-6-astra. Invalid overrides exit 2.
 
 set -euo pipefail
+case "${BASH_SOURCE[0]}" in */*) here="${BASH_SOURCE[0]%/*}" ;; *) here=. ;; esac
+# shellcheck source=lib/common.sh
+. "$here/lib/common.sh"
 
 ROLES="author refactorer explorer arena-runner judge judge-effort"
 
@@ -34,15 +37,11 @@ declare_default() {
 
 invalid() { echo "models.sh: invalid model name for $1: $2" >&2; exit 2; }
 
-# The ASCII letters and digits, spelled out: bash 3.2 matches a range such as [A-Za-z0-9] by the
-# locale's collation, where it holds é too (#50).
-ALNUM=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
-
-# One model name: ASCII letters, digits, and . _ : / - ; must start with a letter or digit so it can
-# never be read as a command-line option.
+# One model name: ASCII letters, digits (VETDD_ALNUM, lib/common.sh), and . _ : / - ; must start with
+# a letter or digit so it can never be read as a command-line option.
 check_name() {
   case "$2" in
-    ""|[!"$ALNUM"]*|*[!"$ALNUM"._:/-]*) invalid "$1" "$2" ;;
+    ""|[!"$VETDD_ALNUM"]*|*[!"$VETDD_ALNUM"._:/-]*) invalid "$1" "$2" ;;
   esac
 }
 

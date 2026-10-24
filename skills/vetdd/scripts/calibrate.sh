@@ -491,6 +491,8 @@ case "$cmd" in
     save_originals
     oracle_prints > "$state/oracle"
     others > "$state/others"
+    # Marks lists made under LC_ALL=C: a plant saved before #50 sorted them under the locale.
+    echo C > "$state/lists-locale" || die "cannot write $state"
     ! unreadable "$state/oracle" "$state/others" || die "a file could not be fingerprinted; nothing was changed"
     echo plant > "$state/mode" && rm -f "$state/pid" || die "cannot write $state"
     trap - EXIT
@@ -504,6 +506,8 @@ case "$cmd" in
     # The lock first, so another slice's run cannot change the tree under the checks below; a refusal
     # from here until the oracle runs hands the tree back to the plant hold.
     hold=plant; take_lock planted  # hold first: a signal right after the claim hands it back, never drops it
+    [ "$(cat "$state/lists-locale" 2>/dev/null)" = C ] \
+      || die "the plant of $slice was saved by an older calibrate.sh, whose lists of files depend on the locale; run calibrate.sh restore $slice, then plant again"
     now_oracle="$(oracle_prints)"; now_others="$(others)"
     ! printf '%s\n%s\n' "$now_oracle" "$now_others" | grep -q '^!' || die "a file could not be fingerprinted"
     [ "$now_oracle" = "$(cat "$state/oracle")" ] \

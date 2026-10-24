@@ -657,6 +657,19 @@ state_dir() { printf '%s/vetdd-calib/%s' "$(git rev-parse --git-dir)" "$1"; }
   done
 }
 
+@test "#50: planted refuses a plant saved by an older calibrate.sh (lists made under the locale) and says to restore" {
+  git add -A && git commit -q -m fixed
+  cal plant s2 --file value.txt --oracle-file test.sh
+  rm "$(state_dir s2)/lists-locale"
+  printf '41\n' > value.txt
+  run cal planted s2 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"older calibrate.sh"*"calibrate.sh restore s2"* ]] || { echo "$output"; false; }
+  run cal restore s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat value.txt)" = "42" ]
+}
+
 # --- #5: --test-report reaches evidence.sh from unfix and planted ------------------------------------
 
 # A test command that writes a jest-json report and passes only when value.txt holds 42.

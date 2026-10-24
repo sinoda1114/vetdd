@@ -19,3 +19,17 @@ load test_helper
     [ "$status" -eq 1 ] || { echo "$f.sh: $output"; false; }
   done
 }
+
+@test "#50: utf8_locale fails instead of returning nothing when VETDD_REQUIRE_UTF8_LOCALE=1 (the bash 3.2 CI job)" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho C\necho POSIX\n' > "$BATS_TEST_TMPDIR/bin/locale"
+  chmod +x "$BATS_TEST_TMPDIR/bin/locale"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run utf8_locale
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" VETDD_REQUIRE_UTF8_LOCALE=1 run utf8_locale
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"VETDD_REQUIRE_UTF8_LOCALE"* ]]
+  # The macOS job sets it.
+  grep -q 'VETDD_REQUIRE_UTF8_LOCALE: "1"' "$VETDD_ROOT/.github/workflows/extra.yml"
+}
