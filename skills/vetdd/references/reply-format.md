@@ -16,7 +16,7 @@ Covers: <what> (Measured: <oracle file>). Out of scope: <what> (inferred: the ag
 |---|---|---|---|
 | <id> | before | target_failure | .vetdd/evidence/<id>/runs/001-before.log |
 | <id> | after | pass | .vetdd/evidence/<id>/runs/002-after.log (local log) |
-Every row is Measured. check-evidence: <exact output line(s)> (Measured: artifact/check-evidence.txt).
+Every row is Measured. check-evidence: <exact output line(s)> (Measured: artifact/check-evidence.txt; in the reply to the human add: local log <the saved output file>).
 
 ## Requirements → evidence
 - <requirement 1>: <path of a red run's log, or of a record in meta.json> (Measured)

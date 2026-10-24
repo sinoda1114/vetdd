@@ -86,7 +86,7 @@ claims() { awk '/^## [0-9]+\. /{on = ($0 ~ /\. claims-match-evidence$/); next} o
 @test "reply-format's template cites artifact/check-evidence.txt unconditionally; the human reply adds the local log" {
   local tline labels
   tline="$(sed -n '/^```/,/^```/p' "$REPLY" | grep '^Every row is Measured')"
-  [[ "$tline" == *"(Measured: artifact/check-evidence.txt)"* ]]
+  [[ "$tline" == *"(Measured: artifact/check-evidence.txt;"* && "$tline" == *"local log"* ]]
   [[ "$tline" != *"judge-layout.sh built"* ]]
   labels="$(sed -n '/^## Labels/,/^## /p' "$REPLY" | tr '\n' ' ')"
   [[ "$labels" == *"artifact/check-evidence.txt"* && "$labels" == *"local log"* ]]
