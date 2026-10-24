@@ -118,8 +118,10 @@ alpha-lane" ]
 }
 
 @test "vetdd_word_lines reads a file with an invalid UTF-8 byte under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
   printf '\377\376 junk\n feature-x \n' > "$BATS_TEST_TMPDIR/extra.txt"
-  LC_ALL=en_US.UTF-8 run vetdd_word_lines "$BATS_TEST_TMPDIR/extra.txt"
+  LC_ALL="$loc" run vetdd_word_lines "$BATS_TEST_TMPDIR/extra.txt"
   [ "$status" -eq 0 ]
   [ "$(printf '%s\n' "$output" | sed -n 2p)" = "feature-x" ] || { printf '%s\n' "$output" | od -c; false; }
 }
@@ -144,4 +146,31 @@ alpha-lane" ]
   run vetdd_allow_words_error $'c1/*:openai\n claude'
   [ "$status" -eq 1 ]
   [ "$output" = "--allow-words has a control character or a new line" ] || { printf '%s' "$output" | od -c; false; }
+}
+
+# --- #50: locale ------------------------------------------------------------------------------------
+
+@test "#50: vetdd_word_file keeps every word past one with an invalid UTF-8 byte, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  LC_ALL="$loc" vetdd_word_file "$W" opus "acme$(printf '\377')corp" zeta-lane
+  [ "$(LC_ALL=C sort "$W" | LC_ALL=C tr '\n' ,)" = "$(printf 'acme\377corp,opus,zeta-lane,')" ] || { od -c "$W"; false; }
+}
+
+@test "#50: a word with a capital letter outside ASCII is found as the matcher lower-cases it, under a UTF-8 locale" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  # The matchers lower-case byte by byte (LC_ALL=C), so the word file must too: É stays É on both sides.
+  LC_ALL="$loc" vetdd_word_file "$W" "$(printf '\303\211COLE-lane')"
+  LC_ALL="$loc" run find_in "by $(printf '\303\211COLE-lane')"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 't:1: \303\211cole-lane')" ] || { printf '%s\n' "$output" | od -c; false; }
+}
+
+@test "#50: vetdd_allow_words_error does not take an extra word with an invalid UTF-8 byte for its first part" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  LC_ALL="$loc" run vetdd_allow_words_error 'c1/*:acme' "acme$(printf '\377')corp"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"'acme' is not a checked word"* ]] || { echo "$output"; false; }
 }

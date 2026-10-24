@@ -17,6 +17,9 @@
 # e.g. VETDD_MODEL_JUDGE=gpt-6-astra. Invalid overrides exit 2.
 
 set -euo pipefail
+# The ASCII letters and digits, spelled out (#50): the same list as lib/common.sh, which models.sh
+# does not read, so it runs alone (models.bats checks the two lists agree).
+VETDD_ALNUM=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 
 ROLES="author refactorer explorer arena-runner judge judge-effort"
 
@@ -34,11 +37,11 @@ declare_default() {
 
 invalid() { echo "models.sh: invalid model name for $1: $2" >&2; exit 2; }
 
-# One model name: letters, digits, and . _ : / - ; must start with a letter or digit so it can
+# One model name: ASCII letters, digits, and . _ : / - ; must start with a letter or digit so it can
 # never be read as a command-line option.
 check_name() {
   case "$2" in
-    ""|[!A-Za-z0-9]*|*[!A-Za-z0-9._:/-]*) invalid "$1" "$2" ;;
+    ""|[!"$VETDD_ALNUM"]*|*[!"$VETDD_ALNUM"._:/-]*) invalid "$1" "$2" ;;
   esac
 }
 

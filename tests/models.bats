@@ -120,3 +120,31 @@ m() { "$SCRIPTS/models.sh" "$@"; }
   VETDD_MODEL_JUDGE_EFFORT= run m judge-effort
   [ "$status" -eq 2 ]
 }
+
+@test "#50: a model name with a letter outside ASCII is refused under a UTF-8 locale too" {
+  local loc; loc="$(utf8_locale)"
+  [ -n "$loc" ] || skip "no UTF-8 locale on this machine"
+  local v
+  for v in "gpt-$(printf '\303\251')" "$(printf '\303\251')gpt" "$(printf '\357\275\207')pt"; do
+    LC_ALL="$loc" VETDD_MODEL_JUDGE="$v" run m judge
+    [ "$status" -eq 2 ] || { echo "took judge [$v]: $output"; false; }
+  done
+  LC_ALL="$loc" VETDD_MODEL_JUDGE=Gpt-6.1:x/y_z run m judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "#50: models.sh runs alone (a copy, a symlink), and its ASCII list is the one lib/common.sh has" {
+  unset VETDD_MODEL_JUDGE
+  cp "$SCRIPTS/models.sh" "$BATS_TEST_TMPDIR/models.sh"
+  ln -s "$SCRIPTS/models.sh" "$BATS_TEST_TMPDIR/models-link.sh"
+  local s
+  for s in "$BATS_TEST_TMPDIR/models.sh" "$BATS_TEST_TMPDIR/models-link.sh"; do
+    run "$s" judge
+    [ "$status" -eq 0 ] || { echo "$s: $output"; false; }
+    [ "$output" = "gpt-6-sol" ]
+  done
+  local mine theirs
+  mine="$(sed -n 's/^VETDD_ALNUM=//p' "$SCRIPTS/models.sh")"
+  theirs="$(sed -n 's/^VETDD_ALNUM=//p' "$SCRIPTS/lib/common.sh")"
+  [ -n "$mine" ] && [ "$mine" = "$theirs" ] || { echo "models.sh [$mine] lib/common.sh [$theirs]"; false; }
+}

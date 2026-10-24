@@ -159,10 +159,16 @@ fingerprint() {
     if [ -x "$top/$p" ]; then printf 'x%s' "$h"; else printf -- '-%s' "$h"; fi
   else printf -- '-'; fi
 }
-oracle_prints() { local o; for o in "${oracle[@]}"; do printf '%s %s\n' "$(fingerprint "$o")" "$o"; done | sort; }
+# Both lists are saved by plant and compared by planted, which may run under another locale: each
+# runs under LC_ALL=C, so neither the sort order nor printf %q depends on it (#50).
+oracle_prints() (
+  export LC_ALL=C
+  for o in "${oracle[@]}"; do printf '%s %s\n' "$(fingerprint "$o")" "$o"; done | sort
+)
 # Every path that differs from HEAD or is untracked, minus the saved set, fingerprinted; names are
 # printed with %q so a newline in a name stays one entry. Files ignored by git are not covered.
-others() {
+others() (
+  export LC_ALL=C
   local p saved base names
   saved=$'\n'"$(cat "$state/files")"$'\n'
   base=HEAD; g rev-parse -q --verify HEAD >/dev/null || base="$(g hash-object -t tree /dev/null)"
@@ -175,7 +181,7 @@ others() {
     printf '%s %q\n' "$(fingerprint "$p")" "$p"
   done < "$names" | sort
   rm -f "$names"
-}
+)
 unreadable() { grep -q '^!' "$@"; }
 
 # Save a byte copy, its digest, and the index entry of every file in $state/files.
@@ -485,6 +491,8 @@ case "$cmd" in
     save_originals
     oracle_prints > "$state/oracle"
     others > "$state/others"
+    # Marks lists made under LC_ALL=C: a plant saved before #50 sorted them under the locale.
+    echo C > "$state/lists-locale" || die "cannot write $state"
     ! unreadable "$state/oracle" "$state/others" || die "a file could not be fingerprinted; nothing was changed"
     echo plant > "$state/mode" && rm -f "$state/pid" || die "cannot write $state"
     trap - EXIT
@@ -498,6 +506,8 @@ case "$cmd" in
     # The lock first, so another slice's run cannot change the tree under the checks below; a refusal
     # from here until the oracle runs hands the tree back to the plant hold.
     hold=plant; take_lock planted  # hold first: a signal right after the claim hands it back, never drops it
+    [ "$(cat "$state/lists-locale" 2>/dev/null)" = C ] \
+      || die "the plant of $slice was saved by an older calibrate.sh, whose lists of files depend on the locale; run calibrate.sh restore $slice, then plant again"
     now_oracle="$(oracle_prints)"; now_others="$(others)"
     ! printf '%s\n%s\n' "$now_oracle" "$now_others" | grep -q '^!' || die "a file could not be fingerprinted"
     [ "$now_oracle" = "$(cat "$state/oracle")" ] \

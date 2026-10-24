@@ -12,11 +12,15 @@ vetdd_require_jq() {
   exit 2
 }
 
-# vetdd_is_slice_id <id>: letters, digits, . _ - ; must start with a letter or digit
+# VETDD_ALNUM: the ASCII letters and digits, spelled out for a bracket expression. bash 3.2 matches a
+# range such as [A-Za-z0-9] by the locale's collation, where it holds é and ß too (#50).
+VETDD_ALNUM=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
+
+# vetdd_is_slice_id <id>: ASCII letters, digits, . _ - ; must start with a letter or digit
 # (keeps every slice inside .vetdd/evidence/).
 vetdd_is_slice_id() {
-  case "$1" in [A-Za-z0-9]*) ;; *) return 1 ;; esac
-  case "$1" in *[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$1" in ["$VETDD_ALNUM"]*) ;; *) return 1 ;; esac
+  case "$1" in *[!"$VETDD_ALNUM"._-]*) return 1 ;; esac
   return 0
 }
 

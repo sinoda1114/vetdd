@@ -152,11 +152,13 @@ refuse_list() {
 }
 
 # Words that must never be stripped: redacting them would mangle ordinary git text.
+# LC_ALL=C on each tr here: a word may hold any byte, and under a UTF-8 locale the macOS tr stops at
+# an invalid UTF-8 one, so main<byte>line would be taken for main (#50).
 is_protected() {
   local w
-  w="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  w="$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')"
   case "$w" in main|master|head) return 0 ;; esac
-  [ -n "$default_branch" ] && [ "$w" = "$(printf '%s' "$default_branch" | tr 'A-Z' 'a-z')" ]
+  [ -n "$default_branch" ] && [ "$w" = "$(printf '%s' "$default_branch" | LC_ALL=C tr 'A-Z' 'a-z')" ]
 }
 # check_strip <word> <where>: refuse a word that is protected, too short, or one vetdd_word_file
 # would change (it drops a line starting with "#" and trims surrounding whitespace), since such a
@@ -210,7 +212,7 @@ check_allow_words() {
       lw="$(printf '%s' "$w" | tr 'A-Z' 'a-z')"
       # shellcheck disable=SC2086 # the default list is space-separated words
       for r in $VETDD_MODEL_WORDS ${strip[@]+"${strip[@]}"}; do
-        [ "$(printf '%s' "$r" | tr 'A-Z' 'a-z')" = "$lw" ] || continue
+        [ "$(printf '%s' "$r" | LC_ALL=C tr 'A-Z' 'a-z')" = "$lw" ] || continue
         die "--allow-words '$v': '$w' is redacted (a model name or a strip word), so the copy never holds it; --allow-words only lets the self-check pass a word that stays"
       done
     done
@@ -386,7 +388,7 @@ main() {
   vetdd_word_file "$words" $VETDD_MODEL_WORDS ${strip[@]+"${strip[@]}"} ${paths[@]+"${paths[@]}"}
   local w
   for w in ${strip[@]+"${strip[@]}"}; do
-    [ "$(printf '%s' "$w" | tr 'A-Z' 'a-z')" = "$PLACEHOLDER_WORD" ] || printf '%s\n' "$w"
+    [ "$(printf '%s' "$w" | LC_ALL=C tr 'A-Z' 'a-z')" = "$PLACEHOLDER_WORD" ] || printf '%s\n' "$w"
   done > "$work/words-out"
   # The self-check also looks for the paths (and the email), which --words-out leaves out.
   { cat "$work/words-out"; [ "${#paths[@]}" -eq 0 ] || printf '%s\n' "${paths[@]}"; } > "$work/strip-words"

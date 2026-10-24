@@ -226,13 +226,15 @@ case "$cmd" in
     [ "$(shared_sum)" = "$(cat "$swarmdir/$slice.sum")" ] \
       || die "the shared git config, hooks, or info/attributes changed since worktree.sh add $(p "$slice"); a worker's git settings would run in your merge: look at $(p "$common/config") and $(p "$common/hooks") before merging anything" 1
     # pipefail: a diff that fails must not read as a diff with nothing in it.
-    names="$(set -o pipefail; pgit diff --name-only --no-renames --no-ext-diff -z HEAD..."$sha" | tr '\0' '\n')" \
+    # LC_ALL=C on each tr: a path in a commit may hold any byte, and under a UTF-8 locale the macOS tr
+    # stops at an invalid UTF-8 one, which would cut d<byte>/.gitattributes to d (#50).
+    names="$(set -o pipefail; pgit diff --name-only --no-renames --no-ext-diff -z HEAD..."$sha" | LC_ALL=C tr '\0' '\n')" \
       || die "cannot read the changes of vetdd/$(p "$slice")" 1
     bad=""
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       # Any case: a case-insensitive file system takes .VETDD for .vetdd.
-      lf="$(printf '%s' "$f" | tr 'A-Z' 'a-z')"
+      lf="$(printf '%s' "$f" | LC_ALL=C tr 'A-Z' 'a-z')"
       case "/$lf" in /.vetdd|/.vetdd/*|*/.gitattributes|*/.gitmodules) bad="$bad$f
 " ;; esac
     done <<EOF_NAMES
