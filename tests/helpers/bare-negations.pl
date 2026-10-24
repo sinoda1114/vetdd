@@ -41,7 +41,10 @@ sub lex {
   my $prev = sub { $i ? substr($text, $i - 1, 1) : "\n" };
   my $add = sub { if (!defined $word) { $word = ''; $wline = $line } $word .= $_[0] };
   my $end_word = sub { push @tok, ['w', $word, $wline] if defined $word; undef $word };
-  my $enter = sub { my ($m, $depth) = @_; push @mode, { m => $m, depth => $depth // 0, cases => 0, line => $line } };
+  my $enter = sub {
+    my ($m, $depth, @rest) = @_;
+    push @mode, { m => $m, depth => $depth // 0, cases => 0, cmdpos => 1, line => $line, @rest };
+  };
   my $retop = sub { $mode[-1] = { %{ $mode[-1] }, @_ } };
   my $step_depth = sub {
     $retop->(depth => $mode[-1]{depth} + $_[0]);
@@ -109,11 +112,17 @@ sub lex {
     my $start = $prev->() =~ $BOUNDARY;
     if ($c eq '#' && $start) { $comment->(); return }
     if ($start && $at->(2) eq '((') { $i += 2; $enter->('arith', 2); return }
-    if ($start && substr($text, $i, 5) =~ /^(case|esac)(?=$BOUNDARY)/) {
-      $retop->(cases => $mode[-1]{cases} + ($1 eq 'case' ? 1 : -1));
-      $i += 4;
-      return;
+    # case and esac count only as the first word of a command, and never among array values.
+    if ($start && $c !~ /[\s;&|()]/) {
+      my $first = $mode[-1]{cmdpos} && !$mode[-1]{array};
+      $retop->(cmdpos => 0);
+      if ($first && substr($text, $i, 5) =~ /^(case|esac)(?=$BOUNDARY)/) {
+        $retop->(cases => $mode[-1]{cases} + ($1 eq 'case' ? 1 : -1));
+        $i += 4;
+        return;
+      }
     }
+    $retop->(cmdpos => 1) if $c =~ /[;&|()\n]/;
     if ($at->(3) eq '<<<') { $i += 3; return }
     if ($at->(2) eq '<<') { $read_heredoc_op->(); return }
     if ($c eq "\n") { $i++; $read_heredoc_bodies->(); return }
@@ -136,7 +145,12 @@ sub lex {
     }
     # bash reads quotes inside ${ } even within "...": "${x:-it's}" is an unterminated string.
     my $o = $opening->($m eq 'sub' || $m eq 'bt' || $m eq 'brace');
-    if ($o && !($m eq 'dq' && $o->[0] eq 'dq')) { $i += $o->[1]; $enter->($o->[0], $o->[2]); return }
+    if ($o && !($m eq 'dq' && $o->[0] eq 'dq')) {
+      $retop->(cmdpos => 0) if $m eq 'sub';
+      $i += $o->[1];
+      $enter->($o->[0], $o->[2]);
+      return;
+    }
     if ($m eq 'sub') { $nested_code->(); return }
     $i++;
   };
@@ -163,7 +177,7 @@ sub lex {
     }
     if ($at->(2) eq '((' && !defined $word) { $add->('S'); $i += 2; $enter->('arith', 2); next }
     # name=( values ): the values are words, not a subshell.
-    if ($c eq '(' && defined $word && $word =~ /=$/) { $add->('S'); $i++; $enter->('sub', 1); next }
+    if ($c eq '(' && defined $word && $word =~ /=$/) { $add->('S'); $i++; $enter->('sub', 1, array => 1); next }
     my $o = $opening->(1);
     if ($o) { $add->('S'); $i += $o->[1]; $enter->($o->[0], $o->[2]); next }
     if ($at->(3) eq '<<<') { $add->('<<<'); $i += 3; next }

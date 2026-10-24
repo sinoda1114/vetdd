@@ -2,7 +2,7 @@
 # Fixture for tests/negation-guard.bats: nothing here is a bare negation, so the scanner must report
 # no line. It is not run as a test file.
 
-# Outside @test the scanner does not look: a helper may end with a negation it returns.
+# A function may end with the negation it returns; at the top level the scanner does not look.
 helper() { ! grep -q x "$1"; }
 ! outside_a_test
 
@@ -142,4 +142,15 @@ helper5()
     : first
     ! grep -q x "$1"
   }
+}
+
+@test "case as a plain word inside \$( ) and array values" {
+  x=$(echo case)
+  x=$(printf '%s' case)
+  x=$("echo" case)
+  args=(if case)
+  args=(
+case
+  )
+  x=$(echo esac; case y in (y) echo ;; esac)
 }
