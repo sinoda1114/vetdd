@@ -475,3 +475,11 @@ sneak() {
   grep -q 'merge --no-ff --no-edit --no-overwrite-ignore -m "Merge vetdd/<lane>" <the commit gate.txt names>' "$SCRIPTS/../parallel/arena.md"
   grep -q 'If `remove --at` stops because the branch moved' "$SCRIPTS/../parallel/arena.md"
 }
+
+# --- PR #91 review threads -------------------------------------------------------------------------
+
+@test "#91: arena.md reinstalls a linked directory before merging the winner, as swarm.md does before integrating" {
+  local ar="$SCRIPTS/../parallel/arena.md"
+  grep -q '^6\. \*\*Merge the winner\*\*.*reinstall each directory shared with `--link` from its lockfile.*npm ci.*merge --no-ff' "$ar"
+  grep -q 'reinstall each directory shared with `--link` from its lockfile' "$SCRIPTS/../parallel/swarm.md"
+}
