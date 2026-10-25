@@ -30,6 +30,6 @@ Audits: empty candidate 0 on both criteria (Measured: both judge.json); label sw
 
 ## Decision
 
-Step 8 (the human's acceptance) is pending; nothing is promoted (index.tsv promoted = no) and the baseline stays 20260926-0930. For it: v2 orders the pair correctly in every run, the remade known-good passes in both orders, and the original known-good is graded 0 or 2 on claims depending on how the judge splits its two-sentence line (by the letter, 0). Keeping the original pair as this eval's baseline would need either the remade known-good (a new baseline from 20261025-0028-v2-cal) or acceptance of that edge.
+Step 8: the human accepted rubric v2 on 2026-10-25 and set 20261025-0028-v2-cal (the remade known-good, the known-bad, the empty candidate) as this eval's baseline, replacing 20260926-0930 (`evals/rubric-calibration/baseline`). The index.tsv line of 20261025-0028-v2-cal says promoted = no because it was written before that decision (index.tsv is append-only); the baseline file is the record of it. The 0-or-2 edge on a two-sentence line in a four-line reply stays in #95 for the next version.
 
 Judge time: 4 calls, 128 s (Measured, local log: the parent's timing file).

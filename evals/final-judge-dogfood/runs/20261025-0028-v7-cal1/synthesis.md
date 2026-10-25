@@ -1,5 +1,7 @@
 # synthesis: final-judge-dogfood, final judge rubric v7 (#60, #56 item 1): calibration and the regrade of both runs
 
+Superseded on 2026-10-25 by 20261025-1033-v7-cal1/synthesis.md: the human restored v6's requirement-to-evidence condition in v7 before accepting it, which changed the rubric text (the sha256 `fef43ff5...` below became `77bda0e2...`); this note records the runs under the earlier v7 text.
+
 ## Rubric v7
 
 `skills/vetdd/references/final-judge-rubric.md` v7 (sha256 `fef43ff59b33e636db6ac65d0f1a55d28cfebe58aede350c75b951e85a90a06b`), decided by the human on 2026-10-24: claims-match-evidence graded by the share of labeled lines (the same text as implement-business-days v5 and rubric-calibration v2); criterion 1 counts a calibration red that overrode the oracle's expectation (verify `--expect`, `calibrate.sh plant`) as the red of its version for a behavior-preserving or exempt change, and reads a red from a planted calibration (a run carrying `planted: {patch, sha256, files}`, a field a separate package adds) as a red for the planted defect; the Layout lists `artifact/verify-artifacts/`. This eval's runs were graded under v3 and never under v4 to v6; principle 6: both are graded again under v7.
@@ -28,6 +30,6 @@ Audits: empty candidate 0 on every criterion (Measured: 20261025-0028-v7-cal2/ju
 
 ## Decision
 
-Step 8 (the human's acceptance) is pending; nothing is promoted (index.tsv promoted = no). The baseline 20260926-1750 no longer passes under v7: its reply leaves most facts unlabeled. Keeping a passing baseline for this eval would mean setting it from 20261025-0028-v7-cal1 (the same layout with the reply relabeled), a human decision.
+See 20261025-1033-v7-cal1/synthesis.md.
 
 Judge time: 4 calls, 155 s (Measured, local log: the parent's timing file).

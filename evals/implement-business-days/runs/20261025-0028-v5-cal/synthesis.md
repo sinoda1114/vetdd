@@ -43,6 +43,6 @@ Where the judge and I differ: 1933 c1. The whole message includes the summary pa
 
 ## Decision
 
-Step 8 (the human's acceptance) is pending; nothing is promoted and no baseline is set (index.tsv promoted = no). The facts for it: the calibration orders 95% > 85% > 50% > known-bad and empty, stable under the label swap; on the A/B runs, v5 separates reply-labels from before-labels in 1936, 1941, and 1944 (judge and I agree), in 1933 only by the judge (I read a tie), and not in 2151 (a contradiction in the shipped variant's reply); 1459 and 1505 (full against no-principles) stay ties.
+Step 8: the human accepted rubric v5 on 2026-10-25 on these measurements (the calibration order, stable under the swap; v5 separates the reply-labels variant in 1936, 1941, and 1944, and in 1933 by the judge only), together with final v7 (with v6's requirement condition restored) and rubric-calibration v2. No variant is promoted and no baseline is set from these runs: no A/B run has a winner that the judge and my reading agree on for both pairs of variants, and the human set none (eval.md step 8). The open rubric questions (the 0-or-2 edge on short replies, the 1-point level not counting Measured claims without a path, local logs in the eval layouts) stay in #95 for the next version.
 
 Judge time: 9 calls, 583 s in all (Measured, local log: the parent's timing file).

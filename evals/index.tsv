@@ -37,3 +37,6 @@ ts	eval_id	run_id	labels	winner	confidence	judge_family	promoted	rubric_sha256
 2026-10-25T00:42:22+09:00	final-judge-dogfood	20261025-0028-v7-cal2	c1	none	low	codex/gpt-6-sol	no	fef43ff59b33e636db6ac65d0f1a55d28cfebe58aede350c75b951e85a90a06b
 2026-10-25T00:42:57+09:00	final-judge-dogfood	20260926-1750-v7	c1	none	high	codex/gpt-6-sol	no	fef43ff59b33e636db6ac65d0f1a55d28cfebe58aede350c75b951e85a90a06b
 2026-10-25T00:43:44+09:00	final-judge-dogfood	20261017-1229-v7	c1	none	high	codex/gpt-6-sol	no	fef43ff59b33e636db6ac65d0f1a55d28cfebe58aede350c75b951e85a90a06b
+2026-10-25T10:34:02+09:00	final-judge-dogfood	20261025-1033-v7-cal1	c1	none	mid	codex/gpt-6-sol	yes	77bda0e22a904b908abbcc6eac16843f79910ee405b910b1029bf43f6a87603f
+2026-10-25T10:34:52+09:00	final-judge-dogfood	20261025-1033-v7-cal2	c1	none	low	codex/gpt-6-sol	no	77bda0e22a904b908abbcc6eac16843f79910ee405b910b1029bf43f6a87603f
+2026-10-25T10:35:13+09:00	final-judge-dogfood	20261017-1229-v7r	c1	none	high	codex/gpt-6-sol	no	77bda0e22a904b908abbcc6eac16843f79910ee405b910b1029bf43f6a87603f

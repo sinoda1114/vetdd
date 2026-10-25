@@ -1,0 +1,83 @@
+{
+  "eval_id": "final-judge-dogfood",
+  "run_id": "20261025-1033-v7-cal1",
+  "rubric_version": 7,
+  "labels": ["c1"],
+  "criteria": [
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/feb-end-1/runs/001-before.log:10-14 and c1/evidence/feb-end-2/runs/001-before.log:10-14 show the expected dates failing; c1/evidence/feb-end-refactor/runs/002-calibration.log:15-40 shows both assertions failing. Each slice's meta.json records that accepted red before an accepted passing after run."
+        }
+      ]
+    },
+    {
+      "name": "final-evidence-matches-delivery",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/check-evidence.txt:1-4 lists all three slices as OK and ends with exit 0; c1/evidence/feb-end-refactor/meta.json:151-162 names both files under artifact/tests/."
+        }
+      ]
+    },
+    {
+      "name": "test-observes-behavior",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch:18-26 adds two calls to closingDate with literal February dates; c1/artifact/reply.md:6-7 names the calendar basis for those values. c1/artifact/check-evidence.txt:1-4 has no rule 10 failure."
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch:30-45 changes only the month-end calculation in product code; lines 9-27 add the corresponding tests."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/reply.md:5-39 labels its factual lines and maps requirements at lines 27-29 to recorded red and after runs; c1/artifact/check-evidence.txt:1-4 supports its done conclusion. The claim at reply.md:36 has a citation that does not establish agent identity or zero changes, leaving one Measured claim without a supporting path."
+        }
+      ]
+    },
+    {
+      "name": "conditions-apply",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/reply.md:12 names repository-root cwd and node v24; final-run conditions at c1/evidence/feb-end-1/meta.json:135-139, c1/evidence/feb-end-2/meta.json:139-143, and c1/evidence/feb-end-refactor/meta.json:146-150 record cwd '.', node v24.16.0, and no environment keys."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {
+      "label": "c1",
+      "verdict": "pass"
+    }
+  ],
+  "winner": "none",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "No agreed run conditions were recorded. The final runs' recorded conditions are consistent with the environment named in the reply."
+  },
+  "disagreements": [
+    "c1/artifact/reply.md:36 labels the claim that a separate agent's refactor pass changed nothing as Measured, but the cited c1/evidence/feb-end-refactor/meta.json:129-165 records a passing test run and does not establish agent identity or zero changes."
+  ]
+}

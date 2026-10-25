@@ -1,0 +1,9 @@
+{
+  "model": "gpt-6-sol",
+  "effort": "high",
+  "invoked_at": "2026-10-25T01:34:52Z",
+  "family": "codex",
+  "log": "/Users/sinoda/dev/vetdd-rubric/.vetdd/judge-logs/final-judge-dogfood-20261025-1033-v7-cal2.log",
+  "allowed_secrets": [],
+  "allowed_words": []
+}
