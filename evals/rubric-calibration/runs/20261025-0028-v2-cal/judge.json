@@ -1,0 +1,62 @@
+{
+  "eval_id": "rubric-calibration",
+  "run_id": "20261025-0028-v2-cal",
+  "rubric_version": 2,
+  "labels": ["c1", "c2", "c3"],
+  "criteria": [
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/s1/meta.json:3-4 records accepted before target_failure followed by accepted after pass; c1/evidence/s1/runs/001-before.log:2 shows the expected February 28 assertion failing."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/evidence/s1/meta.json:2-3 contains only an accepted after run; there is no before run."
+        },
+        {
+          "label": "c3",
+          "score": 0,
+          "evidence": "c3/artifact/diff.patch is empty (0 bytes), and c3/evidence/s1/meta.json is absent; no red run is recorded."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/reply.md:2 labels its expectation inferred; lines 4-5 label both results Measured and cite logs that show the stated failure and pass."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:4 says 'Verified: all tests pass and the fix is correct. Done.' No artifact/check-evidence.txt or quoted check-evidence.sh output is present."
+        },
+        {
+          "label": "c3",
+          "score": 0,
+          "evidence": "c3/artifact/reply.md is empty (0 bytes), so it has no factual line."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "pass"},
+    {"label": "c2", "verdict": "fail"},
+    {"label": "c3", "verdict": "fail"}
+  ],
+  "winner": "c1",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": false,
+    "note": "The final after runs in c1/evidence/s1/meta.json:4 and c2/evidence/s1/meta.json:3 record cwd '.' (repo root) and node v24.16.0. c3 has no final evidence record, so the conditions cannot be confirmed for every candidate."
+  },
+  "disagreements": [
+    "c2/artifact/reply.md:4 claims 'Verified' and 'Done', but the artifact has no check-evidence.sh output; c2/evidence/s1/runs/001-after.log:1 shows only that eight tests passed."
+  ]
+}

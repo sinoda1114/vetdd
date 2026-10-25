@@ -1,0 +1,52 @@
+diff --git a/src/dueDate.ts b/src/dueDate.ts
+index 01c502e..0e09196 100644
+--- a/src/dueDate.ts
++++ b/src/dueDate.ts
+@@ -84,9 +84,18 @@ export function closingDate(invoiceDate: string, closingDay: ClosingDay): string
+ }
+ 
+ /** The payment due date: the closing date plus `termDays` calendar days. */
+-export function paymentDueDate(closing: string, termDays: number): string {
++export type DueDateOptions = { readonly rollover?: "next-business-day" };
++
++/** Days to add to reach Monday from a Saturday (6) or a Sunday (0); weekdays need none. */
++function daysToNextBusinessDay(date: CalendarDate): number {
++  const weekday = new Date(toUtc(date)).getUTCDay();
++  return weekday === 6 ? 2 : weekday === 0 ? 1 : 0;
++}
++
++export function paymentDueDate(closing: string, termDays: number, options: DueDateOptions = {}): string {
+   if (!Number.isInteger(termDays) || termDays < 0) {
+     throw new RangeError(`Term must be a non-negative integer number of days, got ${termDays}`);
+   }
+-  return formatDate(addDays(parseDate(closing), termDays));
++  const due = addDays(parseDate(closing), termDays);
++  return formatDate(options.rollover === "next-business-day" ? addDays(due, daysToNextBusinessDay(due)) : due);
+ }
+diff --git a/src/rollover.test.ts b/src/rollover.test.ts
+new file mode 100644
+index 0000000..d744d3c
+--- /dev/null
++++ b/src/rollover.test.ts
+@@ -0,0 +1,21 @@
++import { describe, expect, it } from "vitest";
++import { paymentDueDate } from "./dueDate.js";
++
++const nextBusinessDay = { rollover: "next-business-day" } as const;
++
++describe("paymentDueDate with next-business-day rollover", () => {
++  it("moves a Saturday to the following Monday", () => {
++    // 2026-04-30 + 30 days is 2026-05-30, a Saturday.
++    expect(paymentDueDate("2026-04-30", 30, nextBusinessDay)).toBe("2026-06-01");
++  });
++
++  it("moves a Sunday to the following Monday", () => {
++    // 2026-07-31 + 30 days is 2026-08-30, a Sunday.
++    expect(paymentDueDate("2026-07-31", 30, nextBusinessDay)).toBe("2026-08-31");
++  });
++
++  it("keeps a weekday as it is", () => {
++    // 2026-05-31 + 30 days is 2026-06-30, a Tuesday.
++    expect(paymentDueDate("2026-05-31", 30, nextBusinessDay)).toBe("2026-06-30");
++  });
++});

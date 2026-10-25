@@ -1,0 +1,156 @@
+{
+  "slice_id": "feb-end-2",
+  "oracle": {
+    "seam": "closingDate() unit, src/dueDate.test.ts",
+    "version": "1",
+    "files": [
+      {
+        "path": "src/dueDate.test.ts",
+        "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "seq": 1,
+      "kind": "before",
+      "cmd": [
+        "npx",
+        "vitest",
+        "run",
+        "src/dueDate.test.ts",
+        "-t",
+        "leap-year February"
+      ],
+      "exit_code": 1,
+      "outcome": "target_failure",
+      "accepted": true,
+      "started_at": "2026-09-25T22:55:40Z",
+      "ended_at": "2026-09-25T22:55:41Z",
+      "log": "runs/001-before.log",
+      "tree": {
+        "head_sha": "8349247a2a924368ac674d3d3e947f9069e486da",
+        "tree_hash": "c2350d95c6f488ee93a8a57a0698ab0275e731bd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "closingDate() unit, src/dueDate.test.ts",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/dueDate.test.ts",
+            "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 2,
+      "kind": "after",
+      "cmd": [
+        "npx",
+        "vitest",
+        "run",
+        "src/dueDate.test.ts",
+        "-t",
+        "leap-year February"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-09-25T22:56:01Z",
+      "ended_at": "2026-09-25T22:56:02Z",
+      "log": "runs/002-after.log",
+      "tree": {
+        "head_sha": "8349247a2a924368ac674d3d3e947f9069e486da",
+        "tree_hash": "0c905ce078e9b04c767c4f775d88532e5c4192dd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "closingDate() unit, src/dueDate.test.ts",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/dueDate.test.ts",
+            "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 3,
+      "kind": "after",
+      "cmd": [
+        "npm",
+        "test"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-09-25T22:56:03Z",
+      "ended_at": "2026-09-25T22:56:04Z",
+      "log": "runs/003-after.log",
+      "tree": {
+        "head_sha": "8349247a2a924368ac674d3d3e947f9069e486da",
+        "tree_hash": "0c905ce078e9b04c767c4f775d88532e5c4192dd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "closingDate() unit, src/dueDate.test.ts",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/dueDate.test.ts",
+            "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 4,
+      "kind": "after",
+      "cmd": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "exit_code": 0,
+      "outcome": "pass",
+      "accepted": true,
+      "started_at": "2026-09-25T22:56:04Z",
+      "ended_at": "2026-09-25T22:56:04Z",
+      "log": "runs/004-after.log",
+      "tree": {
+        "head_sha": "8349247a2a924368ac674d3d3e947f9069e486da",
+        "tree_hash": "0c905ce078e9b04c767c4f775d88532e5c4192dd"
+      },
+      "conditions": {
+        "cwd": ".",
+        "node_version": "v24.16.0",
+        "env_keys": []
+      },
+      "oracle": {
+        "seam": "closingDate() unit, src/dueDate.test.ts",
+        "version": "1",
+        "files": [
+          {
+            "path": "src/dueDate.test.ts",
+            "sha256": "d57fd349ac7d0d5575ff4cf70540f2889fff287af2397dd0b4769fe9684a2358"
+          }
+        ]
+      }
+    }
+  ]
+}

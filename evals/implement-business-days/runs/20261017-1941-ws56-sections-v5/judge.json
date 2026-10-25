@@ -1,0 +1,79 @@
+{
+  "eval_id": "implement-business-days",
+  "run_id": "20261017-1941-ws56-sections-v5",
+  "rubric_version": 5,
+  "labels": ["c1", "c2"],
+  "criteria": [
+    {
+      "name": "agreed-values-asserted",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/src/dueDate.rollover.test.ts:10,16,21 asserts all three values with the option; c1/evidence/rollover-1/runs/009-integrated.log:6 records 13 passed after the file's last change."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/src/rollover-saturday.test.ts:6,10, src/rollover-sunday.test.ts:6,10, and src/rollover-weekday.test.ts:6 assert the agreed values; c2/evidence/rollover-1/runs/013-integrated.log:7, rollover-2/runs/012-integrated.log:7, and rollover-3/runs/010-integrated.log:7 record green runs."
+        }
+      ]
+    },
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/rollover-1/runs/001-before.log:14 and rollover-2/runs/001-before.log:14 show the agreed assertions failing; both precede their slices' green 008-integrated.log runs."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/evidence/rollover-1/runs/001-before.log:10, rollover-2/runs/001-before.log:10, rollover-3/runs/002-calibration.log:10, and rollover-4/runs/009-calibration.log:11 show assertion failures before each slice's last green run."
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch, src/dueDate.ts hunk: adds only the optional next-business-day rollover and retains the original formatted due date when it is absent."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/diff.patch, src/dueDate.ts hunk: adds only the optional next-business-day rollover and preserves the original due date when no option is supplied."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 1,
+          "evidence": "c1/artifact/reply.md:27 quotes check-evidence.sh output and labels the table, but its Measured claim has no file or log path; lines 42, 43, and 45 likewise make Measured claims without paths. More than 80% of factual lines are labeled."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:7,9-11,13-14,18-25,28,32-41,53-55,57-59 contain numerous factual lines without Measured, inferred, or guess labels; fewer than 80% are labeled."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "partial"},
+    {"label": "c2", "verdict": "fail"}
+  ],
+  "winner": "c1",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "No run conditions were recorded. The final after or integrated records in c1/evidence/rollover-{1,2}/meta.json and c2/evidence/rollover-{1,2,3,4}/meta.json therefore meet the agreed conditions."
+  },
+  "disagreements": []
+}

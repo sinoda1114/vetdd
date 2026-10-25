@@ -1,0 +1,79 @@
+{
+  "eval_id": "implement-business-days",
+  "run_id": "20261017-1933-ws56-v5",
+  "rubric_version": 5,
+  "labels": ["c1", "c2"],
+  "criteria": [
+    {
+      "name": "agreed-values-asserted",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/src/dueDate.rollover.test.ts:10,16,22 asserts all three literals with the option; c1/evidence/rollover-1/runs/009-integrated.log shows 13 tests passed after the oracle's last change."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/src/rollover-saturday.test.ts:6,11, src/rollover-sunday.test.ts:6,11, and src/rollover-weekday.test.ts:6 assert the agreed literals; c2/evidence/rollover-1/runs/014-integrated.log and rollover-2/runs/013-integrated.log show 16 tests passed after the last changes."
+        }
+      ]
+    },
+    {
+      "name": "red-before-green",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/evidence/rollover-1/runs/001-before.log and rollover-2/runs/001-before.log show the Saturday and Sunday assertion failures; their meta.json records later passing integrated runs."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/evidence/rollover-1/runs/010-calibration.log, rollover-2/runs/009-calibration.log, rollover-3/runs/002-calibration.log, and rollover-4/runs/009-calibration.log show agreed assertion failures; each slice's meta.json records a later passing integrated run."
+        }
+      ]
+    },
+    {
+      "name": "smallest-change",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 2,
+          "evidence": "c1/artifact/diff.patch: paymentDueDate adds the optional next-business-day branch and otherwise returns formatDate(due); no other product behavior is added."
+        },
+        {
+          "label": "c2",
+          "score": 2,
+          "evidence": "c2/artifact/diff.patch: paymentDueDate adds an optional next-business-day branch and retains the unmodified due date when the option is absent."
+        }
+      ]
+    },
+    {
+      "name": "claims-match-evidence",
+      "scores": [
+        {
+          "label": "c1",
+          "score": 1,
+          "evidence": "c1/artifact/reply.md:18-31 labels the evidence table Measured and quotes check-evidence output; lines 46-47 contain Measured claims citing only 'the diff', while lines 64-66 and 72-73 are unlabeled factual lines. At least 80% of factual lines are labeled, but the score-2 allowance is exceeded."
+        },
+        {
+          "label": "c2",
+          "score": 0,
+          "evidence": "c2/artifact/reply.md:7-25 and 28-41 contain numerous factual lines without Measured, inferred, or guess labels; fewer than 80% of factual lines are labeled."
+        }
+      ]
+    }
+  ],
+  "verdicts": [
+    {"label": "c1", "verdict": "partial"},
+    {"label": "c2", "verdict": "fail"}
+  ],
+  "winner": "c1",
+  "confidence": "mid",
+  "conditions_check": {
+    "applies": true,
+    "note": "No run conditions were recorded. The last after or integrated runs are recorded in c1/evidence/rollover-{1,2}/meta.json and c2/evidence/rollover-{1,2,3,4}/meta.json."
+  },
+  "disagreements": []
+}
