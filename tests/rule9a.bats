@@ -295,6 +295,17 @@ long_code() {
   [[ "$output" == *"9a: could not scan oracle file a.test.ts"* ]] || { echo "$output"; false; }
 }
 
+@test "rule 9a fails closed, and fast, on a long line with a slash that opens no regular expression it closes (#7)" {
+  # Each (/[ starts a regular expression whose class never closes: read to the end of the line every
+  # time, a line of 21000 characters takes over a minute.
+  record_oracle a.test.js "x$(printf '(/[%.0s' $(seq 1 7000))"
+  local start=$SECONDS
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.js line 1 is over 20000 characters"* ]] || { echo "${output:0:400}"; false; }
+  [ $((SECONDS - start)) -lt 20 ]
+}
+
 @test "rule 9a fails closed on a line over 1000000 characters, which it does not read (#7)" {
   record_oracle a.test.js "$(printf 'const x = "%01000001d";' 0)"
   run check s1

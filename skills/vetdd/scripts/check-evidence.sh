@@ -498,8 +498,9 @@ def num: if type == "number" then . else error("not a number") end;
 # searched only when it cannot hold a focus: when neither its code nor the code just before it holds
 # the text only or fdescribe (strings and comments do not count). Otherwise it is "!" (not searched,
 # so the slice fails). A line over 1000000 characters is not read at all, to bound the time: it is
-# "+", and the lines after it may be misread. Time is linear in the length of a long line, and memory
-# does not grow with it.
+# "+", and the lines after it may be misread. A long line with a slash that opens a regular
+# expression it never closes is "!" too, read on with every later slash as a division. Time is linear
+# in the length of a long line, and memory does not grow with it.
 #
 # Known limits. The scanner is frozen (#7): it is a best-effort tripwire for an accident, not a
 # boundary, and the final judge, who reads the delivered tests in full, is the backstop. Each of these
@@ -514,8 +515,8 @@ def num: if type == "number" then . else error("not a number") end;
 #   there can hide what follows.
 # - Code inside ${...} in a template literal is not searched.
 # - A line over 20000 characters whose code holds the text only or fdescribe (a name such as readonly
-#   included), or any line over 1000000 characters, fails the slice though it may hold no focus;
-#   split the line.
+#   included) or a slash read as a regular expression it never closes, or any line over 1000000
+#   characters, fails the slice though it may hold no focus; split the line.
 # The lasting answer is the runner's own count of skipped tests (rule 9c, --test-report), not the
 # source.
 focused_lines() {
@@ -554,7 +555,7 @@ focused_lines() {
       # A long line is searched only when it cannot hold a focus (see above), but it is read either way
       # for what it opens and closes; its output is cut down as it is built, keeping the end the next
       # line is joined to, after it is looked at for the text only or fdescribe in code.
-      long = (n > 20000); seen = long && (index(tail, "only") || index(tail, "fdescribe"))
+      long = (n > 20000); seen = long && (index(tail, "only") || index(tail, "fdescribe")); norx = 0
       out = ""; i = 1; k = 0; str = carry; carry = ""
       if (tpl) str = "`"
       while (i <= n) {
@@ -578,7 +579,7 @@ focused_lines() {
         if (c == "/" && d == "/") break
         if (c == "/" && d == "*") { block = 1; out = out "  "; i += 2; continue }
         if (c == "\"" || c == sq || c == "`") { str = c; if (c == "`") tpl = 1; out = out c; prev = c; i++; continue }
-        if (c == "/" && (prev == "" || index("(,=:[!&|?{};+-*%~^>", prev) > 0)) {
+        if (c == "/" && !norx && (prev == "" || index("(,=:[!&|?{};+-*%~^>", prev) > 0)) {
           # A regular-expression literal: skip to its closing slash (not inside [...], not escaped).
           j = i + 1; incls = 0; e = 0
           while (j <= n) {
@@ -591,6 +592,9 @@ focused_lines() {
           }
           # One blank stands for the whole body: the output is only ever read with blanks collapsed.
           if (e > 0) { out = out "/ /"; prev = "x"; i = e + 1; continue }
+          # On a long line, each such slash would be read to the end of the line again: the line is not
+          # searched, and the rest of it is read with every slash as a division.
+          if (long) { seen = 1; norx = 1 }
         }
         if (c != " " && c != "\t") {
           pc = substr(out, length(out), 1)
@@ -747,7 +751,7 @@ check_oracle_files() {
       printf '%s\n' "$found" | while IFS= read -r n; do
         case "$n" in
           '') ;;
-          '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters and its code, or the code just before it, holds the text only or fdescribe, so it was not scanned for a focused test; split the line" ;;
+          '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters and its code, or the code just before it, holds the text only or fdescribe, or a slash that opens a regular expression it never closes, so it was not scanned for a focused test; split the line" ;;
           '+'*) echo "9a: oracle file $path line ${n#+} is over 1000000 characters, too long to read, so it was not scanned for a focused test; split the line" ;;
           '?') echo "9a: oracle file $path could not be scanned to the end (a comment or template literal is still open there, or a regular expression was read as one); fix it or split the file" ;;
           *) echo "9a: oracle file $path line $n holds a focused test (.only or fdescribe); it runs only that test and skips the rest, so the green means less than it says. Remove it and record the slice again with a bumped --oracle-version (rule 8)" ;;
