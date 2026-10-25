@@ -35,7 +35,7 @@ mutation() {
   REPORT="${2:-}" ev "$1" calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh >/dev/null 2>&1 || true
 }
 an() { "$SCRIPTS/audit-note.sh" "$@"; }
-note_file() { printf 'no mutation tool for this language\n' > "$BATS_TEST_TMPDIR/n.txt"; printf '%s' "$BATS_TEST_TMPDIR/n.txt"; }
+note_file() { note_text n.txt 'no mutation tool for this language'; }
 no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')"; }
 
 @test "a slice with no mutation run and no mutation note is not asked" {
@@ -134,6 +134,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   record_good_slice s1
   mutation s1 "$(killed)"
   printf '\n# a stronger test\n' >> test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   ev s1 after -- sh test.sh >/dev/null 2>&1
   run check s1
@@ -283,6 +284,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   run an s1 --kind mutation --not-applicable --reason-file "$(note_file)"
   [ "$status" -eq 2 ]
   printf '\n# a stronger test\n' >> test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   ev s1 after -- sh test.sh >/dev/null 2>&1
   run check s1
@@ -357,6 +359,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
   an s1 --kind undefined-imports --not-applicable --reason-file "$(note_file)"
   # Same second: the old timestamps alone would still count both notes.
   printf '\n# a stronger test\n' >> test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   ev s1 after -- sh test.sh >/dev/null 2>&1
   tamper s1 '.audits |= map(.recorded_at = "2099-01-01T00:00:00Z")'

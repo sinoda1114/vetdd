@@ -17,11 +17,19 @@
 #   verify script's exit 2), so it is recorded as infrastructure_error and never counts as red
 # --test-report: the runner's JSON report at <path> (under .vetdd/reports/) is deleted before
 #   the run and read after it; its counts go on the run as `tests`. It never changes the outcome.
+# --outcome: when it differs from what the exit code says (with the --infra-exit codes), the run also
+#   records outcome_forced: true and infra_exits: [the codes declared with --infra-exit], so check-evidence
+#   never counts a forced red (rule 8, rule 10b) and fails a forced green (rule 3) without guessing from
+#   the exit code. A run without outcome_forced ended as its exit code says.
 # --audit undefined-imports: an internal option of `calibrate.sh stub` (calibration runs only): the run
-#   is recorded with audit: {"kind": "undefined-imports"}, meaning every product file the oracle
-#   imports was replaced by a stub whose exports are all undefined for this run. check-evidence
-#   rule 10 reads the mark, and a marked run is never counted as a red (the product was stubbed, not
-#   defective). It is validated before the command runs.
+#   is recorded with audit: {"kind": "undefined-imports", "files": [{path, sha256}]}, meaning every product
+#   file the oracle imports was replaced by a stub whose exports are all undefined for this run; files are
+#   the stubbed files (repository paths) with the sha256 each had when the command started, which
+#   check-evidence rule 10b compares with the stubs calibrate.sh writes. It is taken only while that
+#   slice's stub run is going (its state in stub mode, its pid file naming the process that runs
+#   evidence.sh), as --planted is: a tripwire, not a boundary. check-evidence rule 10 reads the mark, and a
+#   marked run is never counted as a red (the product was stubbed, not defective). It is validated before
+#   the command runs.
 # --audit mutation --mutation-report stryker-json:<path> (calibration runs only, always together): the
 #   command is a mutation testing run (StrykerJS with the json reporter, mutating the lines the slice
 #   changed). The report at <path> (under .vetdd/reports/, the --test-report rules) is deleted before
@@ -54,6 +62,7 @@ vetdd_require_jq evidence.sh
 . "${BASH_SOURCE[0]%/*}/lib/tree-hash.sh"
 . "${BASH_SOURCE[0]%/*}/lib/test-report.sh"
 . "${BASH_SOURCE[0]%/*}/lib/mutation-report.sh"
+. "${BASH_SOURCE[0]%/*}/lib/meta.sh"
 
 [ $# -ge 2 ] || die "usage: evidence.sh <slice-id> <kind> [options] -- <command...>"
 slice="$1"; kind="$2"; shift 2
@@ -63,14 +72,14 @@ case "$kind" in
   *) die "invalid kind '$kind' (calibration|before|after|integrated)" ;;
 esac
 
-outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "
+outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "; declared_exits=""
 oracle_files=(); report_opt=""; audit_opt=""; mreport_opt=""; mreport_set=0; rerun=0; planted_opt=""; planted_set=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --outcome) [ $# -ge 2 ] || die "--outcome needs a value"; outcome_opt="$2"; shift 2 ;;
     --infra-exit) [ $# -ge 2 ] || die "--infra-exit needs an exit code"
       case "$2" in [1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;; *) die "--infra-exit takes an exit code from 1 to 255, got '$2'" ;; esac
-      infra_exits="$infra_exits$2 "; shift 2 ;;
+      infra_exits="$infra_exits$2 "; declared_exits="$declared_exits $2"; shift 2 ;;
     --seam) [ $# -ge 2 ] || die "--seam needs a value"; seam_opt="$2"; seam_set=1; shift 2 ;;
     --oracle-version) [ $# -ge 2 ] || die "--oracle-version needs a value"
       # The version is printed by check-evidence: letters, digits, . _ - only.
@@ -208,6 +217,22 @@ if [ "$planted_set" -eq 1 ]; then
     *) die "$pnot (it names no file, or a file name with a control character)" ;;
   esac
 fi
+# --audit undefined-imports: only from this slice's stub run that is going now (calibrate.sh stub holds its
+# state in stub mode and runs this script itself); the stubbed files it lists are hashed before the command.
+stub_files_json=""
+if [ "$audit_opt" = undefined-imports ]; then
+  snot="--audit undefined-imports is calibrate.sh stub's own: it is taken only while that slice's stub run is going (run calibrate.sh stub $slice --file <product files> --oracle-file <test files> -- <command>)"
+  gdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$gdir" ] || die "$snot (cannot locate the git dir)"
+  sstate="$(cd "$gdir/vetdd-calib/$slice" 2>/dev/null && pwd -P)" || die "$snot"
+  [ "$(cat "$sstate/mode" 2>/dev/null)" = stub ] || die "$snot"
+  [ "$(cat "$sstate/pid" 2>/dev/null)" = "$PPID" ] || die "$snot (it is not the process running this one)"
+  [ -f "$sstate/files" ] && [ ! -L "$sstate/files" ] && [ -s "$sstate/files" ] || die "$snot (its list of stubbed files is missing)"
+  sf=()
+  while IFS= read -r f; do
+    vetdd_inside_repo "$root" "$f" && [ -f "$root/$f" ] || die "$snot (a stubbed file is not a regular file in the repository: $(printf '%s' "$f" | vetdd_printable))"
+    sf+=("$f")
+  done < "$sstate/files"
+fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
 # Every directory on the way is the repository's own: a link would send the record (and the parent's
@@ -215,9 +240,15 @@ meta="$dir/meta.json"
 for d in "$root/.vetdd" "$root/.vetdd/evidence" "$dir" "$dir/runs"; do
   [ ! -L "$d" ] || die "${d#"$root"/} is a symbolic link; evidence is written only inside the repository"
 done
+# One writer of the slice's meta.json at a time, from its first read to its last write (lib/meta.sh).
+vetdd_slice_lock "$slice" || die "$VETDD_SLICE_LOCK_ERR"
+trap 'vetdd_slice_unlock' EXIT
 mkdir -p "$dir/runs" || die "cannot create $dir"
 if [ ! -f "$meta" ]; then
-  jq -n --arg s "$slice" '{slice_id: $s, oracle: {seam: null, version: null, files: []}, runs: []}' > "$meta"
+  # The skeleton every writer starts a slice with, under a name nobody can predict, then renamed.
+  tmp_meta="$(mktemp "$dir/meta.json.XXXXXX")" || die "cannot create a temporary file in $dir"
+  vetdd_meta_skeleton "$slice" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" \
+    || { rm -f "$tmp_meta"; die "could not create $meta"; }
 fi
 
 # Inherited paths come from meta.json: check them before the command runs, as for --oracle-file.
@@ -264,6 +295,15 @@ if [ "$planted_set" -eq 1 ]; then
   fi
   planted_json="$(jq -cn --arg p "$prel" --arg s "$psum" --argjson f "$planted_files_json" '{patch: $p, sha256: $s, files: $f}')"
 fi
+# The stubs as the command meets them: hashed now, with the stubs in place.
+if [ "$audit_opt" = undefined-imports ]; then
+  stub_files_json='[]'
+  for f in "${sf[@]}"; do
+    sum="$(vetdd_sha256 "$root/$f")" || die "could not hash the stubbed file $(printf '%s' "$f" | vetdd_printable)"
+    stub_files_json="$(printf '%s' "$stub_files_json" | jq -c --arg p "$f" --arg s "$sum" '. + [{path: $p, sha256: $s}]')" \
+      || die "could not record the stubbed files"
+  done
+fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$@" 2>&1 | tee "$dir/$log_rel"
 exit_code=${PIPESTATUS[0]}
@@ -274,12 +314,16 @@ if [ "$exit_code" -eq 127 ] && [ $# -eq 1 ] && [ -n "$(vetdd_split_hint "$1")" ]
 fi
 ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-outcome="$outcome_opt"
-if [ -z "$outcome" ]; then
-  case "$exit_code" in
-    0) outcome=pass ;;
-    *) case "$infra_exits" in *" $exit_code "*) outcome=infrastructure_error ;; *) outcome=target_failure ;; esac ;;
-  esac
+# What the exit code says, and the outcome recorded: --outcome, when given, wins. A forced outcome (one
+# that differs from what the exit code says) is recorded as such, with the codes declared with --infra-exit.
+case "$exit_code" in
+  0) natural=pass ;;
+  *) case "$infra_exits" in *" $exit_code "*) natural=infrastructure_error ;; *) natural=target_failure ;; esac ;;
+esac
+outcome="${outcome_opt:-$natural}"
+forced_json=null
+if [ "$outcome" != "$natural" ]; then
+  forced_json="$(jq -cn --arg d "$declared_exits" '{outcome_forced: true, infra_exits: ($d | split(" ") | map(select(. != "") | tonumber) | unique)}')"
 fi
 
 required=""
@@ -296,7 +340,7 @@ if [ -n "$report_rel" ]; then
     || tests_json='{"format": "jest-json", "status": "invalid"}'
 fi
 audit_json=null
-if [ "$audit_opt" = undefined-imports ]; then audit_json='{"kind": "undefined-imports"}'
+if [ "$audit_opt" = undefined-imports ]; then audit_json="$(jq -cn --argjson f "$stub_files_json" '{kind: "undefined-imports", files: $f}')"
 elif [ "$audit_opt" = mutation ]; then
   # Two names the letter-case check passed can still be one file (NFC and NFD on APFS): never read as both.
   if [ -n "$report_rel" ] && [ -e "$root/$mreport_rel" ] && [ "$root/$mreport_rel" -ef "$root/$report_rel" ]; then
@@ -340,7 +384,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
   --arg started_at "$started_at" --arg ended_at "$ended_at" --arg log "$log_rel" \
   --arg head_sha "$head_sha" --arg tree_hash "$tree_hash" \
   --arg cwd "$cwd_rel" --arg node_version "$node_version" \
-  --argjson audit "$audit_json" --argjson planted "$planted_json" \
+  --argjson audit "$audit_json" --argjson planted "$planted_json" --argjson forced "$forced_json" \
   --argjson seam_set "$seam_set" --arg seam "$seam_opt" \
   --argjson version_set "$version_set" --arg version "$version_opt" \
   --argjson files "$files_json" --argjson tests "$tests_json" '
@@ -361,7 +405,8 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
         env_keys: (env | keys | map(select(startswith("VETDD_"))) | sort)
       },
       oracle: $oracle
-    } + (if $tests == null then {} else {tests: $tests} end)
+    } + (if $forced == null then {} else $forced end)
+      + (if $tests == null then {} else {tests: $tests} end)
       + (if $audit == null then {} else {audit: $audit} end)
       + (if $planted == null then {} else {planted: $planted} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; die "could not update $meta"

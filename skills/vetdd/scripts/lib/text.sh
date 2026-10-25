@@ -21,17 +21,35 @@ vetdd_has_control() {
   printf '%s' "$1" | LC_ALL=C grep -q -e "$(printf '[\001-\037\177]')" -e "$(printf '\302[\200-\237]')"
 }
 
-# vetdd_text_file <option> <path>: the one line of text in a regular file (not a link, at most 4096 bytes),
-# so text that came from outside never has to pass through the shell's quoting.
+# vetdd_text_file <option> <path> <root>: the one line of text in a regular file (not a link, at most 4096
+# bytes) in <root>/.vetdd/notes/ or a directory below it (where its directory really is, links resolved),
+# so text that came from outside never has to pass through the shell's quoting and no other file on the
+# machine is read into meta.json (which goes to the judge). The file is read once, and every check is on
+# what was read.
 vetdd_text_file() {
-  local opt="$1" path="$2" content
-  [ -f "$path" ] && [ ! -L "$path" ] || die "$opt: $(printf '%s' "$path" | vetdd_printable) is not a regular file"
-  [ "$(wc -c < "$path" | tr -d ' ')" -le 4096 ] || die "$opt: the file is larger than 4096 bytes"
-  # A NUL byte would be dropped by the command substitution below, leaving a different text.
-  [ "$(LC_ALL=C tr -d '\000' < "$path" | wc -c | tr -d ' ')" -eq "$(wc -c < "$path" | tr -d ' ')" ] \
-    || die "$opt: the file holds a NUL byte"
-  # Read through a redirection: a name of - is this file, not standard input.
-  content="$(cat < "$path")" || die "$opt: cannot read the file"
+  local opt="$1" path="$2" root="$3" shown d copy n why="" content=""
+  shown="$(printf '%s' "$path" | vetdd_printable)"
+  case "$path" in -*) path="./$path" ;; esac  # dirname would read it as an option
+  [ -f "$path" ] && [ ! -L "$path" ] || die "$opt: $shown is not a regular file"
+  d="$(CDPATH='' cd -P -- "$(dirname -- "$path")" 2>/dev/null && pwd -P)" || die "$opt: cannot resolve the directory of $shown"
+  case "$d/" in
+    "$root/.vetdd/notes/"*) ;;
+    *) die "$opt: $shown is not in .vetdd/notes/ of this repository; write the text to a file there and pass its path" ;;
+  esac
+  copy="$(mktemp "${TMPDIR:-/tmp}/vetdd-text.XXXXXX")" || die "$opt: cannot create a temporary file"
+  # Read through a redirection: a name of - is this file, not standard input. One byte more than the
+  # limit is enough to tell a file that is too large.
+  if ! head -c 4097 < "$path" > "$copy" 2>/dev/null; then why="cannot read the file"
+  else
+    n="$(wc -c < "$copy" | tr -d ' ')"
+    if [ "$n" -gt 4096 ]; then why="the file is larger than 4096 bytes"
+    # A NUL byte would be dropped by the command substitution below, leaving a different text.
+    elif [ "$(LC_ALL=C tr -d '\000' < "$copy" | wc -c | tr -d ' ')" -ne "$n" ]; then why="the file holds a NUL byte"
+    elif ! content="$(cat < "$copy")"; then why="cannot read the file"
+    fi
+  fi
+  rm -f "$copy"
+  [ -z "$why" ] || die "$opt: $why"
   case "$content" in *$'\n'*) die "$opt: the file must hold one line" ;; esac
   vetdd_text_opt "$opt" "$content"
   TEXT_FILE_VALUE="$content"

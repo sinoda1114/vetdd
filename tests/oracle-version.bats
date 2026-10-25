@@ -4,7 +4,11 @@
 
 load test_helper
 
-setup() { make_repo; }
+setup() {
+  make_repo
+  # oracle-version.sh reads its text files only from .vetdd/notes/.
+  NOTES="$REPO/.vetdd/notes"; mkdir -p "$NOTES"
+}
 
 ov() { "$SCRIPTS/oracle-version.sh" "$@"; }
 
@@ -162,6 +166,7 @@ ov() { "$SCRIPTS/oracle-version.sh" "$@"; }
 
 @test "meta.json without oracle_versions still validates (old evidence)" {
   ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
+  tamper s1 'del(.oracle_versions)'
   [ "$(mq s1 'has("oracle_versions")')" = "false" ]
   run validate_schema "$REPO/.vetdd/evidence/s1/meta.json"
   [ "$status" -eq 0 ]
@@ -197,6 +202,7 @@ ov() { "$SCRIPTS/oracle-version.sh" "$@"; }
 }
 
 @test "a link at .vetdd, .vetdd/evidence, or the slice directory is refused and nothing is made outside (C3)" {
+  rm -rf .vetdd
   mkdir -p "$BATS_TEST_TMPDIR/out"
   ln -s "$BATS_TEST_TMPDIR/out" .vetdd
   run ov s1 --version v1 --change initial --reason r
@@ -234,12 +240,12 @@ ov() { "$SCRIPTS/oracle-version.sh" "$@"; }
 perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
 @test "text read from a file is recorded verbatim, quotes and shell syntax included (E1)" {
-  printf "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran)\n" > "$BATS_TEST_TMPDIR/reason.txt"
-  printf 'what the user said? "yes" `now`\n' > "$BATS_TEST_TMPDIR/q.txt"
-  printf "it's fine\n" > "$BATS_TEST_TMPDIR/a.txt"
+  printf "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran)\n" > "$NOTES/reason.txt"
+  printf 'what the user said? "yes" `now`\n' > "$NOTES/q.txt"
+  printf "it's fine\n" > "$NOTES/a.txt"
   ov s1 --version v1 --change initial --reason first
-  run ov s1 --version v2 --change meaning --reason-file "$BATS_TEST_TMPDIR/reason.txt" \
-    --agreement-via chat --question-file "$BATS_TEST_TMPDIR/q.txt" --answer-file "$BATS_TEST_TMPDIR/a.txt"
+  run ov s1 --version v2 --change meaning --reason-file "$NOTES/reason.txt" \
+    --agreement-via chat --question-file "$NOTES/q.txt" --answer-file "$NOTES/a.txt"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(mq s1 '.oracle_versions[1].reason')" = "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran)" ]
   [ "$(mq s1 '.oracle_versions[1].agreement.question')" = 'what the user said? "yes" `now`' ]
@@ -248,20 +254,20 @@ perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 }
 
 @test "a text file with a control character, an empty file, a link, a directory, or a big file is refused (E1)" {
-  printf 'a\tb\n' > "$BATS_TEST_TMPDIR/tab.txt"; : > "$BATS_TEST_TMPDIR/empty.txt"
-  printf 'x\n' > "$BATS_TEST_TMPDIR/real.txt"; ln -s real.txt "$BATS_TEST_TMPDIR/link.txt"
-  mkdir "$BATS_TEST_TMPDIR/dir.txt"; head -c 5000 /dev/zero | tr '\0' 'a' > "$BATS_TEST_TMPDIR/big.txt"
-  printf 'two\nlines\n' > "$BATS_TEST_TMPDIR/two.txt"
+  printf 'a\tb\n' > "$NOTES/tab.txt"; : > "$NOTES/empty.txt"
+  printf 'x\n' > "$NOTES/real.txt"; ln -s real.txt "$NOTES/link.txt"
+  mkdir "$NOTES/dir.txt"; head -c 5000 /dev/zero | tr '\0' 'a' > "$NOTES/big.txt"
+  printf 'two\nlines\n' > "$NOTES/two.txt"
   for f in tab empty link dir big two nope; do
-    run ov s1 --version v1 --change initial --reason-file "$BATS_TEST_TMPDIR/$f.txt"
+    run ov s1 --version v1 --change initial --reason-file "$NOTES/$f.txt"
     [ "$status" -eq 2 ] || { echo "$f: $output"; false; }
   done
   [ ! -e .vetdd/evidence/s1 ]
 }
 
 @test "a text option and its file form together, or twice, is a usage error (E1)" {
-  printf 'x\n' > "$BATS_TEST_TMPDIR/r.txt"
-  run ov s1 --version v1 --change initial --reason r --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'x\n' > "$NOTES/r.txt"
+  run ov s1 --version v1 --change initial --reason r --reason-file "$NOTES/r.txt"
   [ "$status" -eq 2 ]
   run ov s1 --version v1 --change initial --reason r --reason again
   [ "$status" -eq 2 ]
@@ -285,6 +291,7 @@ perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 }
 
 @test "a text file whose path starts with a dash is read as a file, never as an option of cat (G2)" {
+  cd "$NOTES"
   printf 'from the file\n' > ./-n
   # stdin is closed: a cat that took -n for an option would otherwise wait for input.
   run ov s1 --version v1 --change initial --reason-file -n < /dev/null
@@ -295,6 +302,7 @@ perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 # --- review round 4 ---------------------------------------------------------------------------
 
 @test "a text file named - is the file, not standard input (H2)" {
+  cd "$NOTES"
   printf 'from the dash file\n' > ./-
   run ov s1 --version v1 --change initial --reason-file - < /dev/null
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -302,8 +310,8 @@ perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 }
 
 @test "a text file holding a NUL byte is refused, never recorded without it (H3)" {
-  printf 'ab\000cd\n' > "$BATS_TEST_TMPDIR/nul.txt"
-  run ov s1 --version v1 --change initial --reason-file "$BATS_TEST_TMPDIR/nul.txt"
+  printf 'ab\000cd\n' > "$NOTES/nul.txt"
+  run ov s1 --version v1 --change initial --reason-file "$NOTES/nul.txt"
   [ "$status" -eq 2 ]
   [ ! -e .vetdd/evidence/s1 ]
 }

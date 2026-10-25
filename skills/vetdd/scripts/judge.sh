@@ -14,8 +14,8 @@
 # -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: CODEX_HOME
 # is a second private temporary directory holding only a link to the user's auth.json (from
 # $CODEX_HOME, else ~/.codex; a refreshed token is written back; a keyring login stops with exit 3),
-# also its HOME (a codex that cannot start there, such as one behind a node version manager's shim,
-# stops with exit 3 before exec), the login is kept in that file whatever codex's default store, and
+# and its HOME a third, empty one (a codex that cannot start there, such as one behind a node version
+# manager's shim, stops with exit 3 before exec), the login is kept in that file whatever codex's default store, and
 # exec runs --ephemeral
 # --ignore-user-config --ignore-rules with web search off and the core environment only, so the user's
 # config (MCP servers, tools, a model provider of their own), AGENTS.md, personal skills, rules, and
@@ -179,7 +179,8 @@ done
 command -v "$codex" >/dev/null 2>&1 \
   || die "codex CLI not found ($codex); install it (npm install -g @openai/codex) or set VETDD_CODEX_BIN" 3
 # The judge runs with a CODEX_HOME of its own that holds only a link to the user's auth.json: the
-# user's config (MCP servers, tools), instructions (AGENTS.md), rules, and sessions never reach it.
+# user's config (MCP servers, tools), instructions (AGENTS.md), rules, and sessions never reach it. Its
+# HOME is another directory of its own, empty, so ~/auth.json is not there either.
 # It keeps no secret from the judge: the read-only sandbox reads the whole disk, the link included, as
 # it could read the user's auth.json before; the reply's secret check covers what the judge quotes.
 # A login kept in the OS keyring is filed under the user's CODEX_HOME and cannot be lent this way.
@@ -188,25 +189,32 @@ user_home="${CODEX_HOME:-}"
 case "$user_home" in /*) ;; *) user_home="$PWD/$user_home" ;; esac
 [ -f "$user_home/auth.json" ] \
   || die "the judge needs codex's file login, and $user_home/auth.json is missing (a keyring login cannot reach the judge's private CODEX_HOME); set cli_auth_credentials_store = \"file\" in $user_home/config.toml and run \`codex login\`" 3
-auth_sum="$(cksum < "$user_home/auth.json")"
-jhome="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-codex.XXXXXX")" || die "cannot create a temporary directory" 1
+# One private directory (0700) holds the judge's CODEX_HOME, its HOME, and a copy of the user's login
+# as it was at the start, which the write-back below compares byte for byte (a checksum can collide).
+priv="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-codex.XXXXXX")" || die "cannot create a temporary directory" 1
+jhome="$priv/codex"; judge_home="$priv/home"
+mkdir "$jhome" "$judge_home" || { rm -rf "$priv"; die "cannot create $jhome" 1; }
+(umask 077 && cp "$user_home/auth.json" "$priv/auth.start") || { rm -rf "$priv"; die "cannot read $user_home/auth.json" 3; }
 # A token codex refreshes may come back as a file in place of the link (written aside, then renamed):
 # write it back, or the user's login keeps the spent token. Only a JSON object, only when the user's
 # file is as it was at the start (their own codex may have refreshed it meanwhile), and atomically: a
-# private file beside the link's target, renamed over it, so a link the user keeps stays a link.
+# private file in a directory made with mktemp -d beside the link's target (a name nobody can predict), renamed
+# over it, so a link the user keeps stays a link.
 login_note() { printf 'judge.sh: codex refreshed its login during the judge run; %s. If codex then says you are logged out, run `codex login`\n' "$1" >&2; }
 keep_login() {
   [ -f "$jhome/auth.json" ] && [ ! -L "$jhome/auth.json" ] || return 0
   local t="$user_home/auth.json" l n=0
   jq -e 'type == "object"' "$jhome/auth.json" >/dev/null 2>&1 || { login_note "it is not a JSON object, so it was not written back"; return 0; }
-  [ "$(cksum < "$t" 2>/dev/null)" = "$auth_sum" ] || { login_note "your auth.json changed meanwhile, so yours was kept"; return 0; }
+  cmp -s "$priv/auth.start" "$t" || { login_note "your auth.json changed meanwhile, so yours was kept"; return 0; }
   while [ -L "$t" ] && [ "$n" -lt 20 ]; do
     l="$(readlink "$t")"; case "$l" in /*) t="$l" ;; *) t="${t%/*}/$l" ;; esac; n=$((n + 1))
   done
-  { (umask 077 && cp "$jhome/auth.json" "$t.vetdd.$$") && mv -f "$t.vetdd.$$" "$t"; } \
-    || { rm -f "$t.vetdd.$$"; login_note "it could not be written back to $t"; }
+  local tmpd=""
+  { tmpd="$(mktemp -d "$t.XXXXXX")" && (umask 077 && cp "$jhome/auth.json" "$tmpd/auth.json") && mv -f "$tmpd/auth.json" "$t"; } \
+    || login_note "it could not be written back to $t"
+  [ -z "$tmpd" ] || rm -rf "$tmpd"
 }
-trap 'keep_login; rm -rf "$jhome"' EXIT
+trap 'keep_login; rm -rf "$priv"' EXIT
 ln -s "$user_home/auth.json" "$jhome/auth.json" || die "cannot link the codex login into $jhome" 1
 export CODEX_HOME="$jhome"
 # Every codex call from here runs with the private HOME too, so codex is checked to start there before
@@ -230,7 +238,7 @@ clear_codex_env() {
   for n in $(compgen -e); do
     case "$keep_names" in *" $n "*) ;; *) export -n "$n" 2>/dev/null ;; esac
   done
-  export HOME="$jhome" CODEX_HOME="$jhome"
+  export HOME="$judge_home" CODEX_HOME="$jhome"
 }
 # What a child would get, read from one (env -0): an entry bash cannot drop (a name that is not a
 # variable name passes through it) stops the judge here, before codex sees it. SHLVL, _, and PWD are a
@@ -272,7 +280,7 @@ login="$(codex_private login status -c 'cli_auth_credentials_store="file"' < /de
 # rests on the relative paths, on nothing in the copy naming the original path (the blind check
 # below refuses those paths), and on the prompt.
 work="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-judge.XXXXXX")" || die "cannot create a temporary directory" 1
-trap 'keep_login; rm -rf "$work" "$jhome"' EXIT
+trap 'keep_login; rm -rf "$work" "$priv"' EXIT
 jdir="$work/judge"
 mkdir "$jdir" "$work/args" || die "cannot create $jdir" 1
 ! git -C "$jdir" rev-parse --show-toplevel >/dev/null 2>&1 \
@@ -375,7 +383,7 @@ V_eval_id="$eval_id" V_run_id="$run_id" V_extra_layout="$extra_layout" awk '
 
 invoked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "${log%/*}" || die "cannot create ${log%/*}" 1
-# HOME is the private home too: codex finds personal skills under ~/.agents/skills. The judge's shell
+# HOME is the private, empty home: codex finds personal skills under ~/.agents/skills. The judge's shell
 # gets the core variables only (HOME, PATH, USER, ...): CODEX_HOME and the caller's own stay out.
 # The -c keys are read, not ignored: codex 0.159.1 refuses an unknown value of each (measured).
 codex_private exec -s read-only -C "$jdir" -m "$model" -c "model_reasoning_effort=\"$effort\"" \

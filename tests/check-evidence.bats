@@ -293,6 +293,7 @@ setup() { make_repo; }
   printf '0\n' > value.txt
   ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
   printf '# v2: same check, clearer message\n' >> test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   ev s1 calibration --oracle-version v2 -- sh test.sh
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh
@@ -416,6 +417,7 @@ s2: OK" ]
   [ "$status" -eq 1 ]
   # The fix test.md gives: a new version, its own red, then the green.
   printf '0\n' > value.txt
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   ev s1 calibration --oracle-version v2 -- sh test.sh
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh
@@ -686,6 +688,7 @@ s2: OK" ]
   ev s1 after --oracle-version v1 -- sh test.sh
   printf '# v3\n' >> test.sh
   printf '0\n' > value.txt
+  "$SCRIPTS/oracle-version.sh" s1 --version v3 --change implementation --reason r >/dev/null
   ev s1 calibration --oracle-version v3 -- sh test.sh
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh
@@ -769,6 +772,8 @@ v1_then_v2_red() {
 
 @test "rule 8d does not apply to evidence without an oracle_versions key" {
   v1_then_v2_red
+  # Evidence recorded before the version log: no key at all.
+  tamper s1 'del(.oracle_versions)'
   [ "$(mq s1 'has("oracle_versions")')" = "false" ]
   run check s1
   [ "$status" -eq 0 ]

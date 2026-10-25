@@ -64,6 +64,30 @@ tamper() {
 ev() { "$SCRIPTS/evidence.sh" "$@"; }
 check() { "$SCRIPTS/check-evidence.sh" "$@"; }
 
+# stub_ev <slice> [evidence.sh options] -- <command...>: evidence.sh <slice> calibration --audit
+# undefined-imports, run as calibrate.sh stub runs it (evidence.sh takes the option from nobody else): the
+# slice's calibration state in stub mode, listing the stubbed file, with the pid of the process that runs
+# evidence.sh. The stubbed file is ignored/stub.mjs holding the ES module stub, there only for the run, so
+# the working tree is as it was afterwards.
+stub_ev() {
+  local slice="$1" st top rc=0; shift
+  st="$(git rev-parse --absolute-git-dir)/vetdd-calib/$slice"
+  top="$(git rev-parse --show-toplevel)"
+  mkdir -p "$st" "$top/ignored" && printf 'export {};\n' > "$top/ignored/stub.mjs" \
+    && echo stub > "$st/mode" && printf 'ignored/stub.mjs\n' > "$st/files" || return 1
+  bash -c 'echo "$$" > "$1/pid"; shift; "$@"; rc=$?; exit "$rc"' stub_ev "$st" \
+    "$SCRIPTS/evidence.sh" "$slice" calibration --audit undefined-imports "$@" || rc=$?
+  rm -rf "$st"; rm -f "$top/ignored/stub.mjs"; rmdir "$top/ignored" 2>/dev/null || true
+  return "$rc"
+}
+
+# note_text <name> <text>: write one line of text to .vetdd/notes/<name> in the repository and print
+# its path (oracle-version.sh and audit-note.sh read their text files only from there).
+note_text() {
+  local top; top="$(git rev-parse --show-toplevel)"
+  mkdir -p "$top/.vetdd/notes" && printf '%s\n' "$2" > "$top/.vetdd/notes/$1" && printf '%s\n' "$top/.vetdd/notes/$1"
+}
+
 # before (red) -> fix -> after (green) with test.sh as the oracle file.
 record_good_slice() {
   local slice="$1"

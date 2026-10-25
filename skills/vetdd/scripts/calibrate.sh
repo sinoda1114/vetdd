@@ -14,7 +14,8 @@
 #                        [--seam <s>] [--infra-exit <code>] -- <command...>
 #       The undefined-imports audit (principle 4's quick check): replace every product file the oracle
 #       imports with a stub whose exports are all undefined, run the command as a calibration marked
-#       audit: {"kind": "undefined-imports"}, then put the files back. It must end target_failure
+#       audit: {"kind": "undefined-imports", "files": [{path, sha256}]} (each stubbed file and the sha256 of
+#       its stub, which check-evidence rule 10b compares with lib/stub.sh), then put the files back. It must end target_failure
 #       (exit 0): a test that still passes (exit 1) observes nothing. Stubs: .ts .tsx .jsx .mjs .mts ->
 #       `export {};` (.ts .tsx .jsx: the same guarded CommonJS module as .js when the nearest
 #       package.json says "commonjs"); .cjs .cts -> `module.exports = {};`; .js -> by the nearest package.json "type"
@@ -53,6 +54,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" && [ -n "$here" ] || { echo "calibrat
 . "$here/lib/common.sh"
 . "$here/lib/tree-hash.sh"
 . "$here/lib/test-report.sh"
+. "$here/lib/stub.sh"
 vetdd_require_jq calibrate.sh
 
 # A name in a message (a file the user named) can hold control characters: show it filtered.
@@ -386,17 +388,18 @@ nearest_package_type() {
   done
   return 0
 }
+# The texts are lib/stub.sh's, which check-evidence rule 10b compares the audit run's record with.
 stub_text() {
   case "$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')" in
-    *.cjs|*.cts) printf 'module.exports = {};\n' ;;
+    *.cjs|*.cts) vetdd_stub_text cjs ;;
     *.js)
-      if [ "$(nearest_package_type "$1")" = module ]; then printf 'export {};\n'
-      else printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'; fi ;;
+      if [ "$(nearest_package_type "$1")" = module ]; then vetdd_stub_text esm
+      else vetdd_stub_text guarded; fi ;;
     *.ts|*.tsx|*.jsx)
-      if [ "$(nearest_package_type "$1")" = commonjs ]; then printf 'if (typeof module !== "undefined") { module.exports = {}; }\n'
-      else printf 'export {};\n'; fi ;;
-    *.mjs|*.mts) printf 'export {};\n' ;;
-    *.py) printf "def __getattr__(name):\n    if name.startswith('__') and name.endswith('__'):\n        raise AttributeError(name)\n    return None\n" ;;
+      if [ "$(nearest_package_type "$1")" = commonjs ]; then vetdd_stub_text guarded
+      else vetdd_stub_text esm; fi ;;
+    *.mjs|*.mts) vetdd_stub_text esm ;;
+    *.py) vetdd_stub_text py ;;
     *) return 1 ;;
   esac
 }
@@ -591,6 +594,8 @@ case "$cmd" in
     # Every extension is checked before anything is parked: a file with no stub changes nothing.
     for f in "${files[@]}"; do
       stub_text "$f" >/dev/null || die "$f has no stub for its extension (.ts .tsx .js .jsx .mjs .cjs .mts .cts, .py); nothing was changed"
+      # The audit run records each stubbed file (evidence.sh refuses a control character there): refuse it now.
+      vetdd_inside_repo "$top" "$f" || die "$f: a file name with a control character (a tab, say) cannot be stubbed; rename it"
     done
     new_state
     save_originals

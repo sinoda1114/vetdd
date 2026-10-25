@@ -207,6 +207,7 @@ warned_oracle_edit() {
   ev s1 after -- sh test.sh >/dev/null 2>&1
   printf '// more\n' >> a.test.ts
   printf '0\n' > value.txt
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   ev s1 before --seam unit --oracle-version v2 --oracle-file a.test.ts -- sh test.sh >/dev/null 2>&1
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh >/dev/null 2>&1
@@ -232,6 +233,7 @@ warned_oracle_edit() {
   ev s1 after -- sh test.sh >/dev/null 2>&1
   printf '// more\n' >> a.test.ts
   printf '0\n' > value.txt
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   ev s1 before --seam unit --oracle-version v2 --oracle-file a.test.ts -- sh test.sh >/dev/null 2>&1
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh >/dev/null 2>&1

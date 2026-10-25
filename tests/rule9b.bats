@@ -450,6 +450,7 @@ recv() {
 @test "rule 9b leaves an older oracle version alone: a skip under v1 is history once v2 is recorded (K1)" {
   recv v1 before "$PASS" 1
   recv v1 after "$(status_of k1skip "$T1" skipped)" 0
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   recv v2 calibration "$PASS" 1
   recv v2 after "$PASS" 0
   run check s1
