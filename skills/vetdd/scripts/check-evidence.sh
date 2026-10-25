@@ -495,12 +495,13 @@ def num: if type == "number" then . else error("not a number") end;
 #
 # A line over 20000 characters (a minified file) is read for what it opens and closes (comments,
 # strings, templates) and for the code it ends with, so the lines after it are read right, but it is
-# searched only when it cannot hold a focus: when neither its code nor the code just before it holds
-# the text only or fdescribe (strings and comments do not count). Otherwise it is "!" (not searched,
-# so the slice fails). A line over 1000000 characters is not read at all, to bound the time: it is
-# "+", and the lines after it may be misread. A long line with a slash that opens a regular
-# expression it never closes is "!" too, read on with every later slash as a division. Time is linear
-# in the length of a long line, and memory does not grow with it.
+# searched only when it cannot hold a focus: when neither its code nor the code just before it (the
+# last 400 characters, as for any line) holds the text only or fdescribe (strings and comments do not
+# count). Otherwise it is "!" (not searched, so the slice fails). A line over 1000000 characters is
+# not scanned at all, to bound the time: it is "+", and the lines after it may be misread. A long line
+# with a slash that opens a regular expression it never closes is "!" too, read on with every later
+# slash as a division. Time is linear in the length of a long line, and the memory of the scan does
+# not grow with it (awk still holds the line itself).
 #
 # Known limits. The scanner is frozen (#7): it is a best-effort tripwire for an accident, not a
 # boundary, and the final judge, who reads the delivered tests in full, is the backstop. Each of these
@@ -514,6 +515,9 @@ def num: if type == "number" then . else error("not a number") end;
 # - JSX text is read as code: an it.only( written there is reported, and a bare backtick or quote
 #   there can hide what follows.
 # - Code inside ${...} in a template literal is not searched.
+# - Only the last 400 characters of earlier code (blanks collapsed) are joined to a line, so a call
+#   split from its only by more than that (a long type argument: it.only<{ ... }> on one line, its
+#   ("x", ...) on the next) is not seen, on a short line or a long one.
 # - A line over 20000 characters whose code holds the text only or fdescribe (a name such as readonly
 #   included) or a slash read as a regular expression it never closes, or any line over 1000000
 #   characters, fails the slice though it may hold no focus; split the line.
