@@ -39,8 +39,8 @@
 #          integrated run went red (parallel/swarm.md); lost: an arena lane that was not chosen
 #          (parallel/arena.md); --replaced-by: the slice id of its redesign or of the chosen lane.
 #          Only the parent writes the mark: remove never brings a worker's own back. Refuses a slice
-#          with no evidence in the main repository (exit 2), one whose worktree is still there, and one
-#          already marked (exit 1)
+#          with no evidence in the main repository or that no worktree.sh add made (exit 2), and one
+#          whose worktree is still there, whose branch is merged into HEAD, or already marked (exit 1)
 #        worktree.sh list
 #          prints "<slice>\t<path>\t<branch>" for each worker worktree
 # Exit 0 done; 1 a local step failed or would lose or overwrite work; 2 usage error.
@@ -147,6 +147,25 @@ branch_at() {
   now="$(pgit rev-parse -q --verify "refs/heads/vetdd/$1^{commit}")" || now="nothing"
   [ "$now" = "$2" ] \
     || die "vetdd/$(p "$1") moved since check (it is at $now, not at $2): a worker may still be at work; stop it, then check the branch again" 1
+}
+
+# same_evidence <worker dir> <main dir>: true when the two hold the same files, the mark at the top
+# (abandoned, the parent's own: abandon) left out of the comparison on either side; a file of that name
+# deeper in is compared like any other.
+same_evidence() {
+  local out rc=0 line
+  out="$(diff -r -q -- "$1" "$2" 2>&1)" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  [ "$rc" -eq 1 ] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "Only in $1: abandoned"|"Only in $2: abandoned"|"Files $1/abandoned and $2/abandoned differ") ;;
+      *) return 1 ;;
+    esac
+  done <<EOF_DIFF
+$out
+EOF_DIFF
+  return 0
 }
 
 # files_under <dir>: each regular file below <dir>, relative to it, NUL-separated.
@@ -324,7 +343,7 @@ $(p "$dirty")" 1
       vetdd_is_slice_id "$s" || die "the worktree of $(p "$slice") holds evidence under a name that is not a slice id: $(p "$s"); nothing was copied" 1
       evs+=("$s")
       # The mark is the parent's (abandon): a worker's own is never brought back, nor a difference.
-      if [ -e "$root/.vetdd/evidence/$s" ] && ! diff -r -q -x abandoned "$d" "$root/.vetdd/evidence/$s" >/dev/null 2>&1; then
+      if [ -e "$root/.vetdd/evidence/$s" ] && ! same_evidence "$d" "$root/.vetdd/evidence/$s"; then
         die "the main repository already has different evidence for $(p "$s") (.vetdd/evidence/$(p "$s")); nothing was copied" 1
       fi
     done
@@ -442,6 +461,14 @@ $(p "$dirty")" 1
       || die "the worktree of $(p "$slice") is still there; bring its evidence back first (worktree.sh check $(p "$slice"), then remove $(p "$slice") --keep-branch)" 1
     [ -f "$dir/meta.json" ] && [ ! -L "$dir/meta.json" ] \
       || die "no evidence for $(p "$slice") in the main repository (.vetdd/evidence/$(p "$slice")/meta.json); bring it back first (worktree.sh check, then remove --keep-branch)"
+    # Only a worker's slice is left out of a merge: one worktree.sh add made (its record stays after remove).
+    [ -f "$swarmdir/$slice.sum" ] \
+      || die "$(p "$slice") is not a worker's slice (no record of worktree.sh add $(p "$slice")); only a swarm unit or an arena lane left out of the merge is marked abandoned"
+    # A branch merged into HEAD (a merge commit has its tip as a parent) is delivered, not abandoned.
+    if tip="$(pgit rev-parse -q --verify "refs/heads/vetdd/$slice^{commit}")"; then
+      ! pgit rev-list --merges --parents HEAD 2>/dev/null | awk -v t="$tip" '{ for (i = 3; i <= NF; i++) if ($i == t) f = 1 } END { exit !f }' \
+        || die "vetdd/$(p "$slice") is merged into HEAD, so the slice is delivered, not abandoned; undo the merge first (git reset --hard ORIG_HEAD) if it is to be left out" 1
+    fi
     mark="$dir/abandoned"
     ! { [ -e "$mark" ] || [ -L "$mark" ]; } || die "$(p "$slice") is already marked abandoned (.vetdd/evidence/$(p "$slice")/abandoned); nothing was changed" 1
     when="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || die "cannot read the time" 1

@@ -38,10 +38,18 @@ stalled_slice() {
   local i; for i in 1 2 3; do ev "$1" after -- sh test.sh >/dev/null 2>&1 || true; done
 }
 
+# worker <slice> [<recorder>]: a swarm unit: worktree.sh add, the recorder (default red_slice) and a
+# commit in its worktree, then check and remove --keep-branch, so its evidence is in the main repository.
+worker() {
+  WT add "$1" >/dev/null
+  (cd "$WTROOT/$1" && "${2:-red_slice}" "$1" && git commit -qm "wip $1" --allow-empty) >/dev/null 2>&1
+  WT check "$1" >/dev/null && WT remove "$1" --keep-branch >/dev/null
+}
+
 # --- worktree.sh abandon -----------------------------------------------------------------------
 
 @test "abandon writes the mark (cause, replaced_by, recorded_at in UTC) and leaves meta.json as it was" {
-  red_slice s1
+  worker s1
   local before; before="$(sha256_of .vetdd/evidence/s1/meta.json)"
   run WT abandon s1 --cause conflict --replaced-by s1-2
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -57,7 +65,7 @@ stalled_slice() {
 @test "abandon without --replaced-by leaves the key out; each cause is taken" {
   local c
   for c in stall conflict lost; do
-    red_slice "s-$c"
+    worker "s-$c"
     run WT abandon "s-$c" --cause "$c"
     [ "$status" -eq 0 ] || { echo "$c: $output"; false; }
     [ "$(jq -r 'keys | join(",")' ".vetdd/evidence/s-$c/abandoned")" = "cause,recorded_at" ]
@@ -66,7 +74,7 @@ stalled_slice() {
 }
 
 @test "abandon refuses a missing or unknown cause, a bad or same --replaced-by, and unknown options (usage, exit 2), writing nothing" {
-  red_slice s1
+  worker s1
   run WT abandon s1
   [ "$status" -eq 2 ]
   run WT abandon s1 --cause gave-up
@@ -90,7 +98,7 @@ stalled_slice() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"no evidence"* ]]
   [ ! -e .vetdd/evidence/s1 ]
-  red_slice s1
+  worker s1
   WT abandon s1 --cause lost >/dev/null
   local first; first="$(cat "$MARK")"
   run WT abandon s1 --cause stall
@@ -115,7 +123,7 @@ stalled_slice() {
 }
 
 @test "abandon refuses a slice directory or evidence directory that is a link" {
-  red_slice s1
+  worker s1
   mv .vetdd/evidence/s1 "$BATS_TEST_TMPDIR/outside"
   ln -s "$BATS_TEST_TMPDIR/outside" .vetdd/evidence/s1
   run WT abandon s1 --cause lost
@@ -153,10 +161,44 @@ stalled_slice() {
   [ -f .vetdd/evidence/sa/abandoned ]
 }
 
+@test "abandon refuses a slice that no worktree.sh add made (usage, exit 2), and one whose branch is merged (exit 1)" {
+  red_slice s1
+  run WT abandon s1 --cause lost
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"worktree.sh add"* ]]
+  [ ! -e "$MARK" ]
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && red_slice sa && printf '42\n' > value.txt && git commit -qam "fix sa") >/dev/null 2>&1
+  WT check sa >/dev/null && WT remove sa --keep-branch >/dev/null
+  git merge -q --no-ff --no-edit -m "Merge vetdd/sa" vetdd/sa
+  run WT abandon sa --cause conflict
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"merged"* ]]
+  [ ! -e .vetdd/evidence/sa/abandoned ]
+  # Undone (git reset --hard ORIG_HEAD, as swarm.md says), it is no longer merged.
+  git reset -q --hard ORIG_HEAD
+  run WT abandon sa --cause conflict
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "remove leaves out only the mark at the top of a slice's evidence: another file named abandoned is still compared" {
+  worker sa
+  WT abandon sa --cause lost >/dev/null
+  WT add sb >/dev/null
+  mkdir -p "$WTROOT/sb/.vetdd/evidence"
+  cp -R .vetdd/evidence/sa "$WTROOT/sb/.vetdd/evidence/sa"
+  rm -f -- "$WTROOT/sb/.vetdd/evidence/sa/abandoned"
+  printf 'x\n' > "$WTROOT/sb/.vetdd/evidence/sa/runs/abandoned"
+  run WT remove sb --keep-branch
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"different evidence"* ]]
+  [ ! -e .vetdd/evidence/sa/runs/abandoned ]
+}
+
 # --- check-evidence.sh -------------------------------------------------------------------------
 
 @test "check-evidence prints ABANDONED for a marked slice, with the cause and the slice that replaced it, and does not count it" {
-  red_slice s1
+  worker s1
   run check s1
   [ "$status" -eq 1 ]
   WT abandon s1 --cause conflict --replaced-by s1-2 >/dev/null
@@ -166,7 +208,7 @@ stalled_slice() {
 }
 
 @test "check-evidence with no slice named lists an abandoned slice and counts only the others" {
-  red_slice s1
+  worker s1
   red_slice s2
   record_good_slice s3 >/dev/null 2>&1
   WT abandon s1 --cause lost >/dev/null
@@ -178,7 +220,7 @@ stalled_slice() {
 }
 
 @test "an abandoned stall still answers rule 11: a handover lacking a heading fails it, and a missing handover warns" {
-  stalled_slice s1
+  worker s1 stalled_slice
   WT abandon s1 --cause stall --replaced-by s1-r1 >/dev/null
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -197,7 +239,7 @@ stalled_slice() {
 }
 
 @test "rule 11 is not asked of a slice abandoned for a conflict or a lost lane" {
-  stalled_slice s1
+  worker s1 stalled_slice
   WT abandon s1 --cause conflict >/dev/null
   run check s1
   [ "$status" -eq 0 ]
@@ -235,7 +277,7 @@ stalled_slice() {
 # --- the pre-commit hook ----------------------------------------------------------------------
 
 @test "the pre-commit hook does not block on an abandoned slice whose oracle file is staged" {
-  red_slice s1
+  worker s1
   printf '# edited for the redesign\n' >> test.sh
   git add test.sh
   run hook
@@ -250,7 +292,7 @@ stalled_slice() {
 # --- the scripts that refuse an abandoned slice ------------------------------------------------
 
 @test "evidence.sh refuses an abandoned slice (usage, exit 2), runs nothing, and records nothing" {
-  red_slice s1
+  worker s1
   WT abandon s1 --cause lost >/dev/null
   local before; before="$(sha256_of .vetdd/evidence/s1/meta.json)"
   run ev s1 after -- sh -c 'touch ran.txt'
@@ -262,7 +304,7 @@ stalled_slice() {
 
 @test "judge-layout.sh refuses an abandoned slice (usage, exit 2) and writes nothing" {
   record_good_slice s1 >/dev/null 2>&1
-  record_good_slice s2 >/dev/null 2>&1
+  worker s2
   WT abandon s2 --cause conflict >/dev/null
   printf '## Oracle\nx\n' > "$BATS_TEST_TMPDIR/reply.md"
   run JL --out "$BATS_TEST_TMPDIR/judge" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1 s2
@@ -291,6 +333,11 @@ stalled_slice() {
   grep -qF 'worktree.sh" abandon <lane> --cause lost --replaced-by <the chosen lane>' "$P/arena.md"
   grep -qF 'worktree.sh" abandon <lane> --cause stall' "$P/arena.md"
   grep -qF 'worktree.sh" abandon <slice> --cause stall --replaced-by <slice>-r<n>' "$R/stall.md"
+  # The losing lanes are marked before the grafts, whose commits stage the shared oracle file.
+  sed -n '/^7\. \*\*Graft/p' "$P/arena.md" | awk '{ a = index($0, "--cause lost"); g = index($0, "Then graft"); exit !(a && g && a < g) }'
+  # A slice of another language that ran a mutation audit needs it again before the --before-close check.
+  grep -q 'of another language that ran a mutation audit needs it again' "$P/swarm.md"
+  grep -q 'of another language that ran a mutation audit needs it again' "$P/arena.md"
   # The usage line names the subcommand.
   sed -n '1,/^set -u/p' "$SCRIPTS/worktree.sh" | grep -q 'worktree.sh abandon <slice> --cause stall|conflict|lost \[--replaced-by <id>\]'
 }
