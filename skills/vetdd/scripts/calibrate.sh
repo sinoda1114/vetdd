@@ -416,9 +416,12 @@ write_stub() {
 # each side is hashed with its path's attributes into a throwaway index of its own, and the two trees
 # are compared. Only the saved files that changed are in it, and only those the evidence's tree holds:
 # a file git ignores (or one under .vetdd/) is left out, named on stderr, as evidence.sh's tree hash
-# leaves it out. Returns 1 when it cannot be made, 2 when nothing of the plant is in that tree.
+# leaves it out, and the modes are taken as that tree takes them. Returns 1 when it cannot be made, 2
+# when nothing of the plant shows in that tree.
 planted_patch() {
-  local f side src mode h t0 t1 rc
+  local f side src mode h t0 t1 rc trustx=1
+  # With core.fileMode false the evidence's tree takes every file as 100644 (git add into an empty index).
+  [ "$(g config --bool core.fileMode 2>/dev/null)" != false ] || trustx=0
   rm -f "$state/planted.patch" "$state/planted.0" "$state/planted.1"
   while IFS= read -r f; do
     case "$f" in .vetdd/*) warn "$f is under .vetdd/, which the evidence's tree leaves out: not in the planted record"; continue ;; esac
@@ -431,7 +434,7 @@ planted_patch() {
     esac
     for side in 0 1; do
       if [ "$side" = 0 ]; then src="$state/copies/$f"; else src="$top/$f"; fi
-      if [ -x "$src" ]; then mode=100755; else mode=100644; fi
+      if [ "$trustx" -eq 1 ] && [ -x "$src" ]; then mode=100755; else mode=100644; fi
       h="$(g hash-object -w --path="$f" -- "$src")" && [ -n "$h" ] || return 1
       GIT_INDEX_FILE="$state/planted.$side" g update-index --add --cacheinfo "$mode,$h,$f" || return 1
     done
@@ -569,7 +572,7 @@ case "$cmd" in
     rc=0; planted_patch || rc=$?
     case "$rc" in
       0) planted=1 ;;
-      2) warn "nothing planted is in the tree the evidence records (only ignored files changed): the run gets no planted record" ;;
+      2) warn "nothing planted shows in the tree the evidence records (only files git ignores or under .vetdd/ changed, or git's conversion of the files, line endings or a filter or core.fileMode false, takes the change out): the run gets no planted record" ;;
       *) die "could not make the patch of what was planted" ;;
     esac
     # mkdir succeeds for exactly one caller, so two planted runs of one slice cannot both start.

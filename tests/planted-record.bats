@@ -413,10 +413,80 @@ calq() { cal "$@" >/dev/null 2>&1; }
   cal plant s1 --file value.txt --oracle-file test.sh >/dev/null
   printf '41\n' > value.txt
   mkdir "$st/run.lock" && printf 'not a patch\n' > "$st/planted.patch"
-  run ev s1 calibration --planted "$st/planted.patch" -- touch ran
+  # Run as calibrate.sh runs it: from the process whose pid the state holds (sh -c stays the parent).
+  run sh -c 'echo $$ > "$1/pid"; "$2/evidence.sh" s1 calibration --planted "$1/planted.patch" -- touch ran; exit $?' sh "$st" "$SCRIPTS"
   [ "$status" -eq 2 ]
   [[ "$output" == *"git cannot read it as a patch"* ]] || { echo "$output"; false; }
   [ ! -e ran ]
   rmdir "$st/run.lock"
   cal restore s1 >/dev/null
+}
+
+# --- review round 2 -------------------------------------------------------------------------------
+
+@test "R2: evidence.sh takes --planted only from the process the planted state names (calibrate.sh's pid)" {
+  local st; st="$(state_dir s1)"
+  cal plant s1 --file value.txt --oracle-file test.sh >/dev/null
+  printf '41\n' > value.txt
+  mkdir "$st/run.lock" && git diff -- value.txt > "$st/planted.patch"
+  echo 1 > "$st/pid"
+  run ev s1 calibration --planted "$st/planted.patch" -- touch ran
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [ ! -e ran ] && [ ! -e .vetdd/evidence/s1/meta.json ]
+  run sh -c 'echo $$ > "$1/pid"; "$2/evidence.sh" s1 calibration --planted "$1/planted.patch" -- true; exit $?' sh "$st" "$SCRIPTS"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.runs[-1].planted.files | tojson')" = '["value.txt"]' ]
+  rmdir "$st/run.lock"; rm -f "$st/pid"
+  cal restore s1 >/dev/null
+}
+
+@test "R2: with core.fileMode false the patch takes modes as the evidence tree does, and a change that leaves that tree as it was gets no record and says why" {
+  git config core.fileMode false
+  chmod +x value.txt
+  cal plant s1 --file value.txt --oracle-file test.sh >/dev/null
+  printf '41\n' > value.txt
+  run cal planted s1 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  ! grep -q 100755 .vetdd/evidence/s1/runs/001-planted.patch || false
+  chmod -x value.txt
+  cal plant s2 --file value.txt --oracle-file test.sh >/dev/null
+  chmod +x value.txt
+  run cal planted s2 --oracle-file test.sh -- sh -c 'exit 1'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s2 '.runs[-1] | has("planted")')" = false ]
+  [[ "$output" == *"conversion"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"only ignored files changed"* ]]
+}
+
+@test "R2: judge-layout checks a planted patch against its recorded sha256 before it goes" {
+  planted_slice s1
+  printf 'note\n' | cat - .vetdd/evidence/s1/runs/001-planted.patch > "$BATS_TEST_TMPDIR/p" && cp "$BATS_TEST_TMPDIR/p" .vetdd/evidence/s1/runs/001-planted.patch
+  printf '## Oracle\nvalue.txt holds 42\n' > "$BATS_TEST_TMPDIR/reply.md"
+  run JL --out "$BATS_TEST_TMPDIR/out" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"sha256"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/out" ]
+}
+
+@test "R2: judge-layout refuses a planted patch with a file git now ignores or that is no longer there, and names one the diff does not change" {
+  planted_slice s1
+  printf '## Oracle\nvalue.txt holds 42\n' > "$BATS_TEST_TMPDIR/reply.md"
+  run JL --out "$BATS_TEST_TMPDIR/out1" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"value.txt"*"the diff does not change"* ]] || { echo "$output"; false; }
+  printf 'value.txt\n' >> .gitignore
+  run JL --out "$BATS_TEST_TMPDIR/out2" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"value.txt"* ]] && [[ "$output" == *"ignore"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/out2" ]
+  git checkout -q -- .gitignore
+  printf 'n\n' > new.txt
+  cal plant s2 --file new.txt --oracle-file test.sh >/dev/null
+  printf 'm\n' > new.txt
+  cal planted s2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
+  rm new.txt
+  run JL --out "$BATS_TEST_TMPDIR/out3" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s2
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"new.txt"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/out3" ]
 }

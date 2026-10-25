@@ -35,7 +35,9 @@
 #   link, a runner that is not one of Stryker's, a --mutate entry that is not <file>:<first>-<last>, ...).
 # --planted <patch>: an internal option of `calibrate.sh planted` (calibration runs only, not with
 #   --audit): the patch must be <git dir>/vetdd-calib/<slice>/planted.patch while that slice's planted
-#   run is going (its state in plant mode, the run claimed), so no other caller can set it. The patch
+#   run is going (its state in plant mode, the run claimed, and its pid file naming the process that
+#   runs evidence.sh), so no other caller sets it by accident: a tripwire, not a boundary (anyone who
+#   can write the git dir or meta.json can forge either). The patch
 #   (what was planted: the diff from the saved originals to the planted files) is copied to
 #   runs/<seq>-planted.patch before the command runs, and the run gets planted: {patch, sha256, files},
 #   the copy's path in the slice directory, its sha256, and the repository paths the patch changes
@@ -195,6 +197,8 @@ if [ "$planted_set" -eq 1 ]; then
   pdir="$(cd "${pdir:-/}" 2>/dev/null && pwd -P)" || die "$pnot"
   [ "$pdir" = "$pstate" ] && [ "${planted_opt##*/}" = planted.patch ] || die "$pnot"
   [ "$(cat "$pstate/mode" 2>/dev/null)" = plant ] && [ -d "$pstate/run.lock" ] && [ ! -L "$pstate/run.lock" ] || die "$pnot"
+  # calibrate.sh planted writes its pid there and runs this script itself.
+  [ "$(cat "$pstate/pid" 2>/dev/null)" = "$PPID" ] || die "$pnot (it is not the process running this one)"
   ppatch="$pstate/planted.patch"
   [ -f "$ppatch" ] && [ ! -L "$ppatch" ] && [ -s "$ppatch" ] || die "$pnot (it is missing, empty, or a link)"
   rc=0; planted_files_json="$(planted_files "$ppatch")" || rc=$?
