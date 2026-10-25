@@ -340,7 +340,7 @@ PLANTED_SENT='
 [.runs[] | select(type == "object" and (.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
                   and (.audit.kind? // "") != "mutation" and has("planted") and (.seq | type) == "number")
  | "runs/" + (.seq | floor | tostring | if length < 3 then ("00" + .)[-3:] else . end) + "-planted.patch"
-   + "\t" + (.planted.sha256? | if type == "string" then . else "-" end)] | .[]'
+   + "\t" + (.planted | if type == "object" and (.sha256 | type) == "string" then .sha256 else "-" end)] | .[]'
 penvs=""; pbins=""; pgone=""
 indiff="$tmpd/indiff"
 GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --name-only -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd' > "$indiff" \

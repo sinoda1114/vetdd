@@ -490,3 +490,19 @@ calq() { cal "$@" >/dev/null 2>&1; }
   [[ "$output" == *"new.txt"* ]]
   [ ! -e "$BATS_TEST_TMPDIR/out3" ]
 }
+
+# --- review round 3 -------------------------------------------------------------------------------
+
+@test "R3: judge-layout stops on a red whose planted record is not an object, and sends none of its patch" {
+  planted_slice s1
+  printf '## Oracle\nvalue.txt holds 42\n' > "$BATS_TEST_TMPDIR/reply.md"
+  local f
+  for f in '.runs[0].planted = "x"' '.runs[0].planted = 5' '.runs[0].planted = []' '.runs[0].planted.sha256 = 5'; do
+    cp .vetdd/evidence/s1/meta.json "$BATS_TEST_TMPDIR/meta"
+    tamper s1 "$f"
+    run JL --out "$BATS_TEST_TMPDIR/out" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+    [ "$status" -eq 1 ] || { echo "$f: $output"; false; }
+    [ ! -e "$BATS_TEST_TMPDIR/out" ]
+    cp "$BATS_TEST_TMPDIR/meta" .vetdd/evidence/s1/meta.json
+  done
+}
