@@ -9,9 +9,10 @@
 #           (6) oracle.files sha256 match the current files
 # Focus:    (9a) no focused test (.only, fdescribe) in a JS or TS oracle file: it would run only that
 #               test and skip the rest. The file is read as code (comments, strings, templates, and
-#               regular-expression literals blanked, across lines). A tripwire for an accident, not a
-#               boundary: fit(, a renamed or wrapped focus, a helper, a file not named with
-#               --oracle-file, or another language passes it.
+#               regular-expression literals blanked, across lines). A best-effort tripwire for an
+#               accident, not a boundary, frozen as it is (#7): fit(, a renamed or wrapped focus, a
+#               helper, a file not named with --oracle-file, another language, and the blind spots
+#               listed above focused_lines pass it; the final judge, who reads the tests, is the backstop.
 # Oracle:   (8) the version chain of accepted runs: an oracle is its version plus the sha256 of its
 #               files. Within the final green's version the files do not change from its first red
 #               on, nor after any green of that version (edits before the first red are the test
@@ -489,12 +490,29 @@ def num: if type == "number" then . else error("not a number") end;
 # across lines (a string continued with a backslash included), then the code is searched for
 # <it|test|describe|suite|context|specify>[.name]*.only[.name]*( or `, spacing, comments, and a line
 # break allowed between the tokens, or fdescribe(. The root name must stand alone (not myit.only, not
-# this.it.only, however spaced). Not covered, so a tripwire and not a boundary: fit( (a common name
-# for other functions), code inside ${...} in a template, a regular-expression literal after a keyword
-# such as return (it reads as division), a division written right after a > (it reads as a regular
-# expression), JSX text (read as code: an it.only( written there is
-# reported, and a bare backtick or quote there can hide what follows), and a focus API renamed or
-# wrapped.
+# this.it.only, however spaced).
+#
+# A line over 20000 characters (a minified file) is read for what it opens and closes (comments,
+# strings, templates) and for the code it ends with, so the lines after it are read right, but it is
+# searched only when it cannot hold a focus: when neither the line nor the code just before it holds
+# the text only or fdescribe. Otherwise it is "!" (not scanned, so the slice fails).
+#
+# Known limits. The scanner is frozen (#7): it is a best-effort tripwire for an accident, not a
+# boundary, and the final judge, who reads the delivered tests in full, is the backstop. Each of these
+# passes it or is misread, and none will be fixed here:
+# - fit( is not covered (a common name for other functions), nor a focus API renamed or wrapped in a
+#   helper.
+# - A type argument that holds parentheses hides the call: test.only<{ fn: () => void }>("x", ...).
+# - A regular-expression literal right after a keyword such as return or typeof reads as a division.
+# - A division written right after a > reads as a regular expression (the code up to the next slash on
+#   the line is blanked).
+# - JSX text is read as code: an it.only( written there is reported, and a bare backtick or quote
+#   there can hide what follows.
+# - Code inside ${...} in a template literal is not searched.
+# - A line over 20000 characters that holds the text only or fdescribe anywhere (a string such as
+#   "readonly" included) fails the slice though it may hold no focus; split the line.
+# The lasting answer is the runner's own count of skipped tests (rule 9c, --test-report), not the
+# source.
 focused_lines() {
   LC_ALL=C awk -v sq="'" '
     function blanks(k,   b) { b = ""; while (k-- > 0) b = b " "; return b }
@@ -517,12 +535,20 @@ focused_lines() {
       fre = "(^|[^A-Za-z0-9_$.])fdescribe[ \t]*\\("
     }
     {
-      line = $0; sub(/\r$/, "", line); n = length(line)
-      if (n > 20000) { print "!" NR; next }
-      out = ""; i = 1; str = carry; carry = ""
+      # The characters come from one split: substr measures the whole line on every call in some awks,
+      # which makes a long line quadratic.
+      line = $0; sub(/\r$/, "", line); n = split(line, cs, "")
+      long = (n > 20000)
+      # A long line is searched only when it cannot hold a focus (see above); its output is cut down as
+      # it is built, keeping the end the next line is joined to.
+      if (long && (index(line, "only") || index(line, "fdescribe") || index(tail, "only") || index(tail, "fdescribe"))) { print "!" NR; next }
+      out = ""; i = 1; k = 0; str = carry; carry = ""
       if (tpl) str = "`"
       while (i <= n) {
-        c = substr(line, i, 1); d = substr(line, i + 1, 1)
+        if (long && ++k % 1000 == 0 && length(out) > 2000) {
+          gsub(/[ \t]+/, " ", out); if (length(out) > 400) out = substr(out, length(out) - 399)
+        }
+        c = cs[i]; d = cs[i + 1]
         if (block) {
           if (c == "*" && d == "/") { block = 0; out = out "  "; i += 2 } else { out = out " "; i++ }
           continue
@@ -542,7 +568,7 @@ focused_lines() {
           # A regular-expression literal: skip to its closing slash (not inside [...], not escaped).
           j = i + 1; incls = 0; e = 0
           while (j <= n) {
-            ch = substr(line, j, 1)
+            ch = cs[j]
             if (ch == "\\") { j += 2; continue }
             if (incls) { if (ch == "]") incls = 0 }
             else if (ch == "[") incls = 1
@@ -704,7 +730,7 @@ check_oracle_files() {
       printf '%s\n' "$found" | while IFS= read -r n; do
         case "$n" in
           '') ;;
-          '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters; it was not scanned for a focused test, so split the line" ;;
+          '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters and it, or the code just before it, holds the text only or fdescribe, so it was not scanned for a focused test; split the line" ;;
           '?') echo "9a: oracle file $path could not be scanned to the end (a comment or template literal is still open there, or a regular expression was read as one); fix it or split the file" ;;
           *) echo "9a: oracle file $path line $n holds a focused test (.only or fdescribe); it runs only that test and skips the rest, so the green means less than it says. Remove it and record the slice again with a bumped --oracle-version (rule 8)" ;;
         esac

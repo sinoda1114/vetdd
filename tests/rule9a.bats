@@ -184,11 +184,76 @@ record_oracle() {
   [ "$status" -eq 1 ]
 }
 
-@test "rule 9a fails closed on a line too long to scan, naming it" {
-  record_oracle a.test.ts "$(printf 'const x = "%030000d";' 0)"
+@test "rule 9a fails closed on a line too long to scan that holds a focus, naming it" {
+  record_oracle a.test.ts "$(printf 'const x = "%030000d"; it.only("x", () => {});' 0)"
   run check s1
   [ "$status" -eq 1 ]
   [[ "$output" == *"9a: oracle file a.test.ts line 1 is over 20000 characters"* ]]
+  rm -rf .vetdd
+  record_oracle a.test.ts "$(printf 'const x = "%030000d"; fdescribe("x", () => {});' 0)"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.ts line 1 is over 20000 characters"* ]]
+}
+
+# --- #7: a long line with no only or fdescribe text in it is not a FAIL ------------------------------
+
+# long_code <count>: one minified-looking line of <count> statements (9 characters each), then a
+# regular expression and a division, with no only or fdescribe text.
+long_code() {
+  printf 'f("a",1);%.0s' $(seq 1 "$1")
+  printf 'var r=/x/g,d=a/b;'
+}
+
+@test "rule 9a passes a minified line over 20000 characters that holds no only or fdescribe (#7)" {
+  record_oracle a.test.js "$(long_code 3000)"$'\nit("ok", () => {});'
+  run check s1
+  [ "$status" -eq 0 ] || { echo "${output:0:400}"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "rule 9a still finds a focused test on a short line after a long one (#7)" {
+  record_oracle a.test.js "$(long_code 3000)"$'\nit.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.js line 2 holds a focused test"* ]] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a reads the comments and templates a long line opens or closes (#7)" {
+  # The long line closes the comment opened above it: the focus after it is code.
+  record_oracle a.test.js $'/* start\n'"x */ $(long_code 3000)"$'\nit.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 3 holds a focused test"* ]] || { echo "${output:0:400}"; false; }
+  [[ "$output" != *"could not be scanned to the end"* ]] || { echo "${output:0:400}"; false; }
+  # The long line opens a template literal: the focus inside it is text.
+  rm -rf .vetdd
+  record_oracle a.test.js "$(long_code 3000) const t = \`"$'\nit.only("x");\n`;\nit("ok", () => {});'
+  run check s1
+  [ "$status" -eq 0 ] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a sees a focused call split across the end of a long line (#7)" {
+  record_oracle a.test.js "$(long_code 3000) it"$'\n.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 2 holds a focused test"* ]] || { echo "${output:0:400}"; false; }
+  # A focus the line before left open (it.only, then its call on the long line) is not let through.
+  rm -rf .vetdd
+  record_oracle a.test.js $'it.only\n'"(\"x\", () => {}); $(long_code 3000)"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.js line 2 "* ]] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a reads a line of 450000 characters in linear time, not quadratic (#7)" {
+  # Reading each character with substr costs about 4 seconds at 400000 (macOS awk 20200816, which
+  # measures the whole line on every call); the scan reads them from one split instead.
+  record_oracle a.test.js "$(long_code 50000)"
+  local start=$SECONDS
+  run check s1
+  [ "$status" -eq 0 ] || { echo "${output:0:400}"; false; }
+  [ $((SECONDS - start)) -lt 10 ]
 }
 
 @test "rule 9a fails when the scanner itself fails, never OK (A3)" {
