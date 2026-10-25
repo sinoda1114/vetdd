@@ -1,0 +1,124 @@
+version: 2
+
+goal:
+  title: "2026-10-24 計画の残りを最後まで"
+  slug: "plan1024-finish"
+  kind: existing_plan
+  tranche: "残り 5 パッケージのマージと Issue の整理"
+  status: done
+  intake:
+    original_request: "計画の残りを最後まで自動で終わらせる。確認はまとめ役が取り、マージの設定もまとめ役が行う。承認の要る変更のときだけ聞く。"
+    interpreted_outcome: "C・N・E2・G・K の PR がマージ済みで、Issue の整理が済んでいる。"
+    input_shape: existing_plan
+    audience: "篠田さん"
+    authority: approved
+    proof_type: artifact
+    completion_proof: "5 PR マージ済み（必須チェック緑、未解決スレッド 0、両 bash の全テスト緑）、マージごとの片付けと install.sh、#33・#18・#3・#1 の整理"
+    likely_misfire: "未解決スレッドや自動マージの取り消しで止まったまま完了と言う"
+    blind_spots_considered:
+      - "作業担当の gh pr merge --auto は許可の判定で止められることがある: まとめ役が設定する"
+      - "遅れて届く bot スレッド"
+      - "main が進むたびの載せ直し"
+    existing_plan_facts:
+      - "worker-brief.md の手順"
+      - "同時に 3 本まで"
+      - "check-evidence.sh を触るものは N -> G -> K、E2 は B・D の後（済み）"
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 3   # 実装は作業担当（サブエージェント）。まとめ役は監督とマージのみ
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  continuous_until_full_outcome: true
+
+agents:
+  scout: unknown
+  worker: "subagent (general-purpose, worker-brief.md)"
+  judge: unknown
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: pm
+    assignee: PM
+    status: done
+    objective: "C rubric v5（#97）: v7 の条件を戻した再較正・受け入れの記録の後、まとめ役が自動マージを設定してマージを見届け、片付けと install.sh。"
+    receipt:
+      result: done
+      summary: "#97 を 2026-10-25T03:17Z に squash マージ。必須チェック緑、未解決スレッド 0、全テスト bash 5・3.2 とも 1346/1346。v7 に要件と証拠の対応を戻し再較正、baseline 差し替え、受け入れを記録。片付けと install.sh 済み。"
+      evidence: ["gh pr view 97", "evals/final-judge-dogfood/runs/20261025-1033-v7-cal1/synthesis.md"]
+  - id: T002
+    type: pm
+    assignee: PM
+    status: done
+    objective: "N 規則 9a（作業担当が進行中）: PR をマージまで見届け、片付けと install.sh。"
+    receipt:
+      result: done
+      summary: "#107 を 2026-10-25T07:20Z に squash マージ（Closes #7）。必須チェック緑（PR の CI は #106 入りの main と合わせて実行）、未解決スレッド 0、全テスト bash 5・3.2 とも 1356/1356。残りは #105。片付けと install.sh 済み。"
+      evidence: ["gh pr view 107"]
+  - id: T003
+    type: pm
+    assignee: PM
+    status: done
+    objective: "E2 planted の記録（作業担当が進行中）: PR をマージまで見届け、片付けと install.sh。"
+    receipt:
+      result: done
+      summary: "#106 を 2026-10-25T06:42Z に squash マージ（Closes #62）。スキーマの差分は承認済みの planted 欄のみ。必須チェック緑、未解決スレッド 0、全テスト bash 5・3.2 とも 1376/1376。残りは #104。片付けと install.sh 済み。"
+      evidence: ["gh pr view 106", "skills/vetdd/schemas/evidence.schema.json"]
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "G 見捨てたスライス（#42、#33 の残り、#11 の残り）: worktree.sh abandon と abandoned 印。N のマージ後に起動。"
+    allowed_files: [skills/vetdd/scripts/worktree.sh, skills/vetdd/scripts/check-evidence.sh, skills/vetdd/scripts/stall.sh, skills/vetdd/scripts/judge-layout.sh, skills/vetdd/scripts/evidence.sh, skills/vetdd/parallel/swarm.md, skills/vetdd/parallel/arena.md, skills/vetdd/parallel/stall.md, tests/]
+    verify: ["bats tests (bash 5)", "bats tests (bash 3.2, en_US.UTF-8)", "/ai-review rounds"]
+    stop_if: ["承認済みの abandoned 印以外の形が要る", "検証が 2 回続けて失敗"]
+    receipt:
+      result: done
+      summary: "#111 を squash マージ（Part of #42・#11）。承認済みの abandoned 印のみ（meta.json とスキーマは変更なし）。必須チェック緑、未解決スレッド 0、全テスト bash 5・3.2 とも 1449/1449。bot の待ち時間（15 分）経過後にマージ。残りは #110（amazon-q の git log の件を追記）。片付けと install.sh 済み。"
+      evidence: ["gh pr view 111"]
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "K 記録の固め（#9、#12、#46、#3）: 承認済みの (a) oracle_versions 骨格 (b) stub の audit.files (c) outcome_forced と infra_exits、形を変えない hardening。E2 と G のマージ後に起動。"
+    allowed_files: [skills/vetdd/scripts/, skills/vetdd/schemas/, tests/]
+    verify: ["bats tests (bash 5)", "bats tests (bash 3.2, en_US.UTF-8)", "/ai-review rounds"]
+    stop_if: ["承認済みの (a)(b)(c) 以外の形が要る", "検証が 2 回続けて失敗"]
+    receipt:
+      result: done
+      summary: "#109 を squash マージ（Part of #9・#12・#46）。スキーマの差分は承認済みの (b) audit.files と (c) outcome_forced・infra_exits、(a) は骨格（説明文のみ）。必須チェック緑、未解決スレッド 0、全テスト bash 5・3.2 とも 1412/1412。残りは #108。片付けと install.sh 済み。"
+      evidence: ["gh pr view 109", "skills/vetdd/schemas/evidence.schema.json", "skills/vetdd/scripts/lib/meta.sh"]
+  - id: T006
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Issue の整理: #33・#18・#3・#1 は中身を移してから閉じる。直った項目にチェック（#14 #16 #40 #42 #46 #56 #62 #12 #28）。"
+    status_note: done
+    receipt:
+      result: done
+      summary: "#33・#18・#3・#1 を閉じた（中身は #42・#102・#103・#72 ほか 12 件の Issue に移転）。#14・#16・#40・#42・#56・#12・#28 の済み項目にチェック、#62 はコメントで記録、#46 は変更なし。多数決の件は #95 にチェックボックス付きで記録。"
+      evidence: ["gh issue #102 (#18 の残り)", "gh issue #103 (#1 の強化提案)", "scratchpad/c/, scratchpad/tick/"]
+      ambiguity: "迷った項目はチェックせず残した（#28 の外部絶対パス、#16 の 2 件、#46 の Low 5、#12 の 2 件）。#3 の 7 件は「やらない」と判断し理由を記録"
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "最終 audit。5 パッケージのマージ、各完了条件、Issue の整理が揃ったか判定。"
+    receipt:
+      result: done
+      decision: complete
+      full_outcome_complete: true
+      summary: "5 PR（#97・#106・#107・#109・#111）がマージ済み。どれも必須チェック（ci / build・bats-bash32・fixture）緑、未解決スレッド 0、作業担当の全テストは bash 5・3.2 とも緑。マージごとに worktree とブランチを片付け、main を pull、install.sh で入れ直し済み（~/.claude/skills/vetdd は main の skills/vetdd と diff -rq で一致）。#33・#18・#3・#1 は中身を移して閉じた。最後の main 5afe44b の CI（CI・vetdd extra）も緑。"
+      evidence: ["gh pr view 97 106 107 109 111", "git worktree list (main のみ)", "diff -rq skills/vetdd ~/.claude/skills/vetdd (差分なし)", "gh run list --branch main (5afe44b success)"]
+      remaining_outside_scope: ["各パッケージの第 3 周の残り: #95 #96 #98 #104 #105 #108 #110 ほか", "古い手元のブランチ feat/test-report-counts, feat/verify（この計画の外）"]
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: unknown
+    task: null
+    commands: []
