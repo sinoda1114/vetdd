@@ -201,6 +201,17 @@
             }
           ]
         },
+        "planted": {
+          "description": "What was planted for this calibration run, set by calibrate.sh planted only (evidence.sh --planted, an internal option): patch is the copy, relative to the slice directory, of the diff from the originals plant saved to the planted files; sha256 is of that copy (check-evidence rule 12); files are the repository paths the patch changes. A calibration without it is an unfix, a plain run, or evidence from before the field.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["patch", "sha256", "files"],
+          "properties": {
+            "patch": { "type": "string", "pattern": "^runs/[0-9]{3,}-planted\\.patch$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "files": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+          }
+        },
         "tests": {
           "description": "Counts from the runner's report (evidence.sh --test-report). Never changes the outcome. Absent when no report was asked for.",
           "anyOf": [

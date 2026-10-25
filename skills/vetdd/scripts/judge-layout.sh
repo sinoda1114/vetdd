@@ -42,8 +42,10 @@
 #   <dir>/c1/evidence/<slice>/meta.json   each slice's record
 #   <dir>/c1/evidence/<slice>/runs/...    its red-run logs (accepted before or calibration runs that ended
 #                                         target_failure, the undefined-imports audit included, the mutation
-#                                         audit not) and the copy of the mutation report check-evidence rule
-#                                         10c judges (the latest mutation run after the final green, of the
+#                                         audit not), runs/<seq>-planted.patch next to a red that
+#                                         calibrate.sh planted (what was planted, check-evidence rule 12),
+#                                         and the copy of the mutation report check-evidence rule 10c
+#                                         judges (the latest mutation run after the final green, of the
 #                                         final oracle, when its report is usable); green logs stay here
 # <dir> must be outside the repository or under its .vetdd/ (anywhere else, its own files would change
 # the tree check-evidence hashes). Every copied text file has the repository's absolute path, as a whole
@@ -78,6 +80,7 @@ die() {
 
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
+. "$here/lib/tree-hash.sh"  # vetdd_sha256
 vetdd_require_jq judge-layout.sh
 
 out=""; reply=""; base=""; slices=(); allow=(); binaries=(); news=(); ce_opts=(); awords=(); varts=(); lane=0
@@ -327,6 +330,55 @@ while IFS= read -r -d '' rec; do
   [ "$ok" -eq 1 ] || unallowed="$unallowed $path"
 done < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --numstat -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd')
 [ -z "$unallowed" ] || die "binary changes in the diff:$(printf '%s' "$unallowed" | vetdd_printable); name each one a human allowed to leave with --allow-binary <path>"
+# A planted red's patch (calibrate.sh plant and planted) goes with its log, so it gets the diff's
+# rules: it must match the sha256 its record holds (check-evidence rule 12), a .env file in it never
+# goes, a binary change in it only when named with --allow-binary, a file git ignores now never, and a
+# file not in HEAD only when it goes in the diff as a new file. A file the diff does not change is
+# named on stderr (its planted lines leave with the patch). Paths are read as git reads the patch (and
+# - - for a binary change); a missing patch stops the copy below.
+PLANTED_SENT='
+[.runs[] | select(type == "object" and (.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
+                  and (.audit.kind? // "") != "mutation" and has("planted") and (.seq | type) == "number")
+ | "runs/" + (.seq | floor | tostring | if length < 3 then ("00" + .)[-3:] else . end) + "-planted.patch"
+   + "\t" + (.planted | if type == "object" and (.sha256 | type) == "string" then .sha256 else "-" end)] | .[]'
+penvs=""; pbins=""; pgone=""
+indiff="$tmpd/indiff"
+GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --name-only -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd' > "$indiff" \
+  || die "git diff failed" 1
+for s in "${slices[@]}"; do
+  plist="$(jq -r "$PLANTED_SENT" "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)" \
+    || die "could not read the evidence of slice $s (its meta.json is malformed)" 1
+  while IFS="$(printf '\t')" read -r p psum; do
+    [ -n "$p" ] || continue
+    rel=".vetdd/evidence/$s/$p"
+    vetdd_inside_repo "$root" "$rel" && [ -f "$root/$rel" ] || continue  # missing: the copy below stops on it
+    [ "$(vetdd_sha256 "$root/$rel")" = "$psum" ] \
+      || die "$(printf 'the planted patch %s of slice %s does not match the sha256 its record holds (check-evidence rule 12); take the red again (calibrate.sh plant and planted)' "$p" "$s" | vetdd_printable)" 1
+    nslist="$tmpd/planted-numstat"
+    git -C "$root" -c apply.whitespace=nowarn apply --numstat -z -- "$root/$rel" > "$nslist" 2>/dev/null \
+      || die "$(printf 'the planted patch %s of slice %s cannot be read as a patch; take the red again (calibrate.sh plant and planted)' "$p" "$s" | vetdd_printable)" 1
+    while IFS= read -r -d '' rec; do
+      added="${rec%%$'\t'*}"; rest="${rec#*$'\t'}"; removed="${rest%%$'\t'*}"; path="${rest#*$'\t'}"
+      if is_env "$path"; then penvs="$penvs $s:$path"; continue; fi
+      rc=0; GIT_LITERAL_PATHSPECS=0 git -C "$root" check-ignore -q --no-index -- "./$path" 2>/dev/null || rc=$?
+      [ "$rc" -le 1 ] || die "$(printf 'git check-ignore failed on %s of a planted patch (exit %s)' "$path" "$rc" | vetdd_printable)" 1
+      [ "$rc" -ne 0 ] || { pgone="$pgone $path (git ignores it now)"; continue; }
+      if ! GIT_LITERAL_PATHSPECS=1 git -C "$root" cat-file -e "HEAD:$path" 2>/dev/null; then
+        ok=0; for f in ${newfiles[@]+"${newfiles[@]}"}; do [ "$f" = "$path" ] && ok=1; done
+        [ "$ok" -eq 1 ] || { pgone="$pgone $path (not in HEAD and not a new file of the diff)"; continue; }
+      fi
+      if ! tr '\0' '\n' < "$indiff" | grep -qxF -- "$path"; then
+        printf 'judge-layout.sh: the planted patch of slice %s holds lines of %s, which the diff does not change\n' "$s" "$path" | vetdd_printable >&2
+      fi
+      [ "$added" = - ] && [ "$removed" = - ] || continue
+      ok=0; for b in ${binaries[@]+"${binaries[@]}"}; do [ "$b" = "$path" ] && ok=1; done
+      [ "$ok" -eq 1 ] || pbins="$pbins $path"
+    done < "$nslist"
+  done <<< "$plist"
+done
+[ -z "$penvs" ] || die "$(printf 'a .env file may hold secrets and never goes to the judge, and a planted patch holds one:%s\ntake that red again with the defect planted in another file' "$penvs" | vetdd_printable)"
+[ -z "$pgone" ] || die "$(printf 'a planted patch holds a file that does not go to the judge:%s\ntake that red again with the defect planted in a file that goes' "$pgone" | vetdd_printable)"
+[ -z "$pbins" ] || die "binary changes in a planted patch:$(printf '%s' "$pbins" | vetdd_printable); name each one a human allowed to leave with --allow-binary <path>"
 # The verify artifacts, all checked before anything is written: each --verify-artifacts path is a plain
 # path at or under .vetdd/artifacts/ (where the verify scripts write them), inside the repository with
 # no link on the way; every entry below it must be a directory or a regular file, and no .env file.
@@ -430,7 +482,11 @@ def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array";
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
 | ([.oracle.files[]? | .path | strings] | map("O\t" + .))
   + ([$all[] | select((.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
-                      and (.audit.kind? // "") != "mutation") | .log | strings] | map("L\t" + .))
+                      and (.audit.kind? // "") != "mutation")
+       # A planted red goes with what was planted, named from its own seq (check-evidence rule 12).
+       | (.log | strings), (select(has("planted") and (.seq | type) == "number")
+                            | "runs/" + (.seq | floor | tostring | if length < 3 then ("00" + .)[-3:] else . end) + "-planted.patch")]
+     | map("L\t" + .))
   + (if $g == null then [] else
        ([$acc[] | select(.kind == "calibration" and .audit.kind? == "mutation" and .seq > $g.seq and oid == ($g | oid))]
         | sort_by(.seq) | last) as $m
@@ -456,7 +512,7 @@ for s in "${slices[@]}"; do
         # Named only by the runs/<seq>-<kind> pattern, and read only from inside the repository.
         # A red-run log the record names must be there: without it the judge cannot see why the oracle failed.
         bad="the record of $s names $(printf '%s' "$p" | vetdd_printable), which"
-        case "$p" in runs/[0-9][0-9][0-9]*-*.log|runs/[0-9][0-9][0-9]*-mutation.json) ;; *) die "$bad is not a runs/<seq>-<kind> file" 1 ;; esac
+        case "$p" in runs/[0-9][0-9][0-9]*-*.log|runs/[0-9][0-9][0-9]*-mutation.json|runs/[0-9][0-9][0-9]*-planted.patch) ;; *) die "$bad is not a runs/<seq>-<kind> file" 1 ;; esac
         case "$p" in */../*|*/./*) die "$bad is not a runs/<seq>-<kind> file" 1 ;; esac
         rel=".vetdd/evidence/$s/$p"
         vetdd_inside_repo "$root" "$rel" && [ -f "$root/$rel" ] || die "$bad is missing, a link, or outside the repository" 1

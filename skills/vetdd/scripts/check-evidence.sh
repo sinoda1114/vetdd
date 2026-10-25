@@ -87,6 +87,12 @@
 #               default K = 2) than handovers is a WARN, not a FAIL: the agreement can change K, and
 #               a worker reports a stall rather than writing the handover. A tripwire, not a boundary:
 #               it checks that the diagnosis was written down, not that it is right.
+# Planted:  (12) every run that records what was planted (planted: {patch, sha256, files}, written by
+#               calibrate.sh planted) is a calibration whose patch is runs/<seq>-planted.patch, named from
+#               its own seq, with a sha256 and at least one file; the copy is there (not a link) and
+#               matches the recorded sha256, as rule 10c checks the mutation report's copy. A run without
+#               the field (an unfix, a plain calibration, evidence from before it) is not asked. A
+#               tripwire, not a boundary: a copy and its sha256 both rewritten by hand pass it.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
 #         "<slice>: WARN (9c|10c|11: <reason>)" line per warning (advice for the reply's Attention section;
 #         it holds no recorded text).
@@ -402,6 +408,21 @@ COMMAND_FILTERS='
         end
     end'
 
+# Rule 12, one line per run that carries planted: "<seq>\t<sha256>\tok" when the record has the shape
+# calibrate.sh writes (the patch named from the run's own seq), "<seq>\t-\tbad" when not, "?" for a seq
+# that is not a run number (the copy's name is made from it, so nothing is opened).
+PLANTED_RUNS='
+  .runs[] | select(type == "object" and has("planted"))
+  | if (.seq | type) == "number" and .seq >= 1 and .seq < 1000000 and .seq == (.seq | floor) then
+      (.seq | floor | tostring) as $s
+      | ("runs/" + (if ($s | length) < 3 then ("00" + $s)[-3:] else $s end) + "-planted.patch") as $want
+      | if .kind == "calibration" and (.planted | type) == "object" and .planted.patch == $want
+           and (.planted.sha256 | type) == "string" and (.planted.sha256 | test("^[0-9a-f]{64}$"))
+           and (.planted.files | type) == "array" and (.planted.files | length) > 0
+           and all(.planted.files[]; type == "string" and length > 0)
+        then "\($s)\t\(.planted.sha256)\tok" else "\($s)\t-\tbad" end
+    else "?" end'
+
 # Warnings (rule 9c) travel in a file, apart from the problems that decide pass or fail.
 warn_file="$(mktemp "${TMPDIR:-/tmp}/check-evidence.XXXXXX")" || die "cannot create a temporary file"
 trap 'rm -f "$warn_file"' EXIT
@@ -597,6 +618,27 @@ check_slice() {
   jq -r --arg slice "$slice" "$AUDIT_RULES" "$meta" 2>/dev/null || echo "10: could not evaluate the undefined-imports audit (a run's audit record or the audits log is malformed)"
   check_mutation "$slice" "$meta"
   check_stall "$slice" "$meta"
+  check_planted "$slice" "$meta"
+}
+
+# Rule 12: the copy of each planted patch, named from the run's seq, never from a path in the record.
+check_planted() {
+  local slice="$1" meta="$2" list seq sum how rel tab
+  tab="$(printf '\t')"
+  list="$(jq -r "$PLANTED_RUNS" "$meta" 2>/dev/null)" \
+    || { echo "12: could not evaluate the planted records (a run record is malformed)"; return; }
+  [ -n "$list" ] || return 0
+  while IFS="$tab" read -r seq sum how; do
+    if [ "$seq" = "?" ]; then echo "12: a run that records a planted patch has a malformed seq"; continue; fi
+    if [ "$how" != ok ]; then
+      echo "12: run $seq records a planted patch that is not what calibrate.sh planted writes (a calibration run with planted: {patch: runs/<seq>-planted.patch, sha256, files}); take the red again with calibrate.sh plant and planted"
+      continue
+    fi
+    rel=".vetdd/evidence/$slice/runs/$(printf '%03d' "$seq")-planted.patch"
+    if ! vetdd_inside_repo "$root" "$rel" || [ ! -f "$root/$rel" ] || [ "$(vetdd_sha256 "$root/$rel")" != "$sum" ]; then
+      echo "12: the planted patch of calibration run $seq is missing or does not match the sha256 recorded for it (or is a link); take the red again with calibrate.sh plant and planted"
+    fi
+  done <<< "$list"
 }
 
 # Rule 11: one handover per stall in the record, each with every heading.

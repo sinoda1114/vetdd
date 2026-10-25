@@ -4,6 +4,7 @@
 #                    [--oracle-version <v>] [--oracle-file <path>]... [--test-report jest-json:<path>]
 #                    [--audit undefined-imports | --audit mutation --mutation-report stryker-json:<path>]
 #                    -- <command...>
+#        (--planted <patch> is calibrate.sh planted's own; see below)
 #        evidence.sh <slice-id> integrated --rerun [--test-report jest-json:<path>]
 #          runs the unit's command the swarm parent gave `worktree.sh add <slice> -- <command>`
 #          (recorded in the git directory at $GIT_COMMON_DIR/vetdd-swarm/<slice>.cmd, outside any
@@ -32,6 +33,15 @@
 #   run is never a red. It never changes the outcome. A report that is not usable is recorded invalid,
 #   with a warning that says why (lib/mutation-report.sh: a report over 64 MiB, one with another hard
 #   link, a runner that is not one of Stryker's, a --mutate entry that is not <file>:<first>-<last>, ...).
+# --planted <patch>: an internal option of `calibrate.sh planted` (calibration runs only, not with
+#   --audit): the patch must be <git dir>/vetdd-calib/<slice>/planted.patch while that slice's planted
+#   run is going (its state in plant mode, the run claimed, and its pid file naming the process that
+#   runs evidence.sh), so no other caller sets it by accident: a tripwire, not a boundary (anyone who
+#   can write the git dir or meta.json can forge either). The patch
+#   (what was planted: the diff from the saved originals to the planted files) is copied to
+#   runs/<seq>-planted.patch before the command runs, and the run gets planted: {patch, sha256, files},
+#   the copy's path in the slice directory, its sha256, and the repository paths the patch changes
+#   (check-evidence rule 12 checks the copy). It is validated before the command runs.
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -54,7 +64,7 @@ case "$kind" in
 esac
 
 outcome_opt=""; seam_opt=""; seam_set=0; version_opt=""; version_set=0; infra_exits=" 126 127 "
-oracle_files=(); report_opt=""; audit_opt=""; mreport_opt=""; mreport_set=0; rerun=0
+oracle_files=(); report_opt=""; audit_opt=""; mreport_opt=""; mreport_set=0; rerun=0; planted_opt=""; planted_set=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --outcome) [ $# -ge 2 ] || die "--outcome needs a value"; outcome_opt="$2"; shift 2 ;;
@@ -76,6 +86,8 @@ while [ $# -gt 0 ]; do
     --mutation-report) [ $# -ge 2 ] || die "--mutation-report needs stryker-json:<path>"
       case "$2" in stryker-json:?*) mreport_opt="${2#stryker-json:}"; mreport_set=1 ;; *) die "--mutation-report takes stryker-json:<path>" ;; esac
       shift 2 ;;
+    --planted) [ $# -ge 2 ] || die "--planted needs the patch calibrate.sh planted made (an internal option of calibrate.sh)"
+      planted_opt="$2"; planted_set=1; shift 2 ;;
     --rerun) rerun=1; shift ;;
     --) shift; break ;;
     *) die "unexpected argument '$1' (put the command after --)$(vetdd_split_hint "$1")" ;;
@@ -92,6 +104,10 @@ if [ "$audit_opt" = mutation ]; then
   [ "$mreport_set" -eq 1 ] || die "--audit mutation needs --mutation-report stryker-json:<path>"
 elif [ "$mreport_set" -eq 1 ]; then
   die "--mutation-report goes with --audit mutation only"
+fi
+if [ "$planted_set" -eq 1 ]; then
+  [ "$kind" = calibration ] || die "--planted goes with a calibration run only (it is calibrate.sh planted's)"
+  [ -z "$audit_opt" ] || die "--planted does not go with --audit"
 fi
 case "$outcome_opt" in
   ""|pass|target_failure|infrastructure_error|inconclusive) ;;
@@ -160,6 +176,38 @@ if [ -n "$mreport_opt" ]; then
   [ "$(printf '%s' "$mreport_rel" | LC_ALL=C tr 'A-Z' 'a-z')" != "$(printf '%s' "$report_rel" | LC_ALL=C tr 'A-Z' 'a-z')" ] \
     || die "--mutation-report and --test-report must be different files (compared ignoring letter case)"
 fi
+# planted_files <patch>: the repository paths the patch changes, as a JSON array, as git reads it.
+# Returns 1 when git cannot read it, 2 when it names no file or one with a control character.
+planted_files() {
+  local out
+  out="$(git -C "$root" -c apply.whitespace=nowarn apply --numstat -z -- "$1" 2>/dev/null \
+    | jq -cRs 'split("\u0000") | .[:-1] | map(sub("^[^\t]*\t[^\t]*\t"; ""))
+      | if length > 0 and all(.[]; length > 0 and (explode | all(. > 31 and (. < 127 or . > 159)))) then . else error("names") end' 2>/dev/null
+    st=("${PIPESTATUS[@]}"); [ "${st[0]}" -eq 0 ] || exit 1; [ "${st[1]}" -eq 0 ] || exit 2)" || return $?
+  printf '%s\n' "$out"
+}
+# --planted: only the patch of this slice's planted run that is going now (calibrate.sh planted holds
+# its state in plant mode and has claimed the run), read as git reads it, naming repository paths.
+planted_files_json=""
+if [ "$planted_set" -eq 1 ]; then
+  pnot="--planted takes only the patch calibrate.sh planted makes for slice $slice while its run is going"
+  gdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$gdir" ] || die "$pnot (cannot locate the git dir)"
+  pstate="$(cd "$gdir/vetdd-calib/$slice" 2>/dev/null && pwd -P)" || die "$pnot"
+  case "$planted_opt" in */*) pdir="${planted_opt%/*}" ;; *) pdir=. ;; esac
+  pdir="$(cd "${pdir:-/}" 2>/dev/null && pwd -P)" || die "$pnot"
+  [ "$pdir" = "$pstate" ] && [ "${planted_opt##*/}" = planted.patch ] || die "$pnot"
+  [ "$(cat "$pstate/mode" 2>/dev/null)" = plant ] && [ -d "$pstate/run.lock" ] && [ ! -L "$pstate/run.lock" ] || die "$pnot"
+  # calibrate.sh planted writes its pid there and runs this script itself.
+  [ "$(cat "$pstate/pid" 2>/dev/null)" = "$PPID" ] || die "$pnot (it is not the process running this one)"
+  ppatch="$pstate/planted.patch"
+  [ -f "$ppatch" ] && [ ! -L "$ppatch" ] && [ -s "$ppatch" ] || die "$pnot (it is missing, empty, or a link)"
+  rc=0; planted_files_json="$(planted_files "$ppatch")" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) die "$pnot (git cannot read it as a patch)" ;;
+    *) die "$pnot (it names no file, or a file name with a control character)" ;;
+  esac
+fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
 # Every directory on the way is the repository's own: a link would send the record (and the parent's
@@ -198,6 +246,23 @@ fi
 if [ -n "$mreport_rel" ]; then
   rm -f -- "$root/$mreport_rel" || die "cannot remove the stale mutation report $mreport_rel"
   mkdir -p -- "$(dirname -- "$root/$mreport_rel")" || die "cannot create the directory for $mreport_rel"
+fi
+# The planted patch goes next to the log before the command runs; its sha256 is taken now, so a
+# command that changes the copy leaves a record check-evidence fails (rule 12).
+planted_json=null
+if [ "$planted_set" -eq 1 ]; then
+  prel="runs/$(printf '%03d' "$seq")-planted.patch"
+  # Read once, into a name nobody can predict: the record (files, sha256) is made from that copy, and the
+  # source must still be the regular file it was. Then whatever is at the target (a link, to a file or
+  # a directory, which mv would move the copy into) is removed first, so nothing is written through it.
+  ptmp="$(mktemp "$dir/runs/planted.XXXXXX")" || die "cannot create a temporary file in $dir/runs"
+  if ! { cp -- "$ppatch" "$ptmp" && [ -f "$ppatch" ] && [ ! -L "$ppatch" ] && cmp -s "$ppatch" "$ptmp" \
+         && [ "$(planted_files "$ptmp")" = "$planted_files_json" ] && psum="$(vetdd_sha256 "$ptmp")" \
+         && chmod "$(vetdd_file_mode)" "$ptmp" && rm -f -- "$dir/$prel" && [ ! -e "$dir/$prel" ] && [ ! -L "$dir/$prel" ] \
+         && mv -f -- "$ptmp" "$dir/$prel" && [ -f "$dir/$prel" ] && [ ! -L "$dir/$prel" ]; }; then
+    rm -f -- "$ptmp"; die "could not copy the planted patch to $prel (the patch changed, or $prel could not be replaced)"
+  fi
+  planted_json="$(jq -cn --arg p "$prel" --arg s "$psum" --argjson f "$planted_files_json" '{patch: $p, sha256: $s, files: $f}')"
 fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$@" 2>&1 | tee "$dir/$log_rel"
@@ -275,7 +340,7 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
   --arg started_at "$started_at" --arg ended_at "$ended_at" --arg log "$log_rel" \
   --arg head_sha "$head_sha" --arg tree_hash "$tree_hash" \
   --arg cwd "$cwd_rel" --arg node_version "$node_version" \
-  --argjson audit "$audit_json" \
+  --argjson audit "$audit_json" --argjson planted "$planted_json" \
   --argjson seam_set "$seam_set" --arg seam "$seam_opt" \
   --argjson version_set "$version_set" --arg version "$version_opt" \
   --argjson files "$files_json" --argjson tests "$tests_json" '
@@ -297,7 +362,8 @@ jq --argjson seq "$seq" --arg kind "$kind" --argjson exit_code "$exit_code" \
       },
       oracle: $oracle
     } + (if $tests == null then {} else {tests: $tests} end)
-      + (if $audit == null then {} else {audit: $audit} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
+      + (if $audit == null then {} else {audit: $audit} end)
+      + (if $planted == null then {} else {planted: $planted} end)]' --argjson cmd "$cmd_json" < "$meta" > "$tmp_meta" && chmod "$(vetdd_file_mode)" "$tmp_meta" && mv "$tmp_meta" "$meta" || {
   rm -f "$tmp_meta"; die "could not update $meta"
 }
 
