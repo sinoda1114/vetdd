@@ -10,9 +10,13 @@
 # passing `after` (a version with none yet passes its start on to the next); last the working tree
 # now (with untracked files, as evidence.sh hashes it). The lines `git blame` gives to an `after`
 # commit are the slice's; lines that arrived between versions or since
-# are not, and an `after` recorded again within a version moves nothing. A slice without a `before`
-# starts at its red when calibrate.sh unfix took it, and otherwise (a refactor, a behavior-preserving
-# change) has one step, its first passing `after` to its last. The lines each step wrote are taken
+# are not, and an `after` recorded again within a version moves nothing. A version whose red
+# calibrate.sh planted (its run records planted: {patch, sha256, files}) starts at that red's tree
+# before the plant (the planted patch taken back out), so the line its `after` puts back is not the
+# slice's. A slice without a `before` starts at its red when calibrate.sh unfix took it (a red with no
+# planted record whose changed files hold HEAD's content: an older planted red without the record can
+# be taken for one), and otherwise (a refactor, a behavior-preserving change, its red planted) has one
+# step, its first passing `after` to its last. The lines each step wrote are taken
 # exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10 -C10, so
 # another slice between two versions, a later slice, or a refactor moves the lines without adding its
 # own (a line only reindented or moved, also to another file named with --file or copied into a new
@@ -151,9 +155,9 @@ shape="$(jq -r '
     else
       [$r[] | select(ok)] as $a
       | (if ($a | length) == 0 then null else ([$r[] | select(red and .seq < $a[0].seq)] | first) end) as $c
-      | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val)"
+      | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val) \(if $c != null and ($c | has("planted")) then "planted" else "-" end)"
     end' "$meta")" || die "cannot read the runs of $rel"
-read -r kind n_after a0t a0s alt als ct cs ch <<EOF
+read -r kind n_after a0t a0s alt als ct cs ch cp <<EOF
 $shape
 EOF
 first=""; refactor=0; why="it has no red calibration before its first passing after"
@@ -163,8 +167,11 @@ else
   if [ "$ct" != - ] && [ "$n_after" -ge 1 ]; then
     check_tree "$ct" "red calibration (run $cs)"
     check_tree "$a0t" "after run (run $a0s)"
+    # A red calibrate.sh planted says so on the run (planted: {patch, sha256, files}); only a red
+    # without that record (an unfix, a plain run, or evidence from before it) is compared with HEAD.
+    if [ "$cp" = planted ]; then why="its red calibration (run $cs) was planted (calibrate.sh plant and planted, as its record says)"
     # The after that follows the red: the first passing after.
-    if unfix_red "$ct" "$a0t" "$ch"; then first="$cs"
+    elif unfix_red "$ct" "$a0t" "$ch"; then first="$cs"
     else why="its red calibration (run $cs) is not an unfix red: $unfix_why"; fi
   fi
   if [ -z "$first" ]; then
@@ -187,7 +194,9 @@ else
     def ver: .oracle.version | tojson;
     def red: (.kind == "before" and .accepted != false)
       or (.kind == "calibration" and .accepted != false and .outcome == "target_failure" and .audit == null);
-    def line($s; $e): "\($s.tree.tree_hash | tostring) \($s.seq | tostring) \($e.tree.tree_hash | tostring) \($e.seq | tostring)";
+    # A start that calibrate.sh planted carries the sha256 of its planted patch, so its tree before the
+    # plant can be rebuilt; "-" for any other.
+    def line($s; $e): "\($s.tree.tree_hash | tostring) \($s.seq | tostring) \($e.tree.tree_hash | tostring) \($e.seq | tostring) \(if ($s | has("planted")) then ($s.planted.sha256? // "?" | tostring) else "-" end)";
     [.runs | sort_by(.seq)[] | select(.seq >= $first)] as $rs
     | $rs[0] as $b
     | (reduce ($rs[] | ver) as $v ([]; if any(.[]; . == $v) then . else . + [$v] end)) as $vs
@@ -200,10 +209,29 @@ else
     | if ($st.out | length) == 0 then "none" else $st.out[] end' "$meta")" || die "cannot read the runs of $rel"
   [ "$segments" != none ] || die "slice '$slice' has no accepted after run with outcome pass after its red: its change is not on file"
 fi
+# unplanted <tree> <seq> <sha256>: the tree of planted run <seq> before the plant: its planted patch
+# (runs/<seq>-planted.patch, as check-evidence rule 12 checks it) taken back out of <tree> in a
+# throwaway index. Dies when the patch is missing, changed, or does not apply.
+unplanted() {
+  local p=".vetdd/evidence/$slice/runs/$(printf '%03d' "$2")-planted.patch"
+  vetdd_inside_repo "$root" "$p" && [ -f "$p" ] && [ "$(vetdd_sha256 "$p")" = "$3" ] \
+    || die "the planted patch of run $2 of slice '$slice' ($p) is missing or does not match its record (check-evidence rule 12): the tree before the plant cannot be rebuilt"
+  rm -f "$tmp/unplant.idx"
+  GIT_INDEX_FILE="$tmp/unplant.idx" git read-tree "$1" \
+    && GIT_INDEX_FILE="$tmp/unplant.idx" git -c apply.whitespace=nowarn apply --cached -R --binary -- "$p" 2> "$tmp/unplant.err" \
+    && GIT_INDEX_FILE="$tmp/unplant.idx" git write-tree \
+    || die "the planted patch of run $2 of slice '$slice' does not apply to its tree: $(head -n 1 "$tmp/unplant.err" 2>/dev/null)"
+}
 seg_start=(); seg_sseq=(); seg_end=(); seg_eseq=()
-while read -r st ss et es; do
+while read -r st ss et es ps; do
   check_tree "$st" "run $ss"
   check_tree "$et" "run $es"
+  # A version that starts at a planted red starts at the tree before the plant: the line its after
+  # puts back is not the slice's (#74).
+  case "${ps:--}" in
+    -) ;;
+    *) st="$(unplanted "$st" "$ss" "$ps")" || exit 2 ;;
+  esac
   seg_start+=("$st"); seg_sseq+=("$ss"); seg_end+=("$et"); seg_eseq+=("$es")
 done <<EOF
 $segments

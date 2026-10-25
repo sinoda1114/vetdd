@@ -42,8 +42,10 @@
 #   <dir>/c1/evidence/<slice>/meta.json   each slice's record
 #   <dir>/c1/evidence/<slice>/runs/...    its red-run logs (accepted before or calibration runs that ended
 #                                         target_failure, the undefined-imports audit included, the mutation
-#                                         audit not) and the copy of the mutation report check-evidence rule
-#                                         10c judges (the latest mutation run after the final green, of the
+#                                         audit not), runs/<seq>-planted.patch next to a red that
+#                                         calibrate.sh planted (what was planted, check-evidence rule 12),
+#                                         and the copy of the mutation report check-evidence rule 10c
+#                                         judges (the latest mutation run after the final green, of the
 #                                         final oracle, when its report is usable); green logs stay here
 # <dir> must be outside the repository or under its .vetdd/ (anywhere else, its own files would change
 # the tree check-evidence hashes). Every copied text file has the repository's absolute path, as a whole
@@ -430,7 +432,11 @@ def usable: (.oracle | type) == "object" and (.oracle.files | type) == "array";
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
 | ([.oracle.files[]? | .path | strings] | map("O\t" + .))
   + ([$all[] | select((.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
-                      and (.audit.kind? // "") != "mutation") | .log | strings] | map("L\t" + .))
+                      and (.audit.kind? // "") != "mutation")
+       # A planted red goes with what was planted, named from its own seq (check-evidence rule 12).
+       | (.log | strings), (select(has("planted") and (.seq | type) == "number")
+                            | "runs/" + (.seq | floor | tostring | if length < 3 then ("00" + .)[-3:] else . end) + "-planted.patch")]
+     | map("L\t" + .))
   + (if $g == null then [] else
        ([$acc[] | select(.kind == "calibration" and .audit.kind? == "mutation" and .seq > $g.seq and oid == ($g | oid))]
         | sort_by(.seq) | last) as $m
@@ -456,7 +462,7 @@ for s in "${slices[@]}"; do
         # Named only by the runs/<seq>-<kind> pattern, and read only from inside the repository.
         # A red-run log the record names must be there: without it the judge cannot see why the oracle failed.
         bad="the record of $s names $(printf '%s' "$p" | vetdd_printable), which"
-        case "$p" in runs/[0-9][0-9][0-9]*-*.log|runs/[0-9][0-9][0-9]*-mutation.json) ;; *) die "$bad is not a runs/<seq>-<kind> file" 1 ;; esac
+        case "$p" in runs/[0-9][0-9][0-9]*-*.log|runs/[0-9][0-9][0-9]*-mutation.json|runs/[0-9][0-9][0-9]*-planted.patch) ;; *) die "$bad is not a runs/<seq>-<kind> file" 1 ;; esac
         case "$p" in */../*|*/./*) die "$bad is not a runs/<seq>-<kind> file" 1 ;; esac
         rel=".vetdd/evidence/$s/$p"
         vetdd_inside_repo "$root" "$rel" && [ -f "$root/$rel" ] || die "$bad is missing, a link, or outside the repository" 1

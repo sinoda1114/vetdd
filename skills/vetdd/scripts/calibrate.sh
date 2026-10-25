@@ -9,7 +9,9 @@
 #       Save <f>... and fingerprint the oracle and everything else, so a mutation can be planted.
 #   calibrate.sh planted <slice> --oracle-file <o>... [evidence options] -- <command...>
 #       Check the mutation is in <f>... only and the oracle is untouched, run the oracle, put the
-#       saved files and their index entries back.
+#       saved files and their index entries back. The run records what was planted: planted:
+#       {patch, sha256, files}, the diff from the saved originals to the planted files (only those
+#       that changed, with repository paths), kept at the slice's runs/<seq>-planted.patch.
 #   calibrate.sh stub    <slice> --file <product file>... --oracle-file <o>... [--oracle-version <v>]
 #                        [--seam <s>] [--infra-exit <code>] -- <command...>
 #       The undefined-imports audit (principle 4's quick check): replace every product file the oracle
@@ -409,12 +411,35 @@ write_stub() {
     && mv -f "$tmp" "$top/$f" && drop_pyc "$f" || { rm -f "$tmp"; return 1; }
 }
 
+# planted_patch: write $state/planted.patch, the diff from the originals plant saved to the files as
+# planted now (content and executable bit), with repository paths (a/ and b/), as git would show it:
+# each side is hashed with its path's attributes into a throwaway index of its own, and the two trees
+# are compared. Only the saved files that changed are in it. Non-zero when it cannot be made.
+planted_patch() {
+  local f side src mode h t0 t1
+  rm -f "$state/planted.patch" "$state/planted.0" "$state/planted.1"
+  while IFS= read -r f; do
+    for side in 0 1; do
+      if [ "$side" = 0 ]; then src="$state/copies/$f"; else src="$top/$f"; fi
+      if [ -x "$src" ]; then mode=100755; else mode=100644; fi
+      h="$(g hash-object -w --path="$f" -- "$src")" && [ -n "$h" ] || return 1
+      GIT_INDEX_FILE="$state/planted.$side" g update-index --add --cacheinfo "$mode,$h,$f" || return 1
+    done
+  done < "$state/files"
+  t0="$(GIT_INDEX_FILE="$state/planted.0" g write-tree)" && t1="$(GIT_INDEX_FILE="$state/planted.1" g write-tree)" || return 1
+  rm -f "$state/planted.0" "$state/planted.1"
+  g diff-tree -r -p --binary --full-index --no-renames --no-ext-diff --no-textconv --no-color \
+    --src-prefix=a/ --dst-prefix=b/ "$t0" "$t1" > "$state/planted.patch" && [ -s "$state/planted.patch" ]
+}
+
 audit=""  # undefined-imports while a stub run is going
+planted=0  # 1 while a planted run is going: its patch goes to evidence.sh with --planted
 run_oracle() {
   local meta="$top/.vetdd/evidence/$slice/meta.json" last rc outcome audit_opt=()
   # Python reads and writes bytecode only in an empty directory of its own while the stub is in place:
   # no cache of the original can be mistaken for the stub, and none of the stub outlives it (the state
   # directory goes with the run). PYTHONPYCACHEPREFIX redirects both, wherever the caller had put it.
+  [ "$planted" -eq 0 ] || audit_opt=(--planted "$state/planted.patch")
   if [ -n "$audit" ]; then
     audit_opt=(--audit "$audit")
     mkdir -p "$state/pycache" || { warn "cannot create $state/pycache"; return 1; }
@@ -522,6 +547,10 @@ case "$cmd" in
       if [ -x "$state/copies/$f" ]; then [ -x "$top/$f" ] || changed=1; else [ ! -x "$top/$f" ] || changed=1; fi
     done < "$state/files"
     [ "$changed" -eq 1 ] || die "no mutation was planted in the saved files"
+    # What was planted goes on the record (planted: {patch, sha256, files}), so the judge and
+    # mutate-ranges.sh can tell this red from the original defect's.
+    planted_patch || die "could not make the patch of what was planted"
+    planted=1
     # mkdir succeeds for exactly one caller, so two planted runs of one slice cannot both start.
     mkdir "$state/run.lock" 2>/dev/null || die "another planted run of $slice is running or was interrupted; run: calibrate.sh restore $slice"
     echo $$ > "$state/pid" || die "cannot claim $state"
