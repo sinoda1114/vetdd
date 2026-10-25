@@ -1024,3 +1024,16 @@ jsts_slice() {
     [[ "$output" == *"10c: no mutation audit"* ]] || { echo "$f: $output"; false; }
   done
 }
+
+@test "#11 r3: a runner name holding a new line in the report copy stays one 10c WARN, never a FAIL" {
+  record_good_slice s1 >/dev/null 2>&1
+  mutation s1 "$(killed)"
+  local copy=.vetdd/evidence/s1/runs/003-mutation.json
+  jq '.config.testRunner = "vitest\nX"' "$copy" > "$copy.tmp" && mv "$copy.tmp" "$copy"
+  local m=.vetdd/evidence/s1/meta.json
+  jq --arg h "$(sha256_of "$copy")" '.runs[2].audit.report.sha256 = $h' "$m" > "$m.tmp" && mv "$m.tmp" "$m"
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "${lines[0]}" = "s1: OK" ]
+  [[ "${lines[1]}" == "s1: WARN (10c: mutation run 3 ran Stryker's ? runner"* ]] || { echo "$output"; false; }
+}

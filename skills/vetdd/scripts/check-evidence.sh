@@ -842,7 +842,8 @@ check_mutation() {
       echo "10c: the copy of mutation run $seq's report is missing or does not match the sha256 recorded for it (or is a link); run the mutation audit again"
     else
       # The command runner is the one known to judge vitest 5 correctly (#20): any other runner is a warning.
-      tr="$(jq -r '.config.testRunner // "" | if type == "string" then . else "?" end' "$root/$rel" 2>/dev/null)" || tr="?"
+      # A name of another shape (a new line would end the warning line early) is shown as ?.
+      tr="$(jq -r '.config.testRunner // "" | if type == "string" and (. == "" or (test("^[A-Za-z0-9._-]+$") and (contains("\n") | not))) then . else "?" end' "$root/$rel" 2>/dev/null)" || tr="?"
       if [ -z "$tr" ] && jq -e '(.config.command // null) == null' "$root/$rel" >/dev/null 2>&1; then
         # A copy from before testRunner was kept, with no command: not the command runner, or unknown.
         printf '%s\n' "${WARN}10c: mutation run $seq does not say which Stryker runner it used (its report names no runner and no command), so it may be the vitest runner that reported killable mutants as Survived (vetdd #20); run the mutation audit again"
