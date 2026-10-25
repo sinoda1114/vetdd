@@ -495,10 +495,11 @@ def num: if type == "number" then . else error("not a number") end;
 #
 # A line over 20000 characters (a minified file) is read for what it opens and closes (comments,
 # strings, templates) and for the code it ends with, so the lines after it are read right, but it is
-# searched only when it cannot hold a focus: when neither the line nor the code just before it holds
-# the text only or fdescribe. Otherwise it is "!" (not searched, so the slice fails). A line over
-# 1000000 characters is not read at all (each character costs memory): it is "+", and the lines after
-# it may be misread. Time is linear in the length of a long line.
+# searched only when it cannot hold a focus: when neither its code nor the code just before it holds
+# the text only or fdescribe (strings and comments do not count). Otherwise it is "!" (not searched,
+# so the slice fails). A line over 1000000 characters is not read at all, to bound the time: it is
+# "+", and the lines after it may be misread. Time is linear in the length of a long line, and memory
+# does not grow with it.
 #
 # Known limits. The scanner is frozen (#7): it is a best-effort tripwire for an accident, not a
 # boundary, and the final judge, who reads the delivered tests in full, is the backstop. Each of these
@@ -512,13 +513,21 @@ def num: if type == "number" then . else error("not a number") end;
 # - JSX text is read as code: an it.only( written there is reported, and a bare backtick or quote
 #   there can hide what follows.
 # - Code inside ${...} in a template literal is not searched.
-# - A line over 20000 characters that holds the text only or fdescribe anywhere (a string such as
-#   "readonly" included), or any line over 1000000 characters, fails the slice though it may hold no
-#   focus; split the line.
+# - A line over 20000 characters whose code holds the text only or fdescribe (a name such as readonly
+#   included), or any line over 1000000 characters, fails the slice though it may hold no focus;
+#   split the line.
 # The lasting answer is the runner's own count of skipped tests (rule 9c, --test-report), not the
 # source.
 focused_lines() {
   LC_ALL=C awk -v sq="'" '
+    # The character at position p of the line (n characters long), from a split of the 10000-character
+    # piece that holds it: substr measures the whole line on every call in some awks, which makes a
+    # long line quadratic, and a split of the whole line costs memory in proportion to its length.
+    function at(p) {
+      if (p > n) return ""
+      if (p < base || p >= base + 10000) { base = p - (p - 1) % 10000; split(substr(line, base, 10000), cs, "") }
+      return cs[p - base + 1]
+    }
     # Does s hold a match of regular expression r that ends after position off and is not a property
     # access (a "." before the root name, however spaced)?
     function hit(s, r, off,   pos, rest, st, rp, pre, e) {
@@ -540,23 +549,20 @@ focused_lines() {
       if (split("ab", t, "") != 2) exit 2
     }
     {
-      line = $0; sub(/\r$/, "", line)
-      if (length(line) > 1000000) { print "+" NR; next }
-      # The characters come from one split: substr measures the whole line on every call in some awks,
-      # which makes a long line quadratic.
-      n = split(line, cs, "")
-      long = (n > 20000)
+      line = $0; sub(/\r$/, "", line); n = length(line); base = -10000
+      if (n > 1000000) { print "+" NR; next }
       # A long line is searched only when it cannot hold a focus (see above), but it is read either way
       # for what it opens and closes; its output is cut down as it is built, keeping the end the next
-      # line is joined to.
-      unsearched = long && (index(line, "only") || index(line, "fdescribe") || index(tail, "only") || index(tail, "fdescribe"))
+      # line is joined to, after it is looked at for the text only or fdescribe in code.
+      long = (n > 20000); seen = long && (index(tail, "only") || index(tail, "fdescribe"))
       out = ""; i = 1; k = 0; str = carry; carry = ""
       if (tpl) str = "`"
       while (i <= n) {
         if (long && ++k % 1000 == 0 && length(out) > 2000) {
+          if (index(out, "only") || index(out, "fdescribe")) seen = 1
           gsub(/[ \t]+/, " ", out); if (length(out) > 400) out = substr(out, length(out) - 399)
         }
-        c = cs[i]; d = cs[i + 1]
+        c = at(i); d = at(i + 1)
         if (block) {
           if (c == "*" && d == "/") { block = 0; out = out "  "; i += 2 } else { out = out " "; i++ }
           continue
@@ -576,7 +582,7 @@ focused_lines() {
           # A regular-expression literal: skip to its closing slash (not inside [...], not escaped).
           j = i + 1; incls = 0; e = 0
           while (j <= n) {
-            ch = cs[j]
+            ch = at(j)
             if (ch == "\\") { j += 2; continue }
             if (incls) { if (ch == "]") incls = 0 }
             else if (ch == "[") incls = 1
@@ -598,7 +604,8 @@ focused_lines() {
       # reported on its own line.
       cur = out; gsub(/[ \t]+/, " ", cur)
       joined = tail " " cur; off = length(tail) + 1
-      if (unsearched) print "!" NR
+      if (long && (index(out, "only") || index(out, "fdescribe"))) seen = 1
+      if (seen) print "!" NR
       else if (hit(joined, re, off) || hit(joined, fre, off)) print NR
       tail = joined; if (length(tail) > 400) tail = substr(tail, length(tail) - 399)
     }
@@ -740,7 +747,7 @@ check_oracle_files() {
       printf '%s\n' "$found" | while IFS= read -r n; do
         case "$n" in
           '') ;;
-          '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters and it, or the code just before it, holds the text only or fdescribe, so it was not scanned for a focused test; split the line" ;;
+          '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters and its code, or the code just before it, holds the text only or fdescribe, so it was not scanned for a focused test; split the line" ;;
           '+'*) echo "9a: oracle file $path line ${n#+} is over 1000000 characters, too long to read, so it was not scanned for a focused test; split the line" ;;
           '?') echo "9a: oracle file $path could not be scanned to the end (a comment or template literal is still open there, or a regular expression was read as one); fix it or split the file" ;;
           *) echo "9a: oracle file $path line $n holds a focused test (.only or fdescribe); it runs only that test and skips the rest, so the green means less than it says. Remove it and record the slice again with a bumped --oracle-version (rule 8)" ;;
