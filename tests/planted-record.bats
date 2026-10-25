@@ -334,3 +334,89 @@ calq() { cal "$@" >/dev/null 2>&1; }
   run --separate-stderr mr s1
   [ "$status" -eq 2 ]
 }
+
+# --- review round 1 -------------------------------------------------------------------------------
+
+@test "R1: judge-layout refuses a planted patch that holds a .env file, before anything is written" {
+  printf 'K=1\n' > .env && git add -f .env && git commit -q -m env
+  printf '#!/bin/sh\ngrep -q K=1 .env\n' > envtest.sh && git add envtest.sh && git commit -q -m t
+  cal plant s1 --file .env --oracle-file envtest.sh >/dev/null
+  printf 'K=2\n' > .env
+  cal planted s1 --oracle-version v1 --oracle-file envtest.sh -- sh envtest.sh >/dev/null 2>&1
+  ev s1 after -- sh envtest.sh >/dev/null 2>&1
+  printf '## Oracle\nK\n' > "$BATS_TEST_TMPDIR/reply.md"
+  run JL --out "$BATS_TEST_TMPDIR/out" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *".env"* ]] && [[ "$output" == *"planted patch"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/out" ]
+}
+
+@test "R1: judge-layout sends a planted patch with a binary file only when it is named with --allow-binary" {
+  printf 'a\000b\n' > blob.bin && git add blob.bin && git commit -q -m bin
+  printf '#!/bin/sh\ncmp -s blob.bin blob.orig\n' > bintest.sh && cp blob.bin blob.orig && git add bintest.sh blob.orig && git commit -q -m t
+  cal plant s1 --file blob.bin --oracle-file bintest.sh >/dev/null
+  printf 'a\000c\n' > blob.bin
+  cal planted s1 --oracle-version v1 --oracle-file bintest.sh -- sh bintest.sh >/dev/null 2>&1
+  ev s1 after -- sh bintest.sh >/dev/null 2>&1
+  grep -q 'GIT binary patch' .vetdd/evidence/s1/runs/001-planted.patch
+  printf '## Oracle\nblob\n' > "$BATS_TEST_TMPDIR/reply.md"
+  run JL --out "$BATS_TEST_TMPDIR/out" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"blob.bin"* ]] && [[ "$output" == *"--allow-binary"* ]] && [[ "$output" == *"planted patch"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/out" ]
+  run JL --out "$BATS_TEST_TMPDIR/out" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD --allow-binary blob.bin s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$BATS_TEST_TMPDIR/out/c1/evidence/s1/runs/001-planted.patch" ]
+}
+
+@test "R1: a file git ignores is left out of the planted record (the evidence tree leaves it out too), and stderr says so" {
+  mkdir -p ignored && printf 'i\n' > ignored/x.txt
+  cal plant s1 --file value.txt --file ignored/x.txt --oracle-file test.sh >/dev/null
+  printf '41\n' > value.txt && printf 'j\n' > ignored/x.txt
+  run cal planted s1 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s1 '.runs[-1].planted.files | tojson')" = '["value.txt"]' ]
+  ! grep -q 'ignored/x.txt' .vetdd/evidence/s1/runs/001-planted.patch || false
+  [[ "$output" == *"ignored/x.txt"* ]]
+  # Only an ignored file planted: no record of a patch (nothing of it is in the evidence tree).
+  cal plant s2 --file ignored/x.txt --oracle-file test.sh >/dev/null
+  printf 'k\n' > ignored/x.txt
+  run cal planted s2 --oracle-file test.sh -- sh -c 'exit 1'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(mq s2 '.runs[-1] | has("planted")')" = false ]
+  [[ "$output" == *"ignored/x.txt"* ]]
+}
+
+@test "R1: plant refuses a file whose name holds a tab or another control character, before anything is saved" {
+  printf 'x\n' > "$(printf 'a\tb.txt')"
+  run cal plant s1 --file "$(printf 'a\tb.txt')" --oracle-file test.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"control character"* ]]
+  [ ! -e "$(state_dir s1)" ]
+}
+
+@test "R1: a planted patch is never written through a link at its name, to a directory or a file" {
+  mkdir -p .vetdd/evidence/s1/runs "$BATS_TEST_TMPDIR/outside"
+  ln -s "$BATS_TEST_TMPDIR/outside" .vetdd/evidence/s1/runs/001-planted.patch
+  cal plant s1 --file value.txt --oracle-file test.sh >/dev/null
+  printf '41\n' > value.txt
+  run cal planted s1 --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/outside")" ]
+  [ -f .vetdd/evidence/s1/runs/001-planted.patch ] && [ ! -L .vetdd/evidence/s1/runs/001-planted.patch ]
+  run check s1
+  [[ "$output" != *"12:"* ]] || { echo "$output"; false; }
+}
+
+@test "R1: evidence.sh says when git cannot read the planted patch" {
+  local st; st="$(state_dir s1)"
+  cal plant s1 --file value.txt --oracle-file test.sh >/dev/null
+  printf '41\n' > value.txt
+  mkdir "$st/run.lock" && printf 'not a patch\n' > "$st/planted.patch"
+  run ev s1 calibration --planted "$st/planted.patch" -- touch ran
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"git cannot read it as a patch"* ]] || { echo "$output"; false; }
+  [ ! -e ran ]
+  rmdir "$st/run.lock"
+  cal restore s1 >/dev/null
+}

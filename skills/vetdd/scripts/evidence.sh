@@ -174,6 +174,16 @@ if [ -n "$mreport_opt" ]; then
   [ "$(printf '%s' "$mreport_rel" | LC_ALL=C tr 'A-Z' 'a-z')" != "$(printf '%s' "$report_rel" | LC_ALL=C tr 'A-Z' 'a-z')" ] \
     || die "--mutation-report and --test-report must be different files (compared ignoring letter case)"
 fi
+# planted_files <patch>: the repository paths the patch changes, as a JSON array, as git reads it.
+# Returns 1 when git cannot read it, 2 when it names no file or one with a control character.
+planted_files() {
+  local out
+  out="$(git -C "$root" -c apply.whitespace=nowarn apply --numstat -z -- "$1" 2>/dev/null \
+    | jq -cRs 'split("\u0000") | .[:-1] | map(sub("^[^\t]*\t[^\t]*\t"; ""))
+      | if length > 0 and all(.[]; length > 0 and (explode | all(. > 31 and (. < 127 or . > 159)))) then . else error("names") end' 2>/dev/null
+    st=("${PIPESTATUS[@]}"); [ "${st[0]}" -eq 0 ] || exit 1; [ "${st[1]}" -eq 0 ] || exit 2)" || return $?
+  printf '%s\n' "$out"
+}
 # --planted: only the patch of this slice's planted run that is going now (calibrate.sh planted holds
 # its state in plant mode and has claimed the run), read as git reads it, naming repository paths.
 planted_files_json=""
@@ -187,10 +197,12 @@ if [ "$planted_set" -eq 1 ]; then
   [ "$(cat "$pstate/mode" 2>/dev/null)" = plant ] && [ -d "$pstate/run.lock" ] && [ ! -L "$pstate/run.lock" ] || die "$pnot"
   ppatch="$pstate/planted.patch"
   [ -f "$ppatch" ] && [ ! -L "$ppatch" ] && [ -s "$ppatch" ] || die "$pnot (it is missing, empty, or a link)"
-  planted_files_json="$(git -C "$root" apply --numstat -z -- "$ppatch" 2>/dev/null \
-    | jq -Rs 'split("\u0000") | .[:-1] | map(sub("^[^\t]*\t[^\t]*\t"; ""))')" || die "$pnot (git cannot read it as a patch)"
-  printf '%s' "$planted_files_json" | jq -e 'length > 0 and all(.[]; length > 0 and (explode | all(. > 31 and (. < 127 or . > 159))))' >/dev/null 2>&1 \
-    || die "$pnot (it names no file, or a file name with a control character)"
+  rc=0; planted_files_json="$(planted_files "$ppatch")" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) die "$pnot (git cannot read it as a patch)" ;;
+    *) die "$pnot (it names no file, or a file name with a control character)" ;;
+  esac
 fi
 dir="$root/.vetdd/evidence/$slice"
 meta="$dir/meta.json"
@@ -236,12 +248,16 @@ fi
 planted_json=null
 if [ "$planted_set" -eq 1 ]; then
   prel="runs/$(printf '%03d' "$seq")-planted.patch"
-  # A name nobody can predict, renamed over the target: a link put at the target is replaced, never followed.
+  # Read once, into a name nobody can predict: the record (files, sha256) is made from that copy, and the
+  # source must still be the regular file it was. Then whatever is at the target (a link, to a file or
+  # a directory, which mv would move the copy into) is removed first, so nothing is written through it.
   ptmp="$(mktemp "$dir/runs/planted.XXXXXX")" || die "cannot create a temporary file in $dir/runs"
-  if ! { cp -- "$ppatch" "$ptmp" && chmod "$(vetdd_file_mode)" "$ptmp" && mv -f "$ptmp" "$dir/$prel"; }; then
-    rm -f "$ptmp"; die "could not copy the planted patch to $prel"
+  if ! { cp -- "$ppatch" "$ptmp" && [ -f "$ppatch" ] && [ ! -L "$ppatch" ] && cmp -s "$ppatch" "$ptmp" \
+         && [ "$(planted_files "$ptmp")" = "$planted_files_json" ] && psum="$(vetdd_sha256 "$ptmp")" \
+         && chmod "$(vetdd_file_mode)" "$ptmp" && rm -f -- "$dir/$prel" && [ ! -e "$dir/$prel" ] && [ ! -L "$dir/$prel" ] \
+         && mv -f -- "$ptmp" "$dir/$prel" && [ -f "$dir/$prel" ] && [ ! -L "$dir/$prel" ]; }; then
+    rm -f -- "$ptmp"; die "could not copy the planted patch to $prel (the patch changed, or $prel could not be replaced)"
   fi
-  psum="$(vetdd_sha256 "$dir/$prel")" && cmp -s "$ppatch" "$dir/$prel" || die "could not copy the planted patch to $prel"
   planted_json="$(jq -cn --arg p "$prel" --arg s "$psum" --argjson f "$planted_files_json" '{patch: $p, sha256: $s, files: $f}')"
 fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -414,11 +414,21 @@ write_stub() {
 # planted_patch: write $state/planted.patch, the diff from the originals plant saved to the files as
 # planted now (content and executable bit), with repository paths (a/ and b/), as git would show it:
 # each side is hashed with its path's attributes into a throwaway index of its own, and the two trees
-# are compared. Only the saved files that changed are in it. Non-zero when it cannot be made.
+# are compared. Only the saved files that changed are in it, and only those the evidence's tree holds:
+# a file git ignores (or one under .vetdd/) is left out, named on stderr, as evidence.sh's tree hash
+# leaves it out. Returns 1 when it cannot be made, 2 when nothing of the plant is in that tree.
 planted_patch() {
-  local f side src mode h t0 t1
+  local f side src mode h t0 t1 rc
   rm -f "$state/planted.patch" "$state/planted.0" "$state/planted.1"
   while IFS= read -r f; do
+    case "$f" in .vetdd/*) warn "$f is under .vetdd/, which the evidence's tree leaves out: not in the planted record"; continue ;; esac
+    # Not through g: check-ignore refuses GIT_LITERAL_PATHSPECS; ./ keeps a leading : from reading as magic.
+    rc=0; GIT_LITERAL_PATHSPECS=0 git -C "$top" check-ignore -q --no-index -- "./$f" || rc=$?
+    case "$rc" in
+      0) warn "$f is ignored by git, which the evidence's tree leaves out: not in the planted record"; continue ;;
+      1) ;;
+      *) return 1 ;;
+    esac
     for side in 0 1; do
       if [ "$side" = 0 ]; then src="$state/copies/$f"; else src="$top/$f"; fi
       if [ -x "$src" ]; then mode=100755; else mode=100644; fi
@@ -426,10 +436,12 @@ planted_patch() {
       GIT_INDEX_FILE="$state/planted.$side" g update-index --add --cacheinfo "$mode,$h,$f" || return 1
     done
   done < "$state/files"
+  [ -f "$state/planted.0" ] || return 2
   t0="$(GIT_INDEX_FILE="$state/planted.0" g write-tree)" && t1="$(GIT_INDEX_FILE="$state/planted.1" g write-tree)" || return 1
   rm -f "$state/planted.0" "$state/planted.1"
   g diff-tree -r -p --binary --full-index --no-renames --no-ext-diff --no-textconv --no-color \
-    --src-prefix=a/ --dst-prefix=b/ "$t0" "$t1" > "$state/planted.patch" && [ -s "$state/planted.patch" ]
+    --src-prefix=a/ --dst-prefix=b/ "$t0" "$t1" > "$state/planted.patch" || return 1
+  [ -s "$state/planted.patch" ] || return 2
 }
 
 audit=""  # undefined-imports while a stub run is going
@@ -511,6 +523,11 @@ case "$cmd" in
     ;;
   plant)
     parse "$@"; require_oracle; require_files
+    # The planted record names each file (evidence.sh refuses a control character there): refuse it now,
+    # before anything is saved, not after the mutation is planted.
+    for f in "${files[@]}"; do
+      vetdd_inside_repo "$top" "$f" || die "$f: a file name with a control character (a tab, say) cannot be planted; rename it"
+    done
     [ "$have_cmd" -eq 0 ] || die "plant takes no command; plant the mutation, then run planted"
     new_state
     save_originals
@@ -549,8 +566,12 @@ case "$cmd" in
     [ "$changed" -eq 1 ] || die "no mutation was planted in the saved files"
     # What was planted goes on the record (planted: {patch, sha256, files}), so the judge and
     # mutate-ranges.sh can tell this red from the original defect's.
-    planted_patch || die "could not make the patch of what was planted"
-    planted=1
+    rc=0; planted_patch || rc=$?
+    case "$rc" in
+      0) planted=1 ;;
+      2) warn "nothing planted is in the tree the evidence records (only ignored files changed): the run gets no planted record" ;;
+      *) die "could not make the patch of what was planted" ;;
+    esac
     # mkdir succeeds for exactly one caller, so two planted runs of one slice cannot both start.
     mkdir "$state/run.lock" 2>/dev/null || die "another planted run of $slice is running or was interrupted; run: calibrate.sh restore $slice"
     echo $$ > "$state/pid" || die "cannot claim $state"

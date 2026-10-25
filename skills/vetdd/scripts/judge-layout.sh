@@ -329,6 +329,35 @@ while IFS= read -r -d '' rec; do
   [ "$ok" -eq 1 ] || unallowed="$unallowed $path"
 done < <(GIT_INDEX_FILE="$idx" git -C "$root" diff "${diffopts[@]}" --numstat -z --no-renames --end-of-options "$base" -- . ':(exclude).vetdd')
 [ -z "$unallowed" ] || die "binary changes in the diff:$(printf '%s' "$unallowed" | vetdd_printable); name each one a human allowed to leave with --allow-binary <path>"
+# A planted red's patch (calibrate.sh plant and planted) goes with its log, so it gets the diff's
+# rules: a .env file in it never goes, and a binary change in it only when named with --allow-binary.
+# Read as git reads the patch (paths, and - - for a binary change); the patch itself is checked when copied.
+PLANTED_SENT='
+[.runs[] | select(type == "object" and (.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
+                  and (.audit.kind? // "") != "mutation" and has("planted") and (.seq | type) == "number")
+ | "runs/" + (.seq | floor | tostring | if length < 3 then ("00" + .)[-3:] else . end) + "-planted.patch"] | .[]'
+penvs=""; pbins=""
+for s in "${slices[@]}"; do
+  plist="$(jq -r "$PLANTED_SENT" "$root/.vetdd/evidence/$s/meta.json" 2>/dev/null)" \
+    || die "could not read the evidence of slice $s (its meta.json is malformed)" 1
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    rel=".vetdd/evidence/$s/$p"
+    vetdd_inside_repo "$root" "$rel" && [ -f "$root/$rel" ] || continue  # missing: the copy below stops on it
+    nslist="$tmpd/planted-numstat"
+    git -C "$root" -c apply.whitespace=nowarn apply --numstat -z -- "$root/$rel" > "$nslist" 2>/dev/null \
+      || die "$(printf 'the planted patch %s of slice %s cannot be read as a patch; take the red again (calibrate.sh plant and planted)' "$p" "$s" | vetdd_printable)" 1
+    while IFS= read -r -d '' rec; do
+      added="${rec%%$'\t'*}"; rest="${rec#*$'\t'}"; removed="${rest%%$'\t'*}"; path="${rest#*$'\t'}"
+      if is_env "$path"; then penvs="$penvs $s:$path"; continue; fi
+      [ "$added" = - ] && [ "$removed" = - ] || continue
+      ok=0; for b in ${binaries[@]+"${binaries[@]}"}; do [ "$b" = "$path" ] && ok=1; done
+      [ "$ok" -eq 1 ] || pbins="$pbins $path"
+    done < "$nslist"
+  done <<< "$plist"
+done
+[ -z "$penvs" ] || die "$(printf 'a .env file may hold secrets and never goes to the judge, and a planted patch holds one:%s\ntake that red again with the defect planted in another file' "$penvs" | vetdd_printable)"
+[ -z "$pbins" ] || die "binary changes in a planted patch:$(printf '%s' "$pbins" | vetdd_printable); name each one a human allowed to leave with --allow-binary <path>"
 # The verify artifacts, all checked before anything is written: each --verify-artifacts path is a plain
 # path at or under .vetdd/artifacts/ (where the verify scripts write them), inside the repository with
 # no link on the way; every entry below it must be a directory or a regular file, and no .env file.
