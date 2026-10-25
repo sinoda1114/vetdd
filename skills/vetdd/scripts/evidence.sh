@@ -261,6 +261,9 @@ done
 # One writer of the slice's meta.json at a time, from its first read to its last write (lib/meta.sh).
 vetdd_slice_lock "$slice" || die "$VETDD_SLICE_LOCK_ERR"
 trap 'vetdd_slice_unlock' EXIT
+# Again under the lock, which worktree.sh abandon takes too: a mark written since the first look counts.
+! vetdd_abandoned "$root" "$slice" \
+  || die "slice $slice is abandoned (.vetdd/evidence/$slice/abandoned, written by worktree.sh abandon); record its redesign under a new slice id"
 mkdir -p "$dir/runs" || die "cannot create $dir"
 if [ ! -f "$meta" ]; then
   # The skeleton every writer starts a slice with, under a name nobody can predict, then renamed.

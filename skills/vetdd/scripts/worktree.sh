@@ -40,7 +40,8 @@
 #          (parallel/arena.md); --replaced-by: the slice id of its redesign or of the chosen lane.
 #          Only the parent writes the mark: remove never brings a worker's own back. Refuses a slice
 #          with no evidence in the main repository or that no worktree.sh add made (exit 2), and one
-#          whose worktree is still there, whose branch is merged into HEAD, or already marked (exit 1)
+#          whose worktree is still there, whose branch is merged into HEAD, already marked, or that
+#          another vetdd script is recording (it takes the slice's lock, lib/meta.sh) (exit 1)
 #        worktree.sh list
 #          prints "<slice>\t<path>\t<branch>" for each worker worktree
 # Exit 0 done; 1 a local step failed or would lose or overwrite work; 2 usage error.
@@ -458,6 +459,10 @@ $(p "$dirty")" 1
     for d in "$root/.vetdd" "$root/.vetdd/evidence" "$dir"; do
       [ ! -L "$d" ] || die "${d#"$root"/} is a symbolic link; the mark is written only inside the repository" 1
     done
+    # The slice's lock (lib/meta.sh), as its record's writers hold it: no run is recorded while it is marked.
+    . "$here/lib/meta.sh"
+    vetdd_slice_lock "$slice" || die "$VETDD_SLICE_LOCK_ERR" 1
+    trap 'vetdd_slice_unlock' EXIT
     # The worker's worktree first: its evidence comes back with remove, which would find this mark.
     ! git -C "$root" worktree list --porcelain | grep -qxF "worktree $wtroot/$slice" \
       || die "the worktree of $(p "$slice") is still there; bring its evidence back first (worktree.sh check $(p "$slice"), then remove $(p "$slice") --keep-branch)" 1

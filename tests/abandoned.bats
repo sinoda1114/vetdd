@@ -161,6 +161,20 @@ worker() {
   [ -f .vetdd/evidence/sa/abandoned ]
 }
 
+@test "abandon takes the slice's lock (lib/meta.sh): it refuses while another vetdd script records the slice, and frees the lock" {
+  worker s1
+  local lock; lock="$(git rev-parse --absolute-git-dir)/vetdd-lock/s1"
+  mkdir -p "${lock%/*}" && ln -s "pid:$$" "$lock"
+  run WT abandon s1 --cause lost
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"pid $$"* ]]
+  [ ! -e "$MARK" ]
+  rm -f -- "$lock"
+  run WT abandon s1 --cause lost
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -L "$lock" ]
+}
+
 @test "abandon refuses a slice that no worktree.sh add made (usage, exit 2), and one whose branch is merged (exit 1)" {
   red_slice s1
   run WT abandon s1 --cause lost
