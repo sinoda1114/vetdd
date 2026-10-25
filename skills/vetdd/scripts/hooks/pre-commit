@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # vetdd pre-commit hook (installed by vetdd setup-project.sh)
 # Checks evidence for every slice whose oracle.files intersect the staged files.
-# Blocks the commit on failure unless VETDD_BYPASS=1.
+# Blocks the commit on failure unless VETDD_BYPASS=1. A slice the parent marked abandoned (worktree.sh
+# abandon) is what check-evidence.sh says it is: ABANDONED, not a failure, so it does not block.
 set -u
 unset CDPATH
 

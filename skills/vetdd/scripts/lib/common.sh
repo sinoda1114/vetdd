@@ -112,3 +112,32 @@ vetdd_inside_repo() {
   case "$dir/" in "$root"/*) return 0 ;; esac
   return 1
 }
+
+# VETDD_JS_TS_RE: the names of a JS or TS file (.js .jsx .mjs .cjs .ts .tsx .mts .cts, any ASCII letter
+# case), the languages Stryker mutates: check-evidence rule 9a scans such an oracle file for a focused
+# test, and rule 10c asks a slice whose final oracle has one for its mutation audit. One extended
+# regular expression that grep -E and jq read alike (the letter case is spelled out, so neither needs a
+# flag that folds case another way), defined here only. .vue and .svelte are not in it.
+VETDD_JS_TS_RE='\.([cCmM]?[jJtT][sS]|[jJtT][sS][xX])$'
+
+# vetdd_is_js_ts <path>: true when the path names a JS or TS file (VETDD_JS_TS_RE).
+vetdd_is_js_ts() { printf '%s' "$1" | LC_ALL=C grep -Eq -- "$VETDD_JS_TS_RE"; }
+
+# A slice abandoned in a swarm or an arena (a stall, a conflict, a lane that lost) keeps its evidence;
+# the parent marks it with `worktree.sh abandon`, which writes .vetdd/evidence/<slice>/abandoned:
+# {"cause": "stall"|"conflict"|"lost", "replaced_by": "<slice id>" (optional), "recorded_at": "<UTC Z>"}.
+# vetdd_abandoned <root> <slice>: true when anything is at that name (a link or a malformed mark too),
+# so a script that refuses an abandoned slice never runs on one.
+vetdd_abandoned() { [ -e "$1/.vetdd/evidence/$2/abandoned" ] || [ -L "$1/.vetdd/evidence/$2/abandoned" ]; }
+
+# VETDD_ABANDONED_JQ: over the mark slurped (jq -s) with --arg slice, "<cause>" or "<cause>, replaced by
+# <id>" when it is exactly what worktree.sh abandon writes, else an error.
+VETDD_ABANDONED_JQ='
+  def sid: type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$");
+  if length == 1 and (.[0] | type) == "object"
+     and (.[0] | keys - ["cause", "replaced_by", "recorded_at"] | length) == 0
+     and (.[0].cause == "stall" or .[0].cause == "conflict" or .[0].cause == "lost")
+     and (.[0].recorded_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+     and ((.[0] | has("replaced_by") | not) or (.[0].replaced_by | sid and . != $slice))
+  then .[0] | .cause + (if has("replaced_by") then ", replaced by " + .replaced_by else "" end)
+  else error("not a mark") end'

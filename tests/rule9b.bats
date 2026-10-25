@@ -557,3 +557,84 @@ recv() {
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *"9b: "* ]]
 }
+
+# --- #11 follow-ups -----------------------------------------------------------------------------
+
+@test "#11: a damaged copy of a run under an older oracle version is history: it is not opened once the final green is another version" {
+  recv v1 before "$PASS" 1
+  recv v1 after "$PASS" 0
+  recv v2 calibration "$PASS" 1
+  recv v2 after "$PASS" 0
+  printf 'damaged\n' > "$REPO/.vetdd/evidence/s1/runs/002-after.tests.json"
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+  # A damaged copy of the final version still fails.
+  printf 'damaged\n' > "$REPO/.vetdd/evidence/s1/runs/004-after.tests.json"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9b: could not read the test report copy of run 4"* ]]
+  [[ "$output" != *"run 2"* ]]
+}
+
+# added <out-name> <base report> <name> <status>: a copy of the base report with one more test.
+added() {
+  jq --arg n "$3" --arg s "$4" '.numTotalTests += 1
+    | .testResults[0].assertionResults += [{fullName: $n, title: $n, status: $s}]' "$2" > "$BATS_TEST_TMPDIR/$1.json"
+  printf '%s' "$BATS_TEST_TMPDIR/$1.json"
+}
+
+@test "#11: 9c tells the tests skipped already in the first run of the command from the newly skipped ones" {
+  local first; first="$(status_of f1 "$T1" skipped)"
+  rec before "$first" 1
+  rec after "$(added a1 "$(status_of f2 "$T1" skipped)" "a new test" todo)" 0
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "${lines[1]}" == "s1: WARN (9c: 1 skipped and 1 todo tests in the latest after run 2"* ]] || { echo "$output"; false; }
+  [[ "${lines[1]}" == *"1 of them were skipped or todo already in run 1, the first run of the same command with a report"* ]] || { echo "$output"; false; }
+  [[ "${lines[1]}" == *"1 are newly skipped or todo"* ]] || { echo "$output"; false; }
+}
+
+@test "#11: 9c says none is new when every skip was there from the first run" {
+  rec before "$(status_of g1 "$T1" skipped)" 1
+  rec after "$(status_of g2 "$T1" skipped)" 0
+  run check s1
+  [[ "$output" == *"1 of them were skipped or todo already in run 1"*"0 are newly skipped or todo"* ]] || { echo "$output"; false; }
+}
+
+@test "#11: 9c compares with the first run of the same command and oracle version, not another command's" {
+  rec before "$PASS" 1 -t other
+  rec before "$(status_of h1 "$T1" skipped)" 1
+  rec after "$(added h2 "$(status_of h3 "$T1" skipped)" "a new test" skipped)" 0
+  run check s1
+  [[ "$output" == *"2 skipped and 0 todo tests in the latest after run 3"*"1 of them were skipped or todo already in run 2"*"1 are newly skipped or todo"* ]] || { echo "$output"; false; }
+}
+
+@test "#11: 9c keeps the plain count when the latest green is the only run of its command with a report" {
+  rec before - 1
+  rec after "$(status_of i1 "$T1" skipped)" 0
+  run check s1
+  [[ "$output" == *"s1: WARN (9c: 1 skipped and 0 todo tests in the latest after run 2"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"already in run"* ]]
+}
+
+@test "#11: the warnings need no writable TMPDIR: they travel on stdout (9c, 10c, 11)" {
+  rec before "$(status_of j1 "$T1" skipped)" 1
+  rec after "$(status_of j2 "$T1" skipped)" 0
+  # The tree hash (rule 5) still makes its index there; the warnings no longer stop the check (exit 2).
+  TMPDIR="$BATS_TEST_TMPDIR/no/such/dir" run check s1
+  [ "$status" -ne 2 ] || { echo "$output"; false; }
+  [[ "$output" != *"temporary file"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (9c: 1 skipped"* ]] || { echo "$output"; false; }
+  ! grep -n 'mktemp\|warn_file' "$SCRIPTS/check-evidence.sh" || false
+}
+
+@test "#11: a problem whose recorded text holds a new line that looks like a warning still fails the slice" {
+  rec before "$PASS" 1
+  rec after "$PASS" 0
+  # A calibration after the green under another version: its only problem names that version.
+  tamper s1 '.runs += [.runs[0] | .seq = 3 | .kind = "calibration" | del(.tests) | .oracle.version = "v9\nwarn\tfake"]'
+  run check s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: FAIL (8: run 3 uses oracle version v9)"* ]] || { echo "$output"; false; }
+}
