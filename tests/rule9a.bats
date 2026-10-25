@@ -246,14 +246,35 @@ long_code() {
   [[ "$output" == *"9a: oracle file a.test.js line 2 "* ]] || { echo "${output:0:400}"; false; }
 }
 
-@test "rule 9a reads a line of 450000 characters in linear time, not quadratic (#7)" {
-  # Reading each character with substr costs about 4 seconds at 400000 (macOS awk 20200816, which
-  # measures the whole line on every call); the scan reads them from one split instead.
-  record_oracle a.test.js "$(long_code 50000)"
+@test "rule 9a reads a line of 870000 characters in linear time, not quadratic (#7)" {
+  # 270000 characters of statements, then a regular expression of 600000. Reading each character with
+  # substr costs about 4 seconds at 400000 (macOS awk 20200816 measures the whole line on every call),
+  # and blanking a regular expression one space at a time about 15 seconds at 450000; the scan reads
+  # the characters from one split and blanks a regular expression in one piece. Measured here: about
+  # 3 seconds; either quadratic path alone: over 20 seconds.
+  record_oracle a.test.js "$(long_code 30000)const r=/$(printf '%0600000d' 0)/;"
   local start=$SECONDS
   run check s1
   [ "$status" -eq 0 ] || { echo "${output:0:400}"; false; }
-  [ $((SECONDS - start)) -lt 10 ]
+  [ $((SECONDS - start)) -lt 20 ]
+}
+
+@test "rule 9a still reads what a long line it does not search opens and closes (#7)" {
+  # The long line holds the text only (in a string), so it is not searched, but it closes the comment
+  # opened above it: the focus after it is code, and the file is read to its end.
+  record_oracle a.test.js $'/* start\n'"x */ const k = \"readonly\"; $(long_code 3000)"$'\nit.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 2 is over 20000 characters"* ]] || { echo "${output:0:400}"; false; }
+  [[ "$output" == *"line 3 holds a focused test"* ]] || { echo "${output:0:400}"; false; }
+  [[ "$output" != *"could not be scanned to the end"* ]] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a fails closed on a line over 1000000 characters, which it does not read (#7)" {
+  record_oracle a.test.js "$(printf 'const x = "%01000001d";' 0)"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.js line 1 is over 1000000 characters"* ]] || { echo "${output:0:400}"; false; }
 }
 
 @test "rule 9a fails when the scanner itself fails, never OK (A3)" {

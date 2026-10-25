@@ -484,8 +484,9 @@ def num: if type == "number" then . else error("not a number") end;
   end'
 
 # Lines of a JS or TS oracle file that hold a focused test, one per output line: the line number,
-# "!<line>" for a line too long to scan, or "?" when a comment or template literal is still open at
-# the end of the file (the scan cannot be trusted). The file is read as code: comments (// and /* */)
+# "!<line>" for a long line that was not searched, "+<line>" for a line too long to read at all, or
+# "?" when a comment or template literal is still open at the end of the file (the scan cannot be
+# trusted). The file is read as code: comments (// and /* */)
 # and the contents of strings, template literals, and regular-expression literals are blanked first,
 # across lines (a string continued with a backslash included), then the code is searched for
 # <it|test|describe|suite|context|specify>[.name]*.only[.name]*( or `, spacing, comments, and a line
@@ -495,7 +496,9 @@ def num: if type == "number" then . else error("not a number") end;
 # A line over 20000 characters (a minified file) is read for what it opens and closes (comments,
 # strings, templates) and for the code it ends with, so the lines after it are read right, but it is
 # searched only when it cannot hold a focus: when neither the line nor the code just before it holds
-# the text only or fdescribe. Otherwise it is "!" (not scanned, so the slice fails).
+# the text only or fdescribe. Otherwise it is "!" (not searched, so the slice fails). A line over
+# 1000000 characters is not read at all (each character costs memory): it is "+", and the lines after
+# it may be misread. Time is linear in the length of a long line.
 #
 # Known limits. The scanner is frozen (#7): it is a best-effort tripwire for an accident, not a
 # boundary, and the final judge, who reads the delivered tests in full, is the backstop. Each of these
@@ -510,12 +513,12 @@ def num: if type == "number" then . else error("not a number") end;
 #   there can hide what follows.
 # - Code inside ${...} in a template literal is not searched.
 # - A line over 20000 characters that holds the text only or fdescribe anywhere (a string such as
-#   "readonly" included) fails the slice though it may hold no focus; split the line.
+#   "readonly" included), or any line over 1000000 characters, fails the slice though it may hold no
+#   focus; split the line.
 # The lasting answer is the runner's own count of skipped tests (rule 9c, --test-report), not the
 # source.
 focused_lines() {
   LC_ALL=C awk -v sq="'" '
-    function blanks(k,   b) { b = ""; while (k-- > 0) b = b " "; return b }
     # Does s hold a match of regular expression r that ends after position off and is not a property
     # access (a "." before the root name, however spaced)?
     function hit(s, r, off,   pos, rest, st, rp, pre, e) {
@@ -533,15 +536,20 @@ focused_lines() {
       block = 0; tpl = 0; carry = ""; tail = ""; prev = ""
       re = "(^|[^A-Za-z0-9_$.])(it|test|describe|suite|context|specify)([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*\\.[ \t]*only([ \t]*\\.[ \t]*[A-Za-z_$]+)*[ \t]*(<[^()]*>)?[ \t]*[(`]"
       fre = "(^|[^A-Za-z0-9_$.])fdescribe[ \t]*\\("
+      # An awk that does not split "" into characters would misread every line: fail, never OK.
+      if (split("ab", t, "") != 2) exit 2
     }
     {
+      line = $0; sub(/\r$/, "", line)
+      if (length(line) > 1000000) { print "+" NR; next }
       # The characters come from one split: substr measures the whole line on every call in some awks,
       # which makes a long line quadratic.
-      line = $0; sub(/\r$/, "", line); n = split(line, cs, "")
+      n = split(line, cs, "")
       long = (n > 20000)
-      # A long line is searched only when it cannot hold a focus (see above); its output is cut down as
-      # it is built, keeping the end the next line is joined to.
-      if (long && (index(line, "only") || index(line, "fdescribe") || index(tail, "only") || index(tail, "fdescribe"))) { print "!" NR; next }
+      # A long line is searched only when it cannot hold a focus (see above), but it is read either way
+      # for what it opens and closes; its output is cut down as it is built, keeping the end the next
+      # line is joined to.
+      unsearched = long && (index(line, "only") || index(line, "fdescribe") || index(tail, "only") || index(tail, "fdescribe"))
       out = ""; i = 1; k = 0; str = carry; carry = ""
       if (tpl) str = "`"
       while (i <= n) {
@@ -575,7 +583,8 @@ focused_lines() {
             else if (ch == "/") { e = j; break }
             j++
           }
-          if (e > 0) { out = out "/" blanks(e - i - 1) "/"; prev = "x"; i = e + 1; continue }
+          # One blank stands for the whole body: the output is only ever read with blanks collapsed.
+          if (e > 0) { out = out "/ /"; prev = "x"; i = e + 1; continue }
         }
         if (c != " " && c != "\t") {
           pc = substr(out, length(out), 1)
@@ -589,7 +598,8 @@ focused_lines() {
       # reported on its own line.
       cur = out; gsub(/[ \t]+/, " ", cur)
       joined = tail " " cur; off = length(tail) + 1
-      if (hit(joined, re, off) || hit(joined, fre, off)) print NR
+      if (unsearched) print "!" NR
+      else if (hit(joined, re, off) || hit(joined, fre, off)) print NR
       tail = joined; if (length(tail) > 400) tail = substr(tail, length(tail) - 399)
     }
     END { if (block || tpl) print "?" }' "$1"
@@ -731,6 +741,7 @@ check_oracle_files() {
         case "$n" in
           '') ;;
           '!'*) echo "9a: oracle file $path line ${n#!} is over 20000 characters and it, or the code just before it, holds the text only or fdescribe, so it was not scanned for a focused test; split the line" ;;
+          '+'*) echo "9a: oracle file $path line ${n#+} is over 1000000 characters, too long to read, so it was not scanned for a focused test; split the line" ;;
           '?') echo "9a: oracle file $path could not be scanned to the end (a comment or template literal is still open there, or a regular expression was read as one); fix it or split the file" ;;
           *) echo "9a: oracle file $path line $n holds a focused test (.only or fdescribe); it runs only that test and skips the rest, so the green means less than it says. Remove it and record the slice again with a bumped --oracle-version (rule 8)" ;;
         esac
