@@ -184,11 +184,133 @@ record_oracle() {
   [ "$status" -eq 1 ]
 }
 
-@test "rule 9a fails closed on a line too long to scan, naming it" {
-  record_oracle a.test.ts "$(printf 'const x = "%030000d";' 0)"
+@test "rule 9a fails closed on a line too long to scan that holds a focus, naming it" {
+  record_oracle a.test.ts "$(printf 'const x = "%030000d"; it.only("x", () => {});' 0)"
   run check s1
   [ "$status" -eq 1 ]
   [[ "$output" == *"9a: oracle file a.test.ts line 1 is over 20000 characters"* ]]
+  rm -rf .vetdd
+  record_oracle a.test.ts "$(printf 'const x = "%030000d"; fdescribe("x", () => {});' 0)"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.ts line 1 is over 20000 characters"* ]]
+}
+
+# --- #7: a long line with no only or fdescribe text in it is not a FAIL ------------------------------
+
+# long_code <count>: one minified-looking line of <count> statements (9 characters each), then a
+# regular expression and a division, with no only or fdescribe text.
+long_code() {
+  printf 'f("a",1);%.0s' $(seq 1 "$1")
+  printf 'var r=/x/g,d=a/b;'
+}
+
+@test "rule 9a passes a minified line over 20000 characters that holds no only or fdescribe (#7)" {
+  record_oracle a.test.js "$(long_code 3000)"$'\nit("ok", () => {});'
+  run check s1
+  [ "$status" -eq 0 ] || { echo "${output:0:400}"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "rule 9a still finds a focused test on a short line after a long one (#7)" {
+  record_oracle a.test.js "$(long_code 3000)"$'\nit.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.js line 2 holds a focused test"* ]] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a reads the comments and templates a long line opens or closes (#7)" {
+  # The long line closes the comment opened above it: the focus after it is code.
+  record_oracle a.test.js $'/* start\n'"x */ $(long_code 3000)"$'\nit.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 3 holds a focused test"* ]] || { echo "${output:0:400}"; false; }
+  [[ "$output" != *"could not be scanned to the end"* ]] || { echo "${output:0:400}"; false; }
+  # The long line opens a template literal: the focus inside it is text.
+  rm -rf .vetdd
+  record_oracle a.test.js "$(long_code 3000) const t = \`"$'\nit.only("x");\n`;\nit("ok", () => {});'
+  run check s1
+  [ "$status" -eq 0 ] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a sees a focused call split across the end of a long line (#7)" {
+  record_oracle a.test.js "$(long_code 3000) it"$'\n.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 2 holds a focused test"* ]] || { echo "${output:0:400}"; false; }
+  # A focus the line before left open (it.only, then its call on the long line) is not let through.
+  rm -rf .vetdd
+  record_oracle a.test.js $'it.only\n'"(\"x\", () => {}); $(long_code 3000)"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.js line 2 "* ]] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a reads a long line in linear time, not quadratic (#7)" {
+  # The scanner alone, on a line of statements and a regular expression at one length and at twice
+  # it. A quadratic path (substr per character, which measures the whole line on every call in macOS
+  # awk 20200816, or a regular expression blanked one space at a time) makes the longer take about
+  # four times as long; the linear scan about twice (measured here: under 1.5 seconds for the longer).
+  eval "$(sed -n '/^focused_lines() {$/,/^}$/p' "$SCRIPTS/check-evidence.sh")"
+  printf '%s\n' "$(long_code 15000)const r=/$(printf '%0300000d' 0)/;" > short.js
+  printf '%s\n' "$(long_code 30000)const r=/$(printf '%0600000d' 0)/;" > long.js
+  local t0 t1 t2 o1 o2
+  t0=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
+  o1=$(focused_lines short.js)
+  t1=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
+  o2=$(focused_lines long.js)
+  t2=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
+  [ -z "$o1" ] && [ -z "$o2" ] || { echo "found: $o1 $o2"; false; }
+  perl -e 'my ($a, $b) = ($ARGV[1] - $ARGV[0], $ARGV[2] - $ARGV[1]); print "$a $b\n"; exit($b < 3 * $a ? 0 : 1)' "$t0" "$t1" "$t2"
+}
+
+@test "rule 9a still reads what a long line it does not search opens and closes (#7)" {
+  # The long line holds the text only in its code, so it is not searched, but it closes the comment
+  # opened above it: the focus after it is code, and the file is read to its end.
+  record_oracle a.test.js $'/* start\n'"x */ const readonly = 1; $(long_code 3000)"$'\nit.only("x", () => {});'
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"line 2 is over 20000 characters"* ]] || { echo "${output:0:400}"; false; }
+  [[ "$output" == *"line 3 holds a focused test"* ]] || { echo "${output:0:400}"; false; }
+  [[ "$output" != *"could not be scanned to the end"* ]] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a searches a long line whose only text is in strings and comments (#7)" {
+  record_oracle a.test.js "const k = \"readonly\"; $(long_code 3000) /* only once */ g(\`fdescribe\`); // it.only("x")"$'\nit("ok", () => {});'
+  run check s1
+  [ "$status" -eq 0 ] || { echo "${output:0:400}"; false; }
+}
+
+@test "rule 9a fails closed when awk does not split a line into characters (#7)" {
+  # A stand-in awk that runs the real one with the self-check made to see a one-field split.
+  local real
+  real="$(command -v awk)"
+  mkdir -p "$BATS_TEST_TMPDIR/oddawk"
+  printf '#!/usr/bin/env perl\nexec "%s", map { s/split\\("ab", t, ""\\)/split("ab", t, "z")/r } @ARGV;\n' "$real" \
+    > "$BATS_TEST_TMPDIR/oddawk/awk"
+  chmod +x "$BATS_TEST_TMPDIR/oddawk/awk"
+  record_oracle a.test.ts 'it("ok", () => {});'
+  PATH="$BATS_TEST_TMPDIR/oddawk:$PATH" run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: could not scan oracle file a.test.ts"* ]] || { echo "$output"; false; }
+}
+
+@test "rule 9a fails closed, and fast, on a long line with a slash that opens no regular expression it closes (#7)" {
+  # Each (/[ starts a regular expression whose class never closes: read to the end of the line every
+  # time, a line of 21000 characters takes over a minute.
+  record_oracle a.test.js "x$(printf '(/[%.0s' $(seq 1 7000))"
+  local start=$SECONDS
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.js line 1 is over 20000 characters"* ]] || { echo "${output:0:400}"; false; }
+  [ $((SECONDS - start)) -lt 20 ]
+}
+
+@test "rule 9a fails closed on a line over 1000000 characters, which it does not read (#7)" {
+  record_oracle a.test.js "$(printf 'const x = "%01000001d";' 0)"
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"9a: oracle file a.test.js line 1 is over 1000000 characters"* ]] || { echo "${output:0:400}"; false; }
 }
 
 @test "rule 9a fails when the scanner itself fails, never OK (A3)" {

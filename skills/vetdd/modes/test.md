@@ -32,7 +32,7 @@ Work in vertical slices: one test → the smallest change that passes it → nex
 
    The skipped and todo counts of the latest green, and a latest green whose report is missing, invalid, or absent when another run of that command asked for one (give the `integrated` runs the same `--test-report`), are `WARN (9c: ...)` lines: they never fail the slice, but each goes into the reply's Attention.
 
-   Leave no `.only` (or `fdescribe`) in a JS or TS oracle file: it makes the runner skip every other test, and `check-evidence.sh` rule 9a fails the slice. Rule 9a is a tripwire for that accident, not a boundary: a renamed or wrapped focus, `fit(`, and files not named with `--oracle-file` pass it. Do not name a generated or minified file as an oracle file: a line over 20000 characters cannot be scanned and fails the slice.
+   Leave no `.only` (or `fdescribe`) in a JS or TS oracle file: it makes the runner skip every other test, and `check-evidence.sh` rule 9a fails the slice. Rule 9a is a tripwire for that accident, not a boundary: a renamed or wrapped focus, `fit(`, and files not named with `--oracle-file` pass it. Do not name a generated or minified file as an oracle file: a line over 20000 characters whose code holds the text `only` or `fdescribe` (or follows code that does) or a slash that opens a regular expression it never closes, or any line over 1000000 characters, cannot be scanned and fails the slice.
 
 4. **Make it green with the smallest change.** No speculative generality, no second behavior, no cleanup yet. Do not weaken or edit the test to match the implementation.
 
