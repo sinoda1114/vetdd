@@ -50,6 +50,9 @@
 #   runs/<seq>-planted.patch before the command runs, and the run gets planted: {patch, sha256, files},
 #   the copy's path in the slice directory, its sha256, and the repository paths the patch changes
 #   (check-evidence rule 12 checks the copy). It is validated before the command runs.
+# One writer of a slice's meta.json at a time: the run holds the slice's lock in the git dir
+# (<git dir>/vetdd-lock/<slice>, lib/meta.sh, so the git dir must be writable) from its first read to its
+# last write, the command included; a slice another script is recording is refused (exit 2).
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -63,6 +66,7 @@ vetdd_require_jq evidence.sh
 . "${BASH_SOURCE[0]%/*}/lib/test-report.sh"
 . "${BASH_SOURCE[0]%/*}/lib/mutation-report.sh"
 . "${BASH_SOURCE[0]%/*}/lib/meta.sh"
+. "${BASH_SOURCE[0]%/*}/lib/stub.sh"
 
 [ $# -ge 2 ] || die "usage: evidence.sh <slice-id> <kind> [options] -- <command...>"
 slice="$1"; kind="$2"; shift 2
@@ -227,9 +231,19 @@ if [ "$audit_opt" = undefined-imports ]; then
   [ "$(cat "$sstate/mode" 2>/dev/null)" = stub ] || die "$snot"
   [ "$(cat "$sstate/pid" 2>/dev/null)" = "$PPID" ] || die "$snot (it is not the process running this one)"
   [ -f "$sstate/files" ] && [ ! -L "$sstate/files" ] && [ -s "$sstate/files" ] || die "$snot (its list of stubbed files is missing)"
+  # is_stub <path> <sha256>: the sha256 is that of a stub lib/stub.sh writes for the path's extension
+  # (rule 10b checks the same): checked here, before anything is written, and again when the command starts.
+  is_stub() {
+    local k
+    for k in $(vetdd_stub_kinds "$1"); do
+      [ "$(vetdd_stub_text "$k" | vetdd_sha256 /dev/stdin)" != "$2" ] || return 0
+    done
+    return 1
+  }
   sf=()
   while IFS= read -r f; do
     vetdd_inside_repo "$root" "$f" && [ -f "$root/$f" ] || die "$snot (a stubbed file is not a regular file in the repository: $(printf '%s' "$f" | vetdd_printable))"
+    is_stub "$f" "$(vetdd_sha256 "$root/$f")" || die "$snot ($(printf '%s' "$f" | vetdd_printable) is not a stub calibrate.sh stub writes)"
     sf+=("$f")
   done < "$sstate/files"
 fi
@@ -300,6 +314,7 @@ if [ "$audit_opt" = undefined-imports ]; then
   stub_files_json='[]'
   for f in "${sf[@]}"; do
     sum="$(vetdd_sha256 "$root/$f")" || die "could not hash the stubbed file $(printf '%s' "$f" | vetdd_printable)"
+    is_stub "$f" "$sum" || die "$snot ($(printf '%s' "$f" | vetdd_printable) is not a stub calibrate.sh stub writes)"
     stub_files_json="$(printf '%s' "$stub_files_json" | jq -c --arg p "$f" --arg s "$sum" '. + [{path: $p, sha256: $s}]')" \
       || die "could not record the stubbed files"
   done

@@ -290,7 +290,7 @@ def vname: if . == null then "unset" else tostring end;
 AUDIT_RULES="$RUN_DEFS"'
 def audited: .audit.kind == "undefined-imports";
 # $bad: the seqs of audit runs whose audit.files are not the stubs; $old: those with no audit.files (shell).
-def listed($l): .seq as $s | any($l[]; . == $s);
+def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
 . as $meta
 | [.runs[] | select(.accepted != false)] as $accepted
 | [$accepted[] | select(usable)] as $acc
@@ -306,7 +306,7 @@ def listed($l): .seq as $s | any($l[]; . == $s);
     ($audits[] | select(.outcome == "pass") | select($g == null or oid == ($g | oid))
      | "10a: the audit run \(.seq | num) (every import stubbed with undefined) still passed, so the test observes nothing; make the test call or check the product code"),
     ($audits[] | select(listed($bad)) | select($g == null or oid == ($g | oid))
-     | "10b: undefined-imports audit run \(.seq | num) does not record the stubs calibrate.sh stub writes (audit.files: each stubbed file with the sha256 of its stub), so it is not counted; run calibrate.sh stub again"),
+     | "10b: undefined-imports audit run \(.seq | num) does not record the stubs calibrate.sh stub writes (audit.files: each stubbed file with the sha256 of its stub), so it is not counted, and the record cannot be edited back: bump --oracle-version, record the new version with oracle-version.sh first, then its red, its green, and calibrate.sh stub"),
     (if ($meta | has("audits")) and ($meta.audits | type) != "array"
      then "10: audits is not an array, so the audit notes cannot be checked"
      elif $opted and $g != null then
@@ -697,7 +697,9 @@ STUB_RUNS='
   .runs[] | select(type == "object" and .accepted != false and (.audit | type) == "object"
                    and .audit.kind == "undefined-imports" and (.seq | type) == "number")
   | (.seq | floor | tostring) as $s
-  | if (.audit | has("files")) | not then [$s, "old", "", ""]
+  # A seq that is not a whole number would be compared floored with the rules, which read it as is.
+  | if .seq != (.seq | floor) then [$s, "bad", "", ""]
+    elif (.audit | has("files")) | not then [$s, "old", "", ""]
     elif (.audit.files | type) == "array" and (.audit.files | length) > 0
          and all(.audit.files[]; type == "object" and (.path | type) == "string" and (.path | length) > 0
                  and (.path | explode | all(. != 0)) and (.sha256 | type) == "string" and (.sha256 | test("^[0-9a-f]{64}$")))

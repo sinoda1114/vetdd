@@ -127,6 +127,42 @@ sum_of_text() { printf "$1" > "$BATS_TEST_TMPDIR/text.sum"; sha256_of "$BATS_TES
   [ "$(readlink "$(lock_of s1.takeover)")" = "pid:$$" ]
 }
 
+@test "review r2: a lock whose name is a link to a directory is refused, and nothing is written into the directory" {
+  local lock; lock="$(lock_of s1)"
+  mkdir -p "${lock%/*}/pid:$$"
+  ln -s "pid:$$" "$lock"
+  run ev s1 calibration -- touch ran
+  [ "$status" -eq 2 ]
+  [ ! -e ran ]
+  [ -z "$(ls -A "${lock%/*}/pid:$$")" ]
+}
+
+@test "review r2: a lock names its holder's start time: a live pid that started at another time is a reused pid, so the lock is taken over" {
+  local lock; lock="$(lock_of s1)"
+  mkdir -p "${lock%/*}"
+  ln -s "pid:$$:-:Mon_Jan__1_00:00:00_2001" "$lock"
+  run ev s1 calibration -- true
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -L "$lock" ]
+  # With this process's own start time it is held.
+  ln -s "pid:$$:-:$(. "$SCRIPTS/lib/meta.sh"; vetdd_proc_start "$$")" "$lock"
+  run ev s1 calibration -- true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"pid $$"* ]]
+}
+
+@test "review r2: a lock made in another pid namespace is never taken over, whatever kill says" {
+  [ -e /proc/self/ns/pid ] || skip "no pid namespaces here"
+  local lock dead; lock="$(lock_of s1)"
+  sh -c 'exit 0' & dead=$!; wait "$dead" || true
+  mkdir -p "${lock%/*}"
+  ln -s "pid:$dead:pid_[1]:x" "$lock"
+  run ev s1 calibration -- touch ran
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"namespace"* ]]
+  [ ! -e ran ]
+}
+
 @test "an oracle-version.sh entry cannot slip in while evidence.sh runs the slice's command" {
   ev s1 calibration --oracle-version v1 --oracle-file test.sh -- sh -c 'touch started; i=0; while [ ! -e go ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done; exit 1' >/dev/null 2>&1 &
   local bg=$! i=0
@@ -233,6 +269,23 @@ sum_of_text() { printf "$1" > "$BATS_TEST_TMPDIR/text.sum"; sha256_of "$BATS_TES
   [ "$(mq s1 '.runs[-1].audit.files | tojson')" = "[{\"path\":\"ignored/stub.mjs\",\"sha256\":\"$(sum_of_text 'export {};\n')\"}]" ]
 }
 
+@test "review r2: evidence.sh refuses a stub state that lists a file that is not a stub, before the command runs" {
+  local st; st="$(git rev-parse --absolute-git-dir)/vetdd-calib/s1"
+  mkdir -p "$st" && echo stub > "$st/mode"
+  printf 'value.txt\n' > "$st/files"
+  run bash -c 'echo "$$" > "$1/pid"; "$2" s1 calibration --audit undefined-imports -- touch ran; rc=$?; exit "$rc"' _ "$st" "$SCRIPTS/evidence.sh"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not a stub"* ]]
+  printf 'export const real = 1;\n' > real.mjs
+  printf 'real.mjs\n' > "$st/files"
+  run bash -c 'echo "$$" > "$1/pid"; "$2" s1 calibration --audit undefined-imports -- touch ran; rc=$?; exit "$rc"' _ "$st" "$SCRIPTS/evidence.sh"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not a stub"* ]]
+  [ ! -e ran ]
+  [ ! -e .vetdd/evidence/s1/meta.json ]
+  rm -rf "$st"
+}
+
 @test "rule 10b does not count an audit run whose recorded files are not the stubs, and warns on one from before the record" {
   record_good_slice s1
   stub_ev s1 --oracle-version v1 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
@@ -241,13 +294,13 @@ sum_of_text() { printf "$1" > "$BATS_TEST_TMPDIR/text.sum"; sha256_of "$BATS_TES
   [ "$output" = "s1: OK" ]
   cp "$REPO/.vetdd/evidence/s1/meta.json" "$BATS_TEST_TMPDIR/keep.json"
   local f
-  for f in '.runs[-1].audit.files[0].sha256 += "\u0000"' '.runs[-1].audit.files[0].sha256 |= ascii_upcase' '.runs[-1].audit.files[0].sha256 = ("0" * 64)' '.runs[-1].audit.files = []' '.runs[-1].audit.files = [{"path": "", "sha256": .runs[-1].audit.files[0].sha256}]' \
+  for f in '.runs[-1].seq = 3.5 | .runs[-1].audit.files[0].sha256 = ("0" * 64)' '.runs[-1].audit.files[0].sha256 += "\u0000"' '.runs[-1].audit.files[0].sha256 |= ascii_upcase' '.runs[-1].audit.files[0].sha256 = ("0" * 64)' '.runs[-1].audit.files = []' '.runs[-1].audit.files = [{"path": "", "sha256": .runs[-1].audit.files[0].sha256}]' \
            '.runs[-1].audit.files[0].path = "value.txt"' '.runs[-1].audit.files = "x"'; do
     cp "$BATS_TEST_TMPDIR/keep.json" "$REPO/.vetdd/evidence/s1/meta.json"
     tamper s1 "$f"
     run check s1
     [ "$status" -eq 1 ] || { echo "$f: $output"; false; }
-    [[ "$output" == *"s1: FAIL (10b: undefined-imports audit run 3 does not record the stubs calibrate.sh stub writes"* ]] || { echo "$f: $output"; false; }
+    [[ "$output" == *"s1: FAIL (10b: undefined-imports audit run 3 does not record the stubs calibrate.sh stub writes"*"bump --oracle-version"* ]] || { echo "$f: $output"; false; }
   done
   # A caught audit recorded before audit.files existed still counts, with a warning.
   cp "$BATS_TEST_TMPDIR/keep.json" "$REPO/.vetdd/evidence/s1/meta.json"

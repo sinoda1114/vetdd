@@ -31,7 +31,7 @@ vetdd_file_id() { stat -L -c '%i:%h' "$1" 2>/dev/null || stat -L -f '%i:%l' "$1"
 # was opened must be the file the name was checked for (its inode, with a single link: a hard link would
 # be another name outside .vetdd/notes/), and every other check is on what was read from it.
 vetdd_text_file() {
-  local opt="$1" path="$2" root="$3" shown d copy n why="" content="" fd_id
+  local opt="$1" path="$2" root="$3" shown d base real copy n why="" content="" fd_id
   shown="$(printf '%s' "$path" | vetdd_printable)"
   case "$path" in -*) path="./$path" ;; esac  # dirname would read it as an option
   [ -f "$path" ] && [ ! -L "$path" ] || die "$opt: $shown is not a regular file"
@@ -40,11 +40,18 @@ vetdd_text_file() {
     "$root/.vetdd/notes/"*) ;;
     *) die "$opt: $shown is not in .vetdd/notes/ of this repository; write the text to a file there and pass its path" ;;
   esac
-  # Read through a redirection: a name of - is this file, not standard input.
-  { exec 7< "$path"; } 2>/dev/null || die "$opt: cannot read the file"
+  base="${path##*/}"
+  # Opened by the directory as resolved, then checked again: the directory still resolves there, the name
+  # is not a link, and what was opened is the file the name holds (its inode; where /proc tells, its
+  # real path is in .vetdd/notes/ too).
+  { exec 7< "$d/$base"; } 2>/dev/null || die "$opt: cannot read the file"
   fd_id="$(vetdd_file_id /dev/fd/7)"
-  if [ -z "$fd_id" ] || [ "$fd_id" != "$(vetdd_file_id "$path")" ] || [ -L "$path" ]; then
+  if [ -z "$fd_id" ] || [ "$fd_id" != "$(vetdd_file_id "$d/$base")" ] || [ -L "$d/$base" ] \
+     || [ "$(CDPATH='' cd -P -- "$(dirname -- "$path")" 2>/dev/null && pwd -P)" != "$d" ]; then
     exec 7<&-; die "$opt: $shown changed while it was opened"
+  fi
+  if real="$(readlink /proc/self/fd/7 2>/dev/null)" && [ -n "$real" ]; then
+    case "$real" in "$root/.vetdd/notes/"*) ;; *) exec 7<&-; die "$opt: $shown changed while it was opened" ;; esac
   fi
   if [ "${fd_id#*:}" != 1 ]; then
     exec 7<&-; die "$opt: $shown has another hard link (a name that may be outside .vetdd/notes/); write the text to a new file there"
