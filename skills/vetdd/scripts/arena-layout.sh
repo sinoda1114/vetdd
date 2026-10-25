@@ -20,7 +20,7 @@
 #   <out> must be outside the repository or under its .vetdd/.
 # Exit 0 built (it prints the judge.sh command with references/arena-rubric.md), or exactly one lane
 # is green (it is chosen without a comparison, named in <out>/chosen; no judge command is printed); 1 a local step
-# failed; 2 usage error (nothing is written); 4 a lane's layout is not blind; 5 no lane is green
+# failed; 2 usage error, or a lane marked abandoned (worktree.sh abandon) (nothing is written); 4 a lane's layout is not blind; 5 no lane is green
 # (a stall: no candidates are written).
 set -u
 unset CDPATH
@@ -93,6 +93,8 @@ for l in "${lanes[@]}"; do
   case "$seen" in *" $l "*) die "lane $(p "$l") is named twice" ;; esac
   seen="$seen$l "
   git -C "$root" rev-parse -q --verify "refs/heads/vetdd/$l" >/dev/null || die "no branch vetdd/$(p "$l")"
+  ! vetdd_abandoned "$root" "$l" \
+    || die "lane $(p "$l") is abandoned (.vetdd/evidence/$(p "$l")/abandoned, worktree.sh abandon); leave it out of the arena"
   [ ! -e "$wtroot/$l" ] && [ ! -L "$wtroot/$l" ] \
     || die "lane $(p "$l") is still in a worktree; check it and bring it back first (worktree.sh check $(p "$l"), then remove $(p "$l") --keep-branch)"
   [ -f "$root/.vetdd/notes/$l-design.md" ] && [ ! -L "$root/.vetdd/notes/$l-design.md" ] \

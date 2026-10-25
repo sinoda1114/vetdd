@@ -29,6 +29,19 @@
 #          worktree the parent makes (its own .git, never a runner's), with the main repository's
 #          .vetdd/evidence/<slice>/ and .vetdd/notes/, so the lane can be checked and laid out for the
 #          judge (parallel/arena.md); remove it again with `remove <slice> --keep-branch`
+#        worktree.sh abandon <slice> --cause stall|conflict|lost [--replaced-by <id>]
+#          once the slice's worktree is gone (remove brought its evidence back) and the slice is left out
+#          of the merge: marks it abandoned in the main repository, .vetdd/evidence/<slice>/abandoned
+#          ({"cause", "replaced_by" when given, "recorded_at" in UTC}; meta.json is not changed), so
+#          check-evidence.sh reports it ABANDONED instead of failing it (rule 11 still asks a stall for
+#          its handovers) and judge-layout.sh, arena-layout.sh, and evidence.sh refuse it. stall: a
+#          stalled worker (references/stall.md); conflict: a unit whose merge conflicted or whose
+#          integrated run went red (parallel/swarm.md); lost: an arena lane that was not chosen
+#          (parallel/arena.md); --replaced-by: the slice id of its redesign or of the chosen lane.
+#          Only the parent writes the mark: remove never brings a worker's own back. Refuses a slice
+#          with no evidence in the main repository or that no worktree.sh add made (exit 2), and one
+#          whose worktree is still there, whose branch is merged into HEAD, already marked, or that
+#          another vetdd script is recording (it takes the slice's lock, lib/meta.sh) (exit 1)
 #        worktree.sh list
 #          prints "<slice>\t<path>\t<branch>" for each worker worktree
 # Exit 0 done; 1 a local step failed or would lose or overwrite work; 2 usage error.
@@ -41,7 +54,7 @@ here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$here/lib/common.sh"
 . "$here/lib/text.sh"
 
-usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] [--no-evidence] [--at <commit>] | review <slice> [--at <commit>] | list"
+usage="usage: worktree.sh add <slice> [--base <ref>] [--link <ignored path>]... [-- <command...>] | check <slice> | remove <slice> [--keep-branch] [--no-evidence] [--at <commit>] | review <slice> [--at <commit>] | abandon <slice> --cause stall|conflict|lost [--replaced-by <id>] | list"
 [ $# -ge 1 ] || die "$usage"
 cmd="$1"; shift
 
@@ -135,6 +148,27 @@ branch_at() {
   now="$(pgit rev-parse -q --verify "refs/heads/vetdd/$1^{commit}")" || now="nothing"
   [ "$now" = "$2" ] \
     || die "vetdd/$(p "$1") moved since check (it is at $now, not at $2): a worker may still be at work; stop it, then check the branch again" 1
+}
+
+# same_evidence <worker dir> <main dir>: true when the two hold the same files, the mark at the top
+# (abandoned, the parent's own: abandon) left out of the comparison on either side; a file of that name
+# deeper in is compared like any other.
+same_evidence() {
+  local out rc=0 line
+  # A name with a new line could forge a line of the diff below: such evidence is never the same.
+  [ -z "$(find "$1" "$2" -name "$(printf '*\n*')" -print 2>/dev/null | head -n 1)" ] || return 1
+  out="$(diff -r -q -- "$1" "$2" 2>&1)" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  [ "$rc" -eq 1 ] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "Only in $1: abandoned"|"Only in $2: abandoned"|"Files $1/abandoned and $2/abandoned differ") ;;
+      *) return 1 ;;
+    esac
+  done <<EOF_DIFF
+$out
+EOF_DIFF
+  return 0
 }
 
 # files_under <dir>: each regular file below <dir>, relative to it, NUL-separated.
@@ -311,7 +345,8 @@ $(p "$dirty")" 1
       d="${d%/}"; s="${d##*/}"
       vetdd_is_slice_id "$s" || die "the worktree of $(p "$slice") holds evidence under a name that is not a slice id: $(p "$s"); nothing was copied" 1
       evs+=("$s")
-      if [ -e "$root/.vetdd/evidence/$s" ] && ! diff -r -q "$d" "$root/.vetdd/evidence/$s" >/dev/null 2>&1; then
+      # The mark is the parent's (abandon): a worker's own is never brought back, nor a difference.
+      if [ -e "$root/.vetdd/evidence/$s" ] && ! same_evidence "$d" "$root/.vetdd/evidence/$s"; then
         die "the main repository already has different evidence for $(p "$s") (.vetdd/evidence/$(p "$s")); nothing was copied" 1
       fi
     done
@@ -330,6 +365,10 @@ $(p "$dirty")" 1
       [ -e "$root/.vetdd/evidence/$s" ] && continue
       mkdir -p -- "$root/.vetdd/evidence" && cp -R -- "$path/.vetdd/evidence/$s" "$root/.vetdd/evidence/$s" \
         || die "cannot copy the evidence of $(p "$s")" 1
+      if [ -e "$root/.vetdd/evidence/$s/abandoned" ]; then
+        rm -rf -- "$root/.vetdd/evidence/$s/abandoned" || die "cannot leave out the abandoned mark of $(p "$s")" 1
+        printf 'left out the abandoned mark the worker wrote for %s: only the parent marks a slice abandoned (worktree.sh abandon)\n' "$(p "$s")"
+      fi
       [ "$s" = "$slice" ] || printf 'brought back evidence recorded under another slice id: %s\n' "$(p "$s")"
     done
     for d in artifacts notes; do
@@ -395,6 +434,66 @@ $(p "$dirty")" 1
       cp -R -- "$root/.vetdd/notes" "$path/.vetdd/notes" || undo "cannot copy the notes"
     fi
     printf '%s\n' "$path"
+    ;;
+
+  abandon)
+    vetdd_require_jq worktree.sh
+    slice_arg "$@"; slice="$1"; shift
+    cause=""; repl=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --cause) [ $# -ge 2 ] || die "--cause needs stall, conflict, or lost"; cause="$2"; shift 2 ;;
+        --replaced-by) [ $# -ge 2 ] || die "--replaced-by needs a slice id"; repl="$2"; shift 2 ;;
+        *) die "$usage" ;;
+      esac
+    done
+    case "$cause" in
+      stall|conflict|lost) ;;
+      *) die "--cause takes stall, conflict, or lost: $(p "$cause")" ;;
+    esac
+    if [ -n "$repl" ]; then
+      vetdd_is_slice_id "$repl" || die "--replaced-by takes a slice id: $(p "$repl")"
+      [ "$repl" != "$slice" ] || die "--replaced-by names the slice itself; name its redesign or the chosen lane"
+    fi
+    dir="$root/.vetdd/evidence/$slice"
+    for d in "$root/.vetdd" "$root/.vetdd/evidence" "$dir"; do
+      [ ! -L "$d" ] || die "${d#"$root"/} is a symbolic link; the mark is written only inside the repository" 1
+    done
+    # The slice's lock (lib/meta.sh), as its record's writers hold it: no run is recorded while it is marked.
+    . "$here/lib/meta.sh"
+    vetdd_slice_lock "$slice" || die "$VETDD_SLICE_LOCK_ERR" 1
+    trap 'vetdd_slice_unlock' EXIT
+    # The worker's worktree first: its evidence comes back with remove, which would find this mark.
+    ! git -C "$root" worktree list --porcelain | grep -qxF "worktree $wtroot/$slice" \
+      || die "the worktree of $(p "$slice") is still there; bring its evidence back first (worktree.sh check $(p "$slice"), then remove $(p "$slice") --keep-branch)" 1
+    [ -f "$dir/meta.json" ] && [ ! -L "$dir/meta.json" ] \
+      || die "no evidence for $(p "$slice") in the main repository (.vetdd/evidence/$(p "$slice")/meta.json); bring it back first (worktree.sh check, then remove --keep-branch)"
+    # Only a worker's slice is left out of a merge: one worktree.sh add made (its record stays after remove).
+    [ -f "$swarmdir/$slice.sum" ] \
+      || die "$(p "$slice") is not a worker's slice (no record of worktree.sh add $(p "$slice")); only a swarm unit or an arena lane left out of the merge is marked abandoned"
+    # A slice merged into HEAD is delivered, not abandoned: a merge commit there has the branch tip as a
+    # parent, or the subject swarm and arena merge with (Merge vetdd/<slice>), which still holds once
+    # the branch is deleted. A fast-forward merge is not one they make.
+    merged=0
+    if tip="$(pgit rev-parse -q --verify "refs/heads/vetdd/$slice^{commit}")"; then
+      pgit rev-list --merges --parents HEAD 2>/dev/null | awk -v t="$tip" '{ for (i = 3; i <= NF; i++) if ($i == t) f = 1 } END { exit !f }' \
+        && merged=1
+    fi
+    pgit log --merges --format=%s HEAD 2>/dev/null | grep -qxF "Merge vetdd/$slice" && merged=1
+    [ "$merged" -eq 0 ] \
+      || die "vetdd/$(p "$slice") is merged into HEAD, so the slice is delivered, not abandoned; undo the merge first (git reset --hard ORIG_HEAD) if it is to be left out" 1
+    mark="$dir/abandoned"
+    ! { [ -e "$mark" ] || [ -L "$mark" ]; } || die "$(p "$slice") is already marked abandoned (.vetdd/evidence/$(p "$slice")/abandoned); nothing was changed" 1
+    when="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || die "cannot read the time" 1
+    # Written beside it first, then moved without overwriting: a name taken in between is never written through.
+    tmp="$(mktemp "$dir/.abandoned.XXXXXX")" || die "cannot write in .vetdd/evidence/$(p "$slice")" 1
+    if ! jq -n --arg c "$cause" --arg r "$repl" --arg t "$when" \
+           '{cause: $c} + (if $r == "" then {} else {replaced_by: $r} end) + {recorded_at: $t}' > "$tmp" \
+       || ! chmod 644 "$tmp" || ! mv -n -- "$tmp" "$mark" || [ -e "$tmp" ]; then
+      rm -f -- "$tmp"
+      die "cannot write .vetdd/evidence/$(p "$slice")/abandoned (the name was taken)" 1
+    fi
+    printf 'marked %s abandoned (%s%s): .vetdd/evidence/%s/abandoned\n' "$(p "$slice")" "$cause" "${repl:+, replaced by $repl}" "$(p "$slice")"
     ;;
 
   list)

@@ -7,7 +7,8 @@
 #           (4) infrastructure_error / inconclusive never count as red or green
 # Final:    (5) the latest after/integrated tree_hash matches the current working tree
 #           (6) oracle.files sha256 match the current files
-# Focus:    (9a) no focused test (.only, fdescribe) in a JS or TS oracle file: it would run only that
+# Focus:    (9a) no focused test (.only, fdescribe) in a JS or TS oracle file (lib/common.sh
+#               VETDD_JS_TS_RE, as for 10c): it would run only that
 #               test and skip the rest. The file is read as code (comments, strings, templates, and
 #               regular-expression literals blanked, across lines). A best-effort tripwire for an
 #               accident, not a boundary, frozen as it is (#7): fit(, a renamed or wrapped focus, a
@@ -40,8 +41,8 @@
 #               (runs/<seq>-<kind>.tests.json, opened by a name made from seq and kind, only through a
 #               safe path, and only if its sha256 matches the record). A command whose latest green has no
 #               usable report (absent, missing, invalid) is not compared (9c warns), nor is a command that
-#               never went green (its runs back no green); a copy that cannot be
-#               read for a run recorded ok fails. This is IDS's count of unfinished tests (the Admitted
+#               never went green (its runs back no green); a copy that cannot be read for a run of the
+#               final version recorded ok fails (the copies of an older version are history: not opened). This is IDS's count of unfinished tests (the Admitted
 #               holes), taken from the runner's report. A tripwire, not a boundary: a test that
 #               disappears altogether, a changed command (a name filter), a renamed test, tests sharing a
 #               file and a name (read as one), a skip written into an oracle file itself (its hash change
@@ -49,7 +50,9 @@
 #               and a copy and its sha256 both rewritten by hand all pass it.
 #           (9c) a warning, never a failure, per command that asked for a report at some point (among the
 #               runs of the final version): its own latest green run has skipped or todo tests (counts
-#               shown), or has no usable report. A command that never asked for one (a type check) and a
+#               shown; when an earlier run of the same command has a copy, split into those skipped or
+#               todo already in the first such run, as a name filter leaves the same tests out each
+#               time, and the newly skipped or todo), or has no usable report. A command that never asked for one (a type check) and a
 #               slice whose runs never record a report (old evidence) are not warned: a blind spot.
 # Audit:    (10a) a calibration run marked audit undefined-imports (calibrate.sh stub: every product file the
 #               oracle imports replaced by a stub with undefined exports) that is accepted and ended pass,
@@ -83,14 +86,16 @@
 #               is caught; with no such run, a mutation
 #               note written after the final oracle first ran. Ignored mutants are a WARN (10c). Asked
 #               of a slice whose final oracle has a JS or TS file (.js .jsx .mjs .cjs .ts .tsx .mts
-#               .cts), and of any other slice with a mutation run or note. A tripwire, not a boundary: it trusts the
+#               .cts, any letter case: lib/common.sh VETDD_JS_TS_RE, as for 9a), and of any other slice
+#               with a mutation run or note. A tripwire, not a boundary: it trusts the
 #               report (what Stryker mutated and how it ran), a vitest command it cannot read (options,
 #               double quotes, a non-ASCII, // or .. path) is a WARN, a command without vitest (a verify
 #               wrapper) is not read, a filter that matches can still select more files (the ts-kata
 #               config refuses that), and the ranges are the judge's to check. A mutated source with a
 #               bidirectional or other control character is a WARN.
-# Stall:    (11) every handover file (.vetdd/evidence/<slice>/handover-<n>.md, handover.sh: the mark of
-#               a redesign) has each heading. A record that holds more stalls (lib/stall.sh with the
+# Stall:    (11) every handover file (.vetdd/evidence/<slice>/handover-<n>.md, n = 1, 2, ... as handover.sh
+#               names it: the mark of a redesign; another name, such as handover-draft.md, is not one)
+#               has each heading. A record that holds more stalls (lib/stall.sh with the
 #               default K = 2) than handovers is a WARN, not a FAIL: the agreement can change K, and
 #               a worker reports a stall rather than writing the handover. A tripwire, not a boundary:
 #               it checks that the diagnosis was written down, not that it is right.
@@ -100,13 +105,22 @@
 #               matches the recorded sha256, as rule 10c checks the mutation report's copy. A run without
 #               the field (an unfix, a plain calibration, evidence from before it) is not asked. A
 #               tripwire, not a boundary: a copy and its sha256 both rewritten by hand pass it.
+# Abandoned: a slice the parent marked abandoned in a swarm or an arena (.vetdd/evidence/<slice>/abandoned,
+#         worktree.sh abandon: a stall, a conflict, or a lane that lost) is not delivered: rules 1-10 and 12
+#         are not asked of it, and it is not a failure; with cause stall, rule 11 still is (its handovers are
+#         the redesign's record). A mark that is not what worktree.sh abandon writes (one JSON object with
+#         cause, recorded_at, and an optional replaced_by; a regular file) fails the slice.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
 #         "<slice>: WARN (9c|10b|10c|11: <reason>)" line per warning (advice for the reply's Attention section;
-#         it holds no recorded text).
+#         it holds no recorded text). An abandoned slice gets "<slice>: ABANDONED (<cause>[, replaced by
+#         <id>])" first, then its rule 11 FAIL and WARN lines, if any.
 # --before-close (the pre-commit hook; also VETDD_BEFORE_CLOSE=1, which lib/common.sh sets in any
-#         pre-commit hook): a slice whose mutation audit has not run yet gets a 10c WARN, not
-#         a FAIL, since the audit waits for Close; every other failure stays a FAIL.
-# Exit code: number of failing slices (capped at 125; a WARN line never counts); 2 on usage errors.
+#         pre-commit hook): a slice whose final oracle has a JS or TS file and whose mutation audit has
+#         not run yet gets a 10c WARN, not a FAIL, since the audit waits for Close (Close step 3 is what
+#         stops it); every other failure stays a FAIL, also the missing audit of another slice with a
+#         mutation run or note (one recorded before its last green no longer counts).
+# Exit code: number of failing slices (capped at 125; a WARN or ABANDONED line never counts); 2 on usage
+#         errors.
 set -u
 
 die() { printf 'check-evidence.sh: %s\n' "$1" >&2; exit 2; }
@@ -334,8 +348,8 @@ def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
 
 # Rule 10c, over the accepted runs and the audits log: the mutation audit of the final oracle. One JSON
 # object: problems and warnings (rule text with run numbers only), and the files of the judged run for
-# the shell to hash. Asked of a slice whose final oracle has a JS or TS file, and of any other slice with
-# a mutation run or a mutation note.
+# the shell to hash. Asked of a slice whose final oracle has a JS or TS file ($jsts_re, VETDD_JS_TS_RE),
+# and of any other slice with a mutation run or a mutation note.
 MUTATION_RULES="$RUN_DEFS$VETDD_JQ_CLEAN"'
 def nn: if type == "number" and . >= 0 then . else error("not a count") end;
 def mut: (.audit | type) == "object" and .audit.kind == "mutation";
@@ -344,8 +358,9 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
 # A final oracle with a JS or TS file is always asked (#25: Stryker covers those languages); any other
 # slice only once it has a mutation run or note.
+| ($g != null and ([$g.oracle.files[]? | .path? | strings | select(test($jsts_re))] | length > 0)) as $jsts
 | (([$meta.runs[] | mut] | any) or ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation")] | length > 0)
-   or ($g != null and ([$g.oracle.files[]? | .path? | strings | select(test("\\.([cm]?[jt]s|[jt]sx)$"; "i"))] | length > 0))) as $opted
+   or $jsts) as $opted
 | if ($opted | not) or $g == null then {problems: [], warns: [], files: [], copy: null}
   else
     ($g | oid) as $fo
@@ -359,9 +374,10 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
           and (.reason | type) == "string" and (.reason | length) > 0 and counts_for($first; $first_seq))] | length) as $noted
     | if $m == null then
         ("10c: no mutation audit for the final oracle after its last green run; run VETDD_MUTATION_TESTS=<the slice'"'"'s test files, one per line> evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>") as $missing
-        # Before Close (the pre-commit hook) the audit is not due yet: say so, do not block.
+        # Before Close (the pre-commit hook) the audit of a JS or TS slice is not due yet: say so, do not
+        # block. Another slice is asked only once it ran an audit or wrote a note: a missing one fails.
         | if $noted > 0 then {copy: null, problems: [], warns: [], files: []}
-          elif $before_close then {copy: null, problems: [], warns: [$missing + " (due in Close; not yet run)"], files: []}
+          elif $before_close and $jsts then {copy: null, problems: [], warns: [$missing + " (due in Close; not yet run)"], files: []}
           else {copy: null, problems: [$missing], warns: [], files: []} end
       else
         ($m.seq | num) as $s | $m.audit.report as $rep
@@ -441,17 +457,21 @@ PLANTED_RUNS='
         then "\($s)\t\(.planted.sha256)\tok" else "\($s)\t-\tbad" end
     else "?" end'
 
-# Warnings (rule 9c) travel in a file, apart from the problems that decide pass or fail.
-warn_file="$(mktemp "${TMPDIR:-/tmp}/check-evidence.XXXXXX")" || die "cannot create a temporary file"
-trap 'rm -f "$warn_file"' EXIT
+# Warnings (rules 9c, 10c, 11) travel on the same stdout as the problems, each line prefixed with $WARN;
+# every other line is a problem and decides pass or fail. A problem always starts with its rule, so one
+# whose recorded text holds a new line still fails the slice (the rest of it may show as a warning).
+WARN="$(printf 'warn\t')"
 
 current_tree="$(vetdd_tree_hash "$root")" || current_tree=""
 
-# Rule 9b, step 1: the accepted runs that recorded a usable report, one line each: seq, kind, sha256 of
-# the copy ("-" when the record has none), and the command as one line of JSON. A run whose seq or kind
-# is not what evidence.sh writes prints "?": the copy's name is made from them, so nothing else is opened.
+# Rule 9b, step 1: the accepted runs of the version the final green rests on ($fv) that recorded a usable
+# report, one line each: seq, kind, sha256 of the copy ("-" when the record has none), and the command as
+# one line of JSON. A run under an older version is history: its copy is never opened. A run whose seq
+# or kind is not what evidence.sh writes prints "?": the copy's name is made from them, so nothing else
+# is opened.
 REPORT_RUNS='
-  .runs[] | select(.accepted != false and .audit == null and (.tests | type) == "object" and .tests.status == "ok")
+  .runs[] | select(.accepted != false and .audit == null and (.tests | type) == "object" and .tests.status == "ok"
+                   and .oracle.version == $fv)
   | if (.seq | type) == "number" and .seq >= 1 and .seq < 1000000 and .seq == (.seq | floor)
        and (.kind == "before" or .kind == "calibration" or .kind == "after" or .kind == "integrated")
     then "\(.seq | floor | tostring)\t\(.kind)\t\(.tests.sha256 | if type == "string" and length == 64 and test("^[0-9a-f]{64}$") then . else "-" end)\t\(.cmd | tojson)\t\(.oracle.version | tojson)"
@@ -498,8 +518,29 @@ def show: tostring | explode | map(select(. > 31 and (. < 127 or . > 159) and . 
 | ($f[:$max][] | "9b: test \"\(.d.name | show)\" in \(.d.file | show) ran (\(.was)) in run \(.e) but is \(.d.status) in run \(.l), the latest green of the same command and oracle version; a test that stops running makes the green mean less than it says. Run it again; if it is meant to be \(.d.status), bump --oracle-version, record why with oracle-version.sh, and record the slice again"),
   (if ($f | length) > $max then "9b: and \($f | length - $max) more tests ran in an earlier run and are skipped or todo in the latest green of their command" else empty end)'
 
+# Rule 9c, over the same input as TEST_DROP_RULES: per command of the final version whose latest green
+# (as 9b reads it) has a copy and an earlier run of it has one too, its skipped and todo tests split in
+# two: those skipped or todo already in the first run of the command with a copy (a name filter leaves
+# the same tests out every time), and the rest (newly skipped or todo). One array of
+# {cmd, l: the latest green, f: the first run, old, new}.
+SKIP_SPLIT='
+def idle: .status == "skipped" or .status == "pending" or .status == "disabled" or .status == "todo";
+(. | map(select(.m != true))) as $copies
+| (. | map(select(.m == true))) as $marks
+| [ ($copies | map(select(.ov == $fv)) | group_by(.cmd | tojson)[]) | sort_by(.seq) | . as $g
+  | ([$marks[] | select(.cmd == $g[0].cmd and .ov == $fv and (.kind == "after" or .kind == "integrated")) | .seq] | max) as $ls
+  | select($ls != null and $g[0].seq < $ls)
+  | ([$g[] | select(.seq == $ls)] | first) as $l
+  | select($l != null)
+  # The tests idle in the first run: every result of the test (file and name) skipped or todo there.
+  | (reduce ($g[0].tests | group_by([.file, .name])[] | select(all(.[]; idle)) | [.[0].file, .[0].name] | tojson) as $k
+       ({}; .[$k] = true)) as $was
+  | [$l.tests[] | select(idle) | ($was[[.file, .name] | tojson] == true)] as $d
+  | {cmd: $l.cmd, l: $ls, f: $g[0].seq, old: ($d | map(select(.)) | length), new: ($d | map(select(. | not)) | length)}
+]'
+
 # Rule 9c: warnings only (no recorded text in them: counts, a run number, and fixed words). A count that
-# is not a number is an error: nothing prints, and the caller fails the slice.
+# is not a number is an error: nothing prints, and the caller fails the slice. $splits is SKIP_SPLIT's.
 TEST_WARN_RULES='
 def num: if type == "number" then . else error("not a number") end;
 # Per command, among the runs of the version the final green rests on: the commands that asked for a
@@ -514,7 +555,11 @@ def num: if type == "number" then . else error("not a number") end;
 | if ($l.tests | type) == "object" and $l.tests.status == "ok" then
     (($l.tests.skipped | num) as $sk | ($l.tests.todo | num) as $td
      | select($sk + $td > 0)
-     | "9c: \($sk) skipped and \($td) todo tests in the latest \($l.kind) run \($s), counted from the runner'"'"'s report (tests left out by a name filter count as skipped); they did not run, so the green says nothing about them. Put them in the reply'"'"'s Attention")
+     | ([$splits[] | select(.cmd == $l.cmd and .l == $l.seq)] | first) as $sp
+     | "9c: \($sk) skipped and \($td) todo tests in the latest \($l.kind) run \($s), counted from the runner'"'"'s report (tests left out by a name filter count as skipped)"
+       + (if $sp == null then ""
+          else ": \($sp.old | num) of them were skipped or todo already in run \($sp.f | num | floor), the first run of the same command with a report (as a name filter leaves the same tests out every time), and \($sp.new | num) are newly skipped or todo" end)
+       + "; they did not run, so the green says nothing about them. Put them in the reply'"'"'s Attention")
   elif ($l.tests | type) == "object" then
     "9c: the latest \($l.kind) run \($s) asked for a test report but it is \(if $l.tests.status == "missing" then "missing" elif $l.tests.status == "invalid" then "invalid" else "unusable" end); skipped and todo tests cannot be counted. Put this in the reply'"'"'s Attention"
   else
@@ -690,7 +735,7 @@ check_slice() {
 }
 
 # Rule 10: the stubbed files each undefined-imports audit run records, compared with the stubs
-# calibrate.sh stub writes (lib/stub.sh), then the rules. Problems on stdout, warnings to $warn_file.
+# calibrate.sh stub writes (lib/stub.sh), then the rules. Problems on stdout, warnings too, prefixed with $WARN.
 # STUB_RUNS: per accepted audit run, NUL-separated groups of four: seq, how (file, old: no audit.files,
 # bad: a record of another shape), and for each file its path and sha256.
 STUB_RUNS='
@@ -733,7 +778,7 @@ check_audit() {
   [ -n "$out" ] || return 0
   # A warning line is made by the rules alone (run numbers and fixed words), never from recorded text.
   printf '%s\n' "$out" | grep -v '^WARN:' || true
-  printf '%s\n' "$out" | sed -n 's/^WARN://p' >> "$warn_file"
+  printf '%s\n' "$out" | sed -n 's/^WARN://p' | while IFS= read -r l; do printf '%s%s\n' "$WARN" "$l"; done
 }
 
 # Rule 12: the copy of each planted patch, named from the run's seq, never from a path in the record.
@@ -758,10 +803,14 @@ check_planted() {
 
 # Rule 11: one handover per stall in the record, each with every heading.
 check_stall() {
-  local slice="$1" meta="$2" dir="$evidence_dir/$1" n have=0 f h miss
+  local slice="$1" meta="$2" dir="$evidence_dir/$1" n have=0 f h miss n_
   n="$(jq -r "$VETDD_STALL_JQ"' stall_walk(2) | .stalls' "$meta" 2>/dev/null)" \
     || { echo "11: could not evaluate the stall record (a run record is malformed)"; return; }
-  for f in "$dir"/handover-*.md; do
+  # handover.sh names them handover-1.md, handover-2.md, ...: another name (a draft) is not a handover.
+  # The digits are spelled out: bash 3.2 matches a range such as [1-9] by the locale's collation (#50).
+  for f in "$dir"/handover-[123456789]*.md; do
+    n_="${f##*/handover-}"; n_="${n_%.md}"
+    case "$n_" in *[!0123456789]*) continue ;; esac
     if [ -L "$f" ]; then echo "11: ${f##*/} is a link"; continue; fi
     [ -f "$f" ] || continue
     have=$((have + 1)); miss=""
@@ -771,20 +820,20 @@ EOF_H
     [ -z "$miss" ] || echo "11: ${f##*/} lacks the heading(s):$miss"
   done
   [ "$n" -le "$have" ] \
-    || echo "11: the record holds $n stalls and $have handover(s); write one per stall with handover.sh before redesigning (references/stall.md)" >> "$warn_file"
+    || echo "${WARN}11: the record holds $n stalls and $have handover(s); write one per stall with handover.sh before redesigning (references/stall.md)"
 }
 
-# Rule 10c: problems on stdout, the ignored-mutant warning appended to $warn_file. The mutated files
+# Rule 10c: problems on stdout, its warnings too, prefixed with $WARN. The mutated files
 # are hashed here: each must still hold the source the report mutated.
 check_mutation() {
   local slice="$1" meta="$2" out path sum seq rel tr
-  if ! out="$(jq -c --arg slice "$slice" --argjson before_close "$before_close" "$MUTATION_RULES" "$meta" 2>/dev/null)" \
+  if ! out="$(jq -c --arg slice "$slice" --argjson before_close "$before_close" --arg jsts_re "$VETDD_JS_TS_RE" "$MUTATION_RULES" "$meta" 2>/dev/null)" \
      || ! printf '%s' "$out" | jq -e '(.problems | type) == "array" and (.warns | type) == "array" and (.files | type) == "array"' >/dev/null 2>&1; then
     echo "10c: could not evaluate the mutation audit (a run's audit record or the audits log is malformed)"
     return
   fi
   printf '%s' "$out" | jq -r '.problems[]'
-  printf '%s' "$out" | jq -r '.warns[]' >> "$warn_file"
+  printf '%s' "$out" | jq -r --arg w "$WARN" '.warns[] | $w + .'
   # The copy the judge reads: named from the run number evidence.sh wrote, never from a path in the record.
   if seq="$(printf '%s' "$out" | jq -r '.copy.seq // empty')" && [ -n "$seq" ]; then
     rel=".vetdd/evidence/$slice/runs/$(printf '%03d' "$seq")-mutation.json"
@@ -793,22 +842,23 @@ check_mutation() {
       echo "10c: the copy of mutation run $seq's report is missing or does not match the sha256 recorded for it (or is a link); run the mutation audit again"
     else
       # The command runner is the one known to judge vitest 5 correctly (#20): any other runner is a warning.
-      tr="$(jq -r '.config.testRunner // "" | if type == "string" then . else "?" end' "$root/$rel" 2>/dev/null)" || tr="?"
+      # A name of another shape (a new line would end the warning line early) is shown as ?.
+      tr="$(jq -r '.config.testRunner // "" | if type == "string" and (. == "" or (test("^[A-Za-z0-9._-]+$") and (contains("\n") | not))) then . else "?" end' "$root/$rel" 2>/dev/null)" || tr="?"
       if [ -z "$tr" ] && jq -e '(.config.command // null) == null' "$root/$rel" >/dev/null 2>&1; then
         # A copy from before testRunner was kept, with no command: not the command runner, or unknown.
-        printf '%s\n' "10c: mutation run $seq does not say which Stryker runner it used (its report names no runner and no command), so it may be the vitest runner that reported killable mutants as Survived (vetdd #20); run the mutation audit again" >> "$warn_file"
+        printf '%s\n' "${WARN}10c: mutation run $seq does not say which Stryker runner it used (its report names no runner and no command), so it may be the vitest runner that reported killable mutants as Survived (vetdd #20); run the mutation audit again"
       elif [ -n "$tr" ] && [ "$tr" != command ]; then
-        printf '%s\n' "10c: mutation run $seq ran Stryker's $tr runner, not the command runner; Stryker's vitest runner reported killable mutants as Survived with vitest 5 (vetdd #20), so read its survivors before trusting them" >> "$warn_file"
+        printf '%s\n' "${WARN}10c: mutation run $seq ran Stryker's $tr runner, not the command runner; Stryker's vitest runner reported killable mutants as Survived with vitest 5 (vetdd #20), so read its survivors before trusting them"
       fi
       # A source with a control or a bidirectional control (Trojan Source) reads otherwise to the judge than
       # to the toolchain; emoji joiners and variation selectors are not warned about.
       if ! jq -e "$VETDD_JQ_CLEAN"' all(.files[]?.source; type != "string" or cleantext)' "$root/$rel" >/dev/null 2>&1; then
-        printf '%s\n' "10c: mutation run $seq mutated a file whose source holds a bidirectional or other control character; it may read otherwise than it runs, so look at that file's bytes" >> "$warn_file"
+        printf '%s\n' "${WARN}10c: mutation run $seq mutated a file whose source holds a bidirectional or other control character; it may read otherwise than it runs, so look at that file's bytes"
       fi
       # The tests that faced the mutants are the slice's own (#16): a mutant another test kills is not the slice's.
       case "$(jq -r --arg root "$root" --argjson o "$(printf '%s' "$out" | jq -c '.copy.oracle // []')" "$COMMAND_FILTERS" "$root/$rel" 2>/dev/null || echo error)" in
         ok|skip) ;;
-        unread) printf '%s\n' "10c: mutation run $seq ran a vitest command that 10c cannot read (an option, double quotes, a non-ASCII, // or .. path, or other shell syntax), so it did not check that only the slice's own test files faced the mutants; the judge reads the command in the copy" >> "$warn_file" ;;
+        unread) printf '%s\n' "${WARN}10c: mutation run $seq ran a vitest command that 10c cannot read (an option, double quotes, a non-ASCII, // or .. path, or other shell syntax), so it did not check that only the slice's own test files faced the mutants; the judge reads the command in the copy" ;;
         none) echo "10c: mutation run $seq ran its mutants against every test file (its vitest run command names no test file), so a mutant another test kills counts for the slice; set VETDD_MUTATION_TESTS to the slice's own test files and run the mutation audit again" ;;
         other) echo "10c: mutation run $seq ran its mutants against test files outside the slice's oracle files (a file filter of its vitest run command is not the end of an oracle file path), so a mutant another test kills counts for the slice; set VETDD_MUTATION_TESTS to the slice's own test files and run the mutation audit again" ;;
         *) echo "10c: could not read which tests mutation run $seq ran against its mutants (its copy is malformed); run the mutation audit again" ;;
@@ -851,10 +901,7 @@ check_oracle_files() {
   jq -r '.oracle.files[].path' "$meta" |
     while IFS= read -r path; do
       # Any letter case: a file system that ignores case still hands the file to the toolchain.
-      case "$(printf '%s' "$path" | LC_ALL=C tr 'A-Z' 'a-z')" in
-        *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|*.mts|*.cts) ;;
-        *) continue ;;
-      esac
+      vetdd_is_js_ts "$path" || continue
       vetdd_inside_repo "$root" "$path" && [ -f "$root/$path" ] || continue
       # A scanner that fails prints nothing; that must fail the slice, never read as OK.
       found="$(focused_lines "$root/$path")" || { echo "9a: could not scan oracle file $path"; continue; }
@@ -870,7 +917,7 @@ check_oracle_files() {
     done
 }
 
-# Rules 9b (problems, on stdout) and 9c (warnings, appended to $warn_file).
+# Rules 9b (problems, on stdout) and 9c (warnings, on stdout prefixed with $WARN).
 # The oracle version the final green rests on (the last accepted green run, or else the last accepted
 # run), as JSON; and one marker per accepted run, so a command whose latest run has no report is known.
 FINAL_VERSION='
@@ -879,13 +926,13 @@ FINAL_VERSION='
 RUN_MARKS='.runs[] | select(.accepted != false and (.seq | type) == "number" and .audit == null) | {m: true, seq, cmd, ov: .oracle.version, kind}'
 
 check_test_reports() {
-  local slice="$1" meta="$2" list seq kind sum cmd ov rel copy stream="" marks fv tab line
+  local slice="$1" meta="$2" list seq kind sum cmd ov rel copy stream="" marks fv tab line splits="[]"
   tab="$(printf '\t')"
   if ! fv="$(jq -r "$FINAL_VERSION" "$meta" 2>/dev/null)" || ! marks="$(jq -c "$RUN_MARKS" "$meta" 2>/dev/null)"; then
     echo "9b: could not evaluate the runs of the oracle version the final green rests on (a run record is malformed)"
     return
   fi
-  if ! list="$(jq -r "$REPORT_RUNS" "$meta" 2>/dev/null)"; then
+  if ! list="$(jq -r --argjson fv "$fv" "$REPORT_RUNS" "$meta" 2>/dev/null)"; then
     echo "9b: could not evaluate which runs recorded a test report (a run record is malformed)"
   elif [ -n "$list" ]; then
     while IFS="$tab" read -r seq kind sum cmd ov; do
@@ -909,25 +956,58 @@ check_test_reports() {
     # A filter that fails prints nothing; that must fail the slice, never read as OK.
     if [ -n "$stream" ]; then
       printf '%s\n%s\n' "$stream" "$marks" | jq -r -s --argjson max 5 --argjson fv "$fv" "$TEST_DROP_RULES" 2>/dev/null || echo "9b: could not compare the test reports of the runs"
+      splits="$(printf '%s\n%s\n' "$stream" "$marks" | jq -c -s --argjson fv "$fv" "$SKIP_SPLIT" 2>/dev/null)" \
+        || { echo "9c: could not compare the skipped and todo tests with the first run of each command"; splits="[]"; }
     fi
   fi
-  if line="$(jq -r --argjson fv "$fv" "$TEST_WARN_RULES" "$meta" 2>/dev/null)"; then
-    [ -z "$line" ] || printf '%s\n' "$line" >> "$warn_file"
+  if line="$(jq -r --argjson fv "$fv" --argjson splits "$splits" "$TEST_WARN_RULES" "$meta" 2>/dev/null)"; then
+    [ -z "$line" ] || printf '%s\n' "$line" | while IFS= read -r l; do printf '%s%s\n' "$WARN" "$l"; done
   else
     echo "9c: could not evaluate the skipped and todo counts (a run's tests record is malformed)"
   fi
 }
 
+# The mark of an abandoned slice (worktree.sh abandon): "<cause>[, replaced by <id>]" on stdout, or a
+# return of 1 when it is not what worktree.sh abandon writes (a link, not a regular file, not that JSON).
+abandoned_mark() {
+  local rel=".vetdd/evidence/$1/abandoned"
+  vetdd_inside_repo "$root" "$rel" && [ -f "$root/$rel" ] && [ ! -L "$root/$rel" ] || return 1
+  jq -r -s --arg slice "$1" "$VETDD_ABANDONED_JQ" "$root/$rel" 2>/dev/null
+}
+
+# An abandoned slice is not delivered: only rule 11 is asked, and only of a stall (its handovers are the
+# record of the redesign).
+check_abandoned() {
+  local slice="$1" meta="$evidence_dir/$1/meta.json"
+  # worktree.sh abandon marks only a slice with evidence: a mark alone was not written by it.
+  [ -f "$meta" ] && [ ! -L "$meta" ] || { echo "schema: no meta.json for this slice (worktree.sh abandon marks only a slice with evidence)"; return; }
+  case "$2" in stall|"stall, "*) ;; *) return 0 ;; esac
+  check_stall "$slice" "$meta"
+}
+
 failed=0
 for slice in "${slices[@]}"; do
-  # Pass or fail is decided on the raw problems; the display filter only shapes what is shown.
-  : > "$warn_file"
-  problems="$(check_slice "$slice")"
   # A name that is not a slice id (a stray directory, possibly holding control characters or
   # newlines) is never printed as given.
   if vetdd_is_slice_id "$slice"; then shown="$slice"; else shown="<invalid slice name>"; fi
+  mark=""
+  if vetdd_is_slice_id "$slice" && vetdd_abandoned "$root" "$slice"; then
+    if mark="$(abandoned_mark "$slice")" && [ -n "$mark" ]; then
+      out="$(check_abandoned "$slice" "$mark")"
+    else
+      mark=""
+      out="abandoned: .vetdd/evidence/$slice/abandoned is not a mark worktree.sh abandon writes (a regular file holding one JSON object: cause stall, conflict, or lost, recorded_at a UTC time, and an optional replaced_by naming another slice); remove it and mark the slice again with worktree.sh abandon"
+    fi
+  else
+    out="$(check_slice "$slice")"
+  fi
+  # Pass or fail is decided on the raw problems (every line not marked a warning); the display filter
+  # only shapes what is shown.
+  problems="$(printf '%s\n' "$out" | LC_ALL=C grep -v "^$WARN")"
+  warns="$(printf '%s\n' "$out" | LC_ALL=C sed -n "s/^$WARN//p")"
+  [ -z "$mark" ] || echo "$shown: ABANDONED ($mark)"
   if [ -z "$problems" ]; then
-    echo "$shown: OK"
+    [ -n "$mark" ] || echo "$shown: OK"
   else
     failed=$((failed + 1))
     # Recorded values (versions, paths) reach the terminal: strip control characters.
@@ -936,8 +1016,8 @@ for slice in "${slices[@]}"; do
     printf '%s\n' "$shown_problems" | while IFS= read -r line; do echo "$shown: FAIL ($line)"; done
   fi
   # Warnings never change the exit code. The display filter runs on them too.
-  if [ -s "$warn_file" ]; then
-    vetdd_printable < "$warn_file" | while IFS= read -r line; do [ -z "$line" ] || echo "$shown: WARN ($line)"; done
+  if [ -n "$warns" ]; then
+    printf '%s\n' "$warns" | vetdd_printable | while IFS= read -r line; do [ -z "$line" ] || echo "$shown: WARN ($line)"; done
   fi
 done
 [ "$failed" -le 125 ] || failed=125

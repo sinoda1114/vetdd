@@ -988,3 +988,52 @@ jsts_slice() {
     [[ "$output" == *"s1: WARN (10c: mutation run 3 ran a vitest command that 10c cannot read"* ]] || { echo "no warning: $c"; echo "$output"; false; }
   done
 }
+
+# --- #33 follow-ups (moved to #42) -------------------------------------------------------------
+
+@test "#33: before Close only a JS/TS slice gets the missing audit as a WARN; another slice with a mutation run still fails" {
+  record_good_slice s1 >/dev/null 2>&1
+  mutation s1 "$(killed)"
+  # A green after the audit: the audit no longer counts, so it is missing again.
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  run "$SCRIPTS/check-evidence.sh" --before-close s1
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: FAIL (10c: no mutation audit"* ]] || { echo "$output"; false; }
+  # A JS/TS slice in the same state is still a WARN before Close.
+  jsts_slice s2 a.test.ts >/dev/null 2>&1
+  mutation s2 "$(killed)"
+  ev s2 after -- sh test.sh >/dev/null 2>&1
+  run "$SCRIPTS/check-evidence.sh" --before-close s2
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"s2: WARN (10c: no mutation audit"* ]]
+}
+
+@test "#33: the JS/TS file names are defined once (lib/common.sh), and rules 9a and 10c both read them" {
+  grep -q '^VETDD_JS_TS_RE=' "$SCRIPTS/lib/common.sh"
+  ! grep -n '\*\.js|\|\[cm\]?\[jt\]s' "$SCRIPTS/check-evidence.sh" || false
+  # Both rules take the same names, in any ASCII letter case.
+  local f
+  for f in A.TEST.TS b.test.Mjs; do
+    printf 'it.only("x", () => {});\n' > "$f" && git add -- "$f" && git commit -q -m "oracle $f"
+    printf '0\n' > value.txt
+    ev "s-${f%%.*}" before --seam unit --oracle-version v1 --oracle-file "$f" -- sh test.sh >/dev/null 2>&1
+    printf '42\n' > value.txt
+    ev "s-${f%%.*}" after -- sh test.sh >/dev/null 2>&1
+    run check "s-${f%%.*}"
+    [[ "$output" == *"9a: oracle file $f line 1 holds a focused test"* ]] || { echo "$f: $output"; false; }
+    [[ "$output" == *"10c: no mutation audit"* ]] || { echo "$f: $output"; false; }
+  done
+}
+
+@test "#11 r3: a runner name holding a new line in the report copy stays one 10c WARN, never a FAIL" {
+  record_good_slice s1 >/dev/null 2>&1
+  mutation s1 "$(killed)"
+  local copy=.vetdd/evidence/s1/runs/003-mutation.json
+  jq '.config.testRunner = "vitest\nX"' "$copy" > "$copy.tmp" && mv "$copy.tmp" "$copy"
+  local m=.vetdd/evidence/s1/meta.json
+  jq --arg h "$(sha256_of "$copy")" '.runs[2].audit.report.sha256 = $h' "$m" > "$m.tmp" && mv "$m.tmp" "$m"
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "${lines[0]}" = "s1: OK" ]
+  [[ "${lines[1]}" == "s1: WARN (10c: mutation run 3 ran Stryker's ? runner"* ]] || { echo "$output"; false; }
+}

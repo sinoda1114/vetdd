@@ -53,6 +53,7 @@
 # One writer of a slice's meta.json at a time: the run holds the slice's lock in the git dir
 # (<git dir>/vetdd-lock/<slice>, lib/meta.sh, so the git dir must be writable) from its first read to its
 # last write, the command included; a slice another script is recording is refused (exit 2).
+# A slice marked abandoned (.vetdd/evidence/<slice>/abandoned, worktree.sh abandon) is refused (exit 2).
 # The log and the run entry are always written. Exit 1 when the run violates its kind
 # (before must be target_failure; after/integrated must be pass), 2 on usage errors.
 set -u
@@ -129,6 +130,9 @@ esac
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
 root="$(cd "$root" && pwd -P)"
+# A slice the parent marked abandoned (worktree.sh abandon) takes no more runs: its redesign has its own id.
+! vetdd_abandoned "$root" "$slice" \
+  || die "slice $slice is abandoned (.vetdd/evidence/$slice/abandoned, written by worktree.sh abandon); record its redesign under a new slice id"
 prefix="$(git rev-parse --show-prefix)"
 cwd_rel="${prefix%/}"; [ -n "$cwd_rel" ] || cwd_rel="."
 
@@ -257,6 +261,9 @@ done
 # One writer of the slice's meta.json at a time, from its first read to its last write (lib/meta.sh).
 vetdd_slice_lock "$slice" || die "$VETDD_SLICE_LOCK_ERR"
 trap 'vetdd_slice_unlock' EXIT
+# Again under the lock, which worktree.sh abandon takes too: a mark written since the first look counts.
+! vetdd_abandoned "$root" "$slice" \
+  || die "slice $slice is abandoned (.vetdd/evidence/$slice/abandoned, written by worktree.sh abandon); record its redesign under a new slice id"
 mkdir -p "$dir/runs" || die "cannot create $dir"
 if [ ! -f "$meta" ]; then
   # The skeleton every writer starts a slice with, under a name nobody can predict, then renamed.

@@ -60,8 +60,9 @@
 # Exit 0 built (it prints the judge.sh command); 1 a local step failed (a record could not be read,
 # check-blind could not run); 2 usage error, a binary file in the diff not named with --allow-binary
 # (git's base85 text of a binary file passes the blind and secret checks unseen), or an untracked new
-# file not named with --include-new, or a --verify-artifacts path or file refused (nothing is written
-# in each case);
+# file not named with --include-new, a --verify-artifacts path or file refused, or a slice marked
+# abandoned (.vetdd/evidence/<slice>/abandoned, worktree.sh abandon: it is not delivered) (nothing is
+# written in each case);
 # 4 the result is not blind
 # (check-blind.sh's hits are printed; <dir> is left to inspect, readable by the user only).
 # Everything written is private to the user (umask 077), and <dir> must be new, under directories only
@@ -157,6 +158,8 @@ for s in "${slices[@]}"; do
   vetdd_is_slice_id "$s" || die "invalid slice id"
   [ -f "$root/.vetdd/evidence/$s/meta.json" ] && [ ! -L "$root/.vetdd/evidence/$s/meta.json" ] \
     || die "no evidence for slice $s"
+  ! vetdd_abandoned "$root" "$s" \
+    || die "slice $s is abandoned (.vetdd/evidence/$s/abandoned, worktree.sh abandon): it is not delivered, so leave it out of the layout"
 done
 
 # Where --out really is: the deepest existing ancestor resolved physically, the rest as written.

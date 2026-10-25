@@ -46,7 +46,7 @@
 # name every one the oracle imports); a runner that fails on the stub while loading it (native ESM
 # reports a missing named export as a link error) goes red for the wrong reason, so read the log.
 # Exit: 0 the calibration ended target_failure; 1 it did not; 2 usage or refused (nothing
-# changed); 3 the files could not be put back, or plant could not hand the lock to its hold (state kept).
+# changed; also a slice marked abandoned, except for restore); 3 the files could not be put back, or plant could not hand the lock to its hold (state kept).
 set -u
 
 unset CDPATH  # `cd dir` must never resolve through CDPATH or print a path
@@ -67,6 +67,10 @@ vetdd_is_slice_id "$slice" || die "invalid slice id: $slice"
 shift 2
 top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git working tree"
 top="$(cd "$top" && pwd -P)"
+# evidence.sh refuses an abandoned slice (worktree.sh abandon) with exit 2: refused here, before anything
+# is parked. restore still runs, so an interrupted calibration can always be put back.
+[ "$cmd" = restore ] || ! vetdd_abandoned "$top" "$slice" \
+  || die "slice $slice is abandoned (.vetdd/evidence/$slice/abandoned, worktree.sh abandon); record its redesign under a new slice id"
 gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$gitdir" ] || die "cannot locate the git dir"
 state="$gitdir/vetdd-calib/$slice"
 # The restore command (recovery after an interruption) keeps any content it replaces here.

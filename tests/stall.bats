@@ -254,3 +254,28 @@ draft() {
   grep -q 'stall.sh" <slice> --k <the agreed K>' "$SCRIPTS/../modes/test.md"
   grep -q 'stall.sh <slice-id> --k <the agreed K>' "$SCRIPTS/../references/subagent-brief.md"
 }
+
+@test "#42: rule 11 counts only handover-<n>.md: a draft with every heading under another name does not clear the stall WARN" {
+  attempts 3
+  printf '42\n' > value.txt && ev s1 after -- sh test.sh >/dev/null 2>&1
+  local n
+  for n in draft 1draft 0 01 1-old; do
+    cp "$(draft)" ".vetdd/evidence/s1/handover-$n.md"
+  done
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"s1: WARN (11: the record holds 1 stalls and 0 handover(s)"* ]] || { echo "$output"; false; }
+  # A broken draft under another name is not read either.
+  printf 'no headings\n' > .vetdd/evidence/s1/handover-draft.md
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  HO s1 --file "$(draft)" >/dev/null
+  run check s1
+  [ "$output" = "s1: OK" ] || { echo "$output"; false; }
+  # handover-10.md is the tenth one, and counts.
+  cp .vetdd/evidence/s1/handover-1.md .vetdd/evidence/s1/handover-10.md
+  printf 'no headings\n' > .vetdd/evidence/s1/handover-10.md
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL (11: handover-10.md lacks"* ]]
+}
