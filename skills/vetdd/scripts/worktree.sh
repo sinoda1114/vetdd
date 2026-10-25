@@ -154,6 +154,8 @@ branch_at() {
 # deeper in is compared like any other.
 same_evidence() {
   local out rc=0 line
+  # A name with a new line could forge a line of the diff below: such evidence is never the same.
+  [ -z "$(find "$1" "$2" -name "$(printf '*\n*')" -print 2>/dev/null | head -n 1)" ] || return 1
   out="$(diff -r -q -- "$1" "$2" 2>&1)" || rc=$?
   [ "$rc" -eq 0 ] && return 0
   [ "$rc" -eq 1 ] || return 1
@@ -464,11 +466,17 @@ $(p "$dirty")" 1
     # Only a worker's slice is left out of a merge: one worktree.sh add made (its record stays after remove).
     [ -f "$swarmdir/$slice.sum" ] \
       || die "$(p "$slice") is not a worker's slice (no record of worktree.sh add $(p "$slice")); only a swarm unit or an arena lane left out of the merge is marked abandoned"
-    # A branch merged into HEAD (a merge commit has its tip as a parent) is delivered, not abandoned.
+    # A slice merged into HEAD is delivered, not abandoned: a merge commit there has the branch tip as a
+    # parent, or the subject swarm and arena merge with (Merge vetdd/<slice>), which still holds once
+    # the branch is deleted. A fast-forward merge is not one they make.
+    merged=0
     if tip="$(pgit rev-parse -q --verify "refs/heads/vetdd/$slice^{commit}")"; then
-      ! pgit rev-list --merges --parents HEAD 2>/dev/null | awk -v t="$tip" '{ for (i = 3; i <= NF; i++) if ($i == t) f = 1 } END { exit !f }' \
-        || die "vetdd/$(p "$slice") is merged into HEAD, so the slice is delivered, not abandoned; undo the merge first (git reset --hard ORIG_HEAD) if it is to be left out" 1
+      pgit rev-list --merges --parents HEAD 2>/dev/null | awk -v t="$tip" '{ for (i = 3; i <= NF; i++) if ($i == t) f = 1 } END { exit !f }' \
+        && merged=1
     fi
+    pgit log --merges --format=%s HEAD 2>/dev/null | grep -qxF "Merge vetdd/$slice" && merged=1
+    [ "$merged" -eq 0 ] \
+      || die "vetdd/$(p "$slice") is merged into HEAD, so the slice is delivered, not abandoned; undo the merge first (git reset --hard ORIG_HEAD) if it is to be left out" 1
     mark="$dir/abandoned"
     ! { [ -e "$mark" ] || [ -L "$mark" ]; } || die "$(p "$slice") is already marked abandoned (.vetdd/evidence/$(p "$slice")/abandoned); nothing was changed" 1
     when="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || die "cannot read the time" 1

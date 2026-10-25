@@ -42,7 +42,7 @@ stalled_slice() {
 # commit in its worktree, then check and remove --keep-branch, so its evidence is in the main repository.
 worker() {
   WT add "$1" >/dev/null
-  (cd "$WTROOT/$1" && "${2:-red_slice}" "$1" && git commit -qm "wip $1" --allow-empty) >/dev/null 2>&1
+  (cd "$WTROOT/$1" && "${2:-red_slice}" "$1" && git commit -qam "wip $1" --allow-empty) >/dev/null 2>&1
   WT check "$1" >/dev/null && WT remove "$1" --keep-branch >/dev/null
 }
 
@@ -195,6 +195,38 @@ worker() {
   [ ! -e .vetdd/evidence/sa/runs/abandoned ]
 }
 
+@test "abandon refuses a delivered slice whose branch was deleted after its merge (Merge vetdd/<slice> is in HEAD)" {
+  WT add sa >/dev/null
+  (cd "$WTROOT/sa" && red_slice sa && printf '42\n' > value.txt && git commit -qam "fix sa") >/dev/null 2>&1
+  WT check sa >/dev/null && WT remove sa --keep-branch >/dev/null
+  git -c core.hooksPath=/dev/null merge -q --no-ff --no-edit -m "Merge vetdd/sa" vetdd/sa
+  git branch -q -d vetdd/sa
+  run WT abandon sa --cause conflict
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"merged"* ]]
+  [ ! -e .vetdd/evidence/sa/abandoned ]
+  # A stalled branch deleted once noted (never merged) is still marked.
+  worker sb
+  git branch -q -D vetdd/sb
+  run WT abandon sb --cause stall
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "remove does not take a file name holding a new line for the mark: such evidence is different" {
+  worker sa
+  WT abandon sa --cause lost >/dev/null
+  WT add sb >/dev/null
+  mkdir -p "$WTROOT/sb/.vetdd/evidence"
+  cp -R .vetdd/evidence/sa "$WTROOT/sb/.vetdd/evidence/sa"
+  rm -f -- "$WTROOT/sb/.vetdd/evidence/sa/abandoned"
+  # (diff prints such a name over two lines; a guard, since a name cannot hold the / of a forged line)
+  printf 'x\n' > "$WTROOT/sb/.vetdd/evidence/sa/abandoned
+x"
+  run WT remove sb --keep-branch
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"different evidence"* ]]
+}
+
 # --- check-evidence.sh -------------------------------------------------------------------------
 
 @test "check-evidence prints ABANDONED for a marked slice, with the cause and the slice that replaced it, and does not count it" {
@@ -270,6 +302,25 @@ worker() {
   [[ "$output" == "s1: FAIL (abandoned: "* ]]
 }
 
+@test "a mark in a directory with no meta.json fails the slice, whatever the cause" {
+  mkdir -p .vetdd/evidence/s9
+  printf '{"cause":"lost","recorded_at":"2026-10-25T00:00:00Z"}\n' > .vetdd/evidence/s9/abandoned
+  run check s9
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"s9: FAIL (schema: no meta.json"* ]]
+}
+
+@test "calibrate.sh refuses an abandoned slice before it parks anything (exit 2)" {
+  worker s1
+  WT abandon s1 --cause lost >/dev/null
+  printf '42\n' > value.txt
+  run "$SCRIPTS/calibrate.sh" unfix s1 --file value.txt --oracle-file test.sh -- sh test.sh
+  [ "$status" -eq 2 ] || { echo "$output"; false; }
+  [[ "$output" == *"abandoned"* ]]
+  [ "$(cat value.txt)" = 42 ]
+  [ ! -e "$(git rev-parse --absolute-git-dir)/vetdd-calib/s1" ]
+}
+
 @test "the check-evidence header documents the ABANDONED line" {
   sed -n '1,/^set -u/p' "$SCRIPTS/check-evidence.sh" | grep -q 'ABANDONED'
 }
@@ -331,6 +382,8 @@ worker() {
   local P="$SCRIPTS/../parallel" R="$SCRIPTS/../references"
   grep -qF 'worktree.sh" abandon <slice> --cause conflict --replaced-by <slice>-2' "$P/swarm.md"
   grep -qF 'worktree.sh" abandon <lane> --cause lost --replaced-by <the chosen lane>' "$P/arena.md"
+  # A lane removed with --no-evidence has nothing to mark.
+  grep -q 'whose evidence was brought back' "$P/arena.md"
   grep -qF 'worktree.sh" abandon <lane> --cause stall' "$P/arena.md"
   grep -qF 'worktree.sh" abandon <slice> --cause stall --replaced-by <slice>-r<n>' "$R/stall.md"
   # The losing lanes are marked before the grafts, whose commits stage the shared oracle file.

@@ -978,8 +978,9 @@ abandoned_mark() {
 # record of the redesign).
 check_abandoned() {
   local slice="$1" meta="$evidence_dir/$1/meta.json"
+  # worktree.sh abandon marks only a slice with evidence: a mark alone was not written by it.
+  [ -f "$meta" ] && [ ! -L "$meta" ] || { echo "schema: no meta.json for this slice (worktree.sh abandon marks only a slice with evidence)"; return; }
   case "$2" in stall|"stall, "*) ;; *) return 0 ;; esac
-  [ -f "$meta" ] || { echo "schema: no meta.json for this slice, so its stall record cannot be read"; return; }
   check_stall "$slice" "$meta"
 }
 
