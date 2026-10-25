@@ -9,9 +9,7 @@
 #       Save <f>... and fingerprint the oracle and everything else, so a mutation can be planted.
 #   calibrate.sh planted <slice> --oracle-file <o>... [evidence options] -- <command...>
 #       Check the mutation is in <f>... only and the oracle is untouched, run the oracle, put the
-#       saved files and their index entries back. The run records what was planted: planted:
-#       {patch, sha256, files}, the diff from the saved originals to the planted files (only those
-#       that changed, with repository paths), kept at the slice's runs/<seq>-planted.patch.
+#       saved files and their index entries back.
 #   calibrate.sh stub    <slice> --file <product file>... --oracle-file <o>... [--oracle-version <v>]
 #                        [--seam <s>] [--infra-exit <code>] -- <command...>
 #       The undefined-imports audit (principle 4's quick check): replace every product file the oracle
@@ -25,6 +23,10 @@
 #       also the rule 10b record (check-evidence), unless audit-note.sh says it does not apply.
 #   calibrate.sh restore <slice>
 #       Put back whatever an interrupted unfix, plant, or stub left saved.
+#
+# A planted run records what was planted: planted: {patch, sha256, files}, the diff from the saved
+# originals to the planted files (only those that changed and that the evidence's tree holds, with
+# repository paths), kept at the slice's runs/<seq>-planted.patch (evidence.sh --planted, its own option).
 #
 # Unfix, plant, and stub save a byte copy and the index entry of every <f> before anything changes,
 # and restoring always writes those back, so neither line-ending conversion nor a staged edit can
