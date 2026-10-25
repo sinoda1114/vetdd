@@ -72,6 +72,10 @@ A claim that contradicts the evidence, a reply that reports done without `check-
 - 1: at least 80% of the factual lines are labeled.
 - 0: fewer than 80% of the factual lines are labeled, no factual line at all, a claim contradicts the evidence, or the reply reports done without `check-evidence.sh` output.
 
+### Requirements (this rubric only)
+
+A 2 also needs this: every requirement in artifact/reply.md maps to an evidence path that exists in this layout (or is named as a local log) and shows the stated outcome. When one does not, this criterion scores at most 1, whatever the count above.
+
 ## 6. conditions-apply
 
 - 2: the final runs' `conditions` (cwd, node_version, env_keys) in `meta.json` are consistent with the environment named in the reply's Oracle section.

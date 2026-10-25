@@ -14,8 +14,9 @@ CAL="$BATS_TEST_DIRNAME/../evals/rubric-calibration/rubric.md"
 REPLY="$REF/reply-format.md"
 EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
 
-# claims <rubric>: the body of its claims-match-evidence criterion, heading (and its number) left out.
-claims() { awk '/^## [0-9]+\. /{on = ($0 ~ /\. claims-match-evidence$/); next} on' "$1"; }
+# claims <rubric>: the shared body of its claims-match-evidence criterion, heading (and its number) left
+# out, up to a rubric's own ### subsection (final v7 keeps its requirement condition there).
+claims() { awk '/^## [0-9]+\. /{on = ($0 ~ /\. claims-match-evidence$/); next} /^### /{on = 0} on' "$1"; }
 
 @test "the three rubrics carry their new versions" {
   head -1 "$FINAL" | grep -qx '# Final judge rubric (version 7)'
@@ -99,4 +100,15 @@ claims() { awk '/^## [0-9]+\. /{on = ($0 ~ /\. claims-match-evidence$/); next} o
   note="$(sed -n '/^evals\/$/,/^  <eval-id>\//p' "$EVAL" | tr '\n' ' ')"
   [[ "$note" != *"written before 2026-10-17 19:22"* ]]
   [[ "$note" == *"20261018-v4-cal"* ]]
+}
+
+@test "final v7 keeps v6's requirement-to-evidence condition as its own subsection of claims-match-evidence (owner decision 2026-10-25)" {
+  local s sub
+  s="$(sed -n '/^## 5\. claims-match-evidence/,/^## 6\. /p' "$FINAL")"
+  sub="$(printf '%s\n' "$s" | sed -n '/^### /,$p' | tr '\n' ' ')"
+  [[ "$sub" == *"every requirement in artifact/reply.md maps to an evidence path that exists in this layout (or is named as a local log) and shows the stated outcome"* ]]
+  [[ "$sub" == *"at most 1"* ]]
+  # The eval rubrics share the claims text but not this condition.
+  ! grep -q 'every requirement in artifact/reply.md maps' "$IBD" || false
+  ! grep -q 'every requirement in artifact/reply.md maps' "$CAL" || false
 }
