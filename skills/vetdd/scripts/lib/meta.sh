@@ -17,8 +17,9 @@ vetdd_pid_ns() {
   printf '%s\n' "${ns:--}"
 }
 # vetdd_proc_start <pid>: when the process started (ps lstart, spaces as _), or nothing when ps cannot say.
+# In UTC and the C locale, so writers in other time zones or locales read the same holder the same way.
 vetdd_proc_start() {
-  LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | LC_ALL=C sed -e 's/^ *//' -e 's/ *$//' -e 's/ /_/g' | LC_ALL=C tr -cd 'A-Za-z0-9:_'
+  LC_ALL=C TZ=UTC0 ps -o lstart= -p "$1" 2>/dev/null | LC_ALL=C sed -e 's/^ *//' -e 's/ *$//' -e 's/ /_/g' | LC_ALL=C tr -cd 'A-Za-z0-9:_'
 }
 
 # vetdd_slice_lock <slice>: hold <git dir>/vetdd-lock/<slice> while this process reads, changes, and

@@ -688,7 +688,8 @@ user_codex_home() {
   [ "$(cat "$FAKE_SEEN.home_env.login")" = "$jh" ]
   [ -z "$(cat "$FAKE_SEEN.home_ls.exec")" ]
   # Nothing beside it holds the login either (review r1: no copy of auth.json in the private directory).
-  ! grep -qi auth "$FAKE_SEEN.home_up.exec" || { cat "$FAKE_SEEN.home_up.exec"; false; }
+  run grep -qi auth "$FAKE_SEEN.home_up.exec"
+  [ "$status" -ne 0 ] || { cat "$FAKE_SEEN.home_up.exec"; false; }
   [ "$(cat "$FAKE_SEEN.home.exec")" = auth.json ]
   [ ! -e "$jh" ]
   [ ! -e "$h" ]

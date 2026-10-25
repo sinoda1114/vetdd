@@ -151,6 +151,16 @@ sum_of_text() { printf "$1" > "$BATS_TEST_TMPDIR/text.sum"; sha256_of "$BATS_TES
   [[ "$output" == *"pid $$"* ]]
 }
 
+@test "review r3: a live holder's lock is held whatever time zone the next writer runs in" {
+  local lock; lock="$(lock_of s1)"
+  mkdir -p "${lock%/*}"
+  ln -s "pid:$$:-:$(TZ=Asia/Tokyo bash -c '. "$1"; vetdd_proc_start "$2"' _ "$SCRIPTS/lib/meta.sh" "$$")" "$lock"
+  TZ=UTC run ev s1 calibration -- touch ran
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"pid $$"* ]]
+  [ ! -e ran ]
+}
+
 @test "review r2: a lock made in another pid namespace is never taken over, whatever kill says" {
   [ -e /proc/self/ns/pid ] || skip "no pid namespaces here"
   local lock dead; lock="$(lock_of s1)"

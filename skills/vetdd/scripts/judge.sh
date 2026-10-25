@@ -11,11 +11,11 @@
 # also with "/" as "\/") passes on that copy and on the conditions, the extra layout, the eval id,
 # and the run id. A final verdict (no variants.json) has no label-to-variant map to hide, so no
 # absolute path is refused there. Render references/judge-prompt.md; run `codex exec` read-only with
-# -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: CODEX_HOME
-# is a second private temporary directory holding only a link to the user's auth.json (from
+# -C set to the copy and schemas/verdict.schema.json, isolated from the user's codex setup: a second
+# private temporary directory holds its CODEX_HOME, with only a link to the user's auth.json (from
 # $CODEX_HOME, else ~/.codex; a refreshed token is written back; a keyring login stops with exit 3),
-# and its HOME a third, empty one (a codex that cannot start there, such as one behind a node version
-# manager's shim, stops with exit 3 before exec), the login is kept in that file whatever codex's default store, and
+# and its HOME, an empty directory beside it (a codex that cannot start there, such as one behind a
+# node version manager's shim, stops with exit 3 before exec), the login is kept in that file whatever codex's default store, and
 # exec runs --ephemeral
 # --ignore-user-config --ignore-rules with web search off and the core environment only, so the user's
 # config (MCP servers, tools, a model provider of their own), AGENTS.md, personal skills, rules, and
