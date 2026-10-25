@@ -15,8 +15,7 @@ record_oracle() {
   ev s1 before --oracle-version v1 --oracle-file "$1" -- sh test.sh
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh
-  printf 'rule 9a test: no product to mutate\n' > "$BATS_TEST_TMPDIR/mut-note.txt"
-  "$SCRIPTS/audit-note.sh" s1 --kind mutation --not-applicable --reason-file "$BATS_TEST_TMPDIR/mut-note.txt" >/dev/null
+  "$SCRIPTS/audit-note.sh" s1 --kind mutation --not-applicable --reason-file "$(note_text mut-note.txt 'rule 9a test: no product to mutate')" >/dev/null
 }
 
 @test "rule 9a fails an it.only in a TS oracle file and names the file and line" {

@@ -67,7 +67,7 @@ setup() {
   mkdir -p src && jq -j '.files["src/dueDate.ts"].source' "$FIX_STRYKER" > src/dueDate.ts
   printf 'mkdir -p .vetdd/reports\ncp "$REPORT" .vetdd/reports/m.json\nexit "${EXIT:-0}"\n' > mrun.sh
   git add -A && git commit -q -m p && record_good_slice s1 >/dev/null 2>&1
-  ev s1 calibration --audit undefined-imports -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  stub_ev s1 -- sh -c 'exit 1' >/dev/null 2>&1 || true
   jq --arg r "$REPO" '.projectRoot = $r | .config.testRunner = "command" | .config.commandRunner.command = "x" | .files["src/dueDate.ts"].mutants |= map(.status = "Killed")' "$FIX_STRYKER" > "$BATS_TEST_TMPDIR/k.json"
   REPORT="$BATS_TEST_TMPDIR/k.json" ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1
   REPORT="$BATS_TEST_TMPDIR/k.json" ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1
@@ -178,7 +178,7 @@ setup() {
 }
 
 @test "the mutation audit's log is not sent as a red-run log, the undefined-imports audit's is" {
-  ev s1 calibration --audit undefined-imports -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  stub_ev s1 -- sh -c 'exit 1' >/dev/null 2>&1 || true
   printf 'mkdir -p .vetdd/reports\nexit 1\n' > mrun.sh && git add mrun.sh
   ev s1 calibration --audit mutation --mutation-report stryker-json:.vetdd/reports/m.json -- sh mrun.sh >/dev/null 2>&1 || true
   run JL --out "$OUT" --reply "$BATS_TEST_TMPDIR/reply.md" --base HEAD s1

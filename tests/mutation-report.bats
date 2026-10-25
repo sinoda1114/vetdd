@@ -171,8 +171,7 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 
 @test "a mutation note in audits does not ask the slice for an undefined-imports audit" {
   record_good_slice s1
-  printf 'python\n' > "$BATS_TEST_TMPDIR/n.txt"
-  "$SCRIPTS/audit-note.sh" s1 --kind mutation --not-applicable --reason-file "$BATS_TEST_TMPDIR/n.txt"
+  "$SCRIPTS/audit-note.sh" s1 --kind mutation --not-applicable --reason-file "$(note_text n.txt python)"
   run check s1
   [ "$output" = "s1: OK" ] || { echo "$output"; false; }
 }

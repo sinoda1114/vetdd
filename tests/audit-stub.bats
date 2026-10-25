@@ -19,6 +19,8 @@ setup() {
   printf '#!/bin/sh\ncat "$1" > seen.out\nexit 0\n' > spy.sh
   git add -A && git commit -q -m product
   LIB='export const f = (n: number) => n * 2;'
+  # audit-note.sh reads its reason only from .vetdd/notes/.
+  NOTES="$REPO/.vetdd/notes"; mkdir -p "$NOTES"
 }
 
 cal() { "$SCRIPTS/calibrate.sh" "$@"; }
@@ -288,9 +290,10 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 # --- evidence.sh --audit -------------------------------------------------------------------------
 
 @test "evidence.sh --audit undefined-imports marks a calibration run" {
-  run ev s1 calibration --audit undefined-imports --oracle-file test.sh -- sh test.sh
+  run stub_ev s1 --oracle-file test.sh -- sh test.sh
   [ "$status" -eq 0 ]
-  [ "$(mq s1 '.runs[0].audit | tojson')" = '{"kind":"undefined-imports"}' ]
+  [ "$(mq s1 '.runs[0].audit.kind')" = undefined-imports ]
+  [ "$(mq s1 '.runs[0].audit.files | map(.path) | tojson')" = '["ignored/stub.mjs"]' ]
   [ "$(mq s1 '.runs[0].kind')" = calibration ]
 }
 
@@ -300,7 +303,7 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 }
 
 @test "--audit takes only undefined-imports, only with calibration, and is refused before the command runs" {
-  run ev s0 calibration --audit undefined-imports -- true;         [ "$status" -eq 0 ]
+  run stub_ev s0 -- true;              [ "$status" -eq 0 ]
   run ev s1 calibration --audit other -- touch ran;                [ "$status" -eq 2 ]
   run ev s1 calibration --audit -- touch ran;                      [ "$status" -eq 2 ]
   run ev s1 calibration --audit "" -- touch ran;                   [ "$status" -eq 2 ]
@@ -314,8 +317,8 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 # --- audit-note.sh -------------------------------------------------------------------------------
 
 @test "audit-note records a not_applicable entry with kind, status, reason, and time" {
-  printf 'a verify slice: the oracle drives the running app, there is no import to stub\n' > "$BATS_TEST_TMPDIR/r.txt"
-  run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'a verify slice: the oracle drives the running app, there is no import to stub\n' > "$NOTES/r.txt"
+  run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = 1 ]
   [ "$(mq s1 '.audits | length')" = 1 ]
@@ -330,10 +333,10 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 }
 
 @test "audit-note keeps the runs and the version log of an existing meta.json" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
   "$SCRIPTS/oracle-version.sh" s1 --version v1 --change initial --reason first
   ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh
-  run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   [ "$status" -eq 0 ]
   [ "$(mq s1 '.runs | length')" = 1 ]
   [ "$(mq s1 '.oracle_versions | length')" = 1 ]
@@ -342,18 +345,18 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 }
 
 @test "a second entry of the same kind is a usage error and leaves meta.json as it was" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   before="$(cat "$REPO/.vetdd/evidence/s1/meta.json")"
-  printf 'again\n' > "$BATS_TEST_TMPDIR/r2.txt"
-  run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r2.txt"
+  printf 'again\n' > "$NOTES/r2.txt"
+  run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r2.txt"
   [ "$status" -eq 2 ]
   [ "$(cat "$REPO/.vetdd/evidence/s1/meta.json")" = "$before" ]
 }
 
 @test "audit-note bad arguments are usage errors and write nothing" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  local R="$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
+  local R="$NOTES/r.txt"
   run an;                                                                              [ "$status" -eq 2 ]
   run an 'bad slice' --kind undefined-imports --not-applicable --reason-file "$R";     [ "$status" -eq 2 ]
   run an s1 --kind other --not-applicable --reason-file "$R";                          [ "$status" -eq 2 ]
@@ -370,14 +373,14 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 }
 
 @test "a text file with a control character, an empty file, a link, a directory, a big file, two lines, or a NUL is refused" {
-  printf 'a\tb\n' > "$BATS_TEST_TMPDIR/tab.txt"; : > "$BATS_TEST_TMPDIR/empty.txt"
-  printf 'x\n' > "$BATS_TEST_TMPDIR/real.txt"; ln -s real.txt "$BATS_TEST_TMPDIR/link.txt"
-  mkdir "$BATS_TEST_TMPDIR/dir.txt"; head -c 5000 /dev/zero | tr '\0' 'a' > "$BATS_TEST_TMPDIR/big.txt"
-  printf 'two\nlines\n' > "$BATS_TEST_TMPDIR/two.txt"; printf 'ab\000cd\n' > "$BATS_TEST_TMPDIR/nul.txt"
-  printf 'a\033[2Jb\n' > "$BATS_TEST_TMPDIR/esc.txt"; printf 'a\302\233b\n' > "$BATS_TEST_TMPDIR/c1.txt"
+  printf 'a\tb\n' > "$NOTES/tab.txt"; : > "$NOTES/empty.txt"
+  printf 'x\n' > "$NOTES/real.txt"; ln -s real.txt "$NOTES/link.txt"
+  mkdir "$NOTES/dir.txt"; head -c 5000 /dev/zero | tr '\0' 'a' > "$NOTES/big.txt"
+  printf 'two\nlines\n' > "$NOTES/two.txt"; printf 'ab\000cd\n' > "$NOTES/nul.txt"
+  printf 'a\033[2Jb\n' > "$NOTES/esc.txt"; printf 'a\302\233b\n' > "$NOTES/c1.txt"
   local f
   for f in tab empty link dir big two nul esc c1 nope; do
-    run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/$f.txt"
+    run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/$f.txt"
     [ "$status" -eq 2 ] || { echo "$f: $output"; false; }
     no_control "$output"
   done
@@ -386,18 +389,19 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 }
 
 @test "text read from a file is recorded verbatim, quotes and shell syntax included, and a Japanese reason works" {
-  printf "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran) \`id\`\n" > "$BATS_TEST_TMPDIR/r.txt"
-  run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran) \`id\`\n" > "$NOTES/r.txt"
+  run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   [ "$status" -eq 0 ]
   [ "$(mq s1 '.audits[0].reason')" = "x'; echo pwned; echo '\$(touch $BATS_TEST_TMPDIR/ran) \`id\`" ]
   [ ! -e "$BATS_TEST_TMPDIR/ran" ]
-  printf 'import のない検証スライス\n' > "$BATS_TEST_TMPDIR/jp.txt"
-  run an s2 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/jp.txt"
+  printf 'import のない検証スライス\n' > "$NOTES/jp.txt"
+  run an s2 --kind undefined-imports --not-applicable --reason-file "$NOTES/jp.txt"
   [ "$status" -eq 0 ]
   [ "$(mq s2 '.audits[0].reason')" = "import のない検証スライス" ]
 }
 
 @test "a text file named - or starting with a dash is a file, never standard input or an option" {
+  cd "$NOTES"
   printf 'from the dash file\n' > ./-
   run an s1 --kind undefined-imports --not-applicable --reason-file - < /dev/null
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -409,25 +413,26 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 }
 
 @test "a link at .vetdd, .vetdd/evidence, or the slice directory is refused and nothing is made outside" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
+  # A .vetdd that is a link takes .vetdd/notes out of the repository too: the reason is refused first.
+  rm -rf .vetdd
   mkdir -p "$BATS_TEST_TMPDIR/out"
   ln -s "$BATS_TEST_TMPDIR/out" .vetdd
-  run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  run an s1 --kind undefined-imports --not-applicable --reason-file .vetdd/notes/r.txt
   [ "$status" -eq 2 ]
   [ -z "$(ls -A "$BATS_TEST_TMPDIR/out")" ]
-  rm .vetdd; mkdir .vetdd; ln -s "$BATS_TEST_TMPDIR/out" .vetdd/evidence
-  run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  rm .vetdd; mkdir -p "$NOTES"; printf 'r\n' > "$NOTES/r.txt"; ln -s "$BATS_TEST_TMPDIR/out" .vetdd/evidence
+  run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   [ "$status" -eq 2 ]
   [ -z "$(ls -A "$BATS_TEST_TMPDIR/out")" ]
   rm .vetdd/evidence; mkdir .vetdd/evidence; ln -s "$BATS_TEST_TMPDIR/out" .vetdd/evidence/s1
-  run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   [ "$status" -eq 2 ]
   [ -z "$(ls -A "$BATS_TEST_TMPDIR/out")" ]
 }
 
 @test "a meta.json that is a link, a directory, for another slice, not JSON, or with a bad audits is refused and kept" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  local R="$BATS_TEST_TMPDIR/r.txt" m=.vetdd/evidence/s1/meta.json
+  printf 'r\n' > "$NOTES/r.txt"
+  local R="$NOTES/r.txt" m=.vetdd/evidence/s1/meta.json
   mkdir -p .vetdd/evidence/s1 && ln -s "$BATS_TEST_TMPDIR/real.txt" "$m"
   run an s1 --kind undefined-imports --not-applicable --reason-file "$R";  [ "$status" -eq 2 ]
   [ ! -e "$BATS_TEST_TMPDIR/real.txt" ]
@@ -449,12 +454,12 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 }
 
 @test "a link planted at a guessable temporary name is never written through, and the name comes from mktemp" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
   ev s1 calibration -- true
   printf 'precious\n' > "$BATS_TEST_TMPDIR/target"
   local n
   for n in 1 2 3 $$; do ln -s "$BATS_TEST_TMPDIR/target" "$REPO/.vetdd/evidence/s1/meta.json.tmp.$n"; done
-  run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   [ "$status" -eq 0 ]
   [ "$(cat "$BATS_TEST_TMPDIR/target")" = precious ]
   [ -z "$(ls "$REPO/.vetdd/evidence/s1" | grep -E '^meta\.json\.[A-Za-z0-9]{6}$')" ]
@@ -463,28 +468,28 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 }
 
 @test "nothing is written, and no empty slice directory is left, when the temporary file cannot be made" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
   mkdir -p "$BATS_TEST_TMPDIR/nomktemp"
   printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/nomktemp/mktemp"; chmod +x "$BATS_TEST_TMPDIR/nomktemp/mktemp"
-  PATH="$BATS_TEST_TMPDIR/nomktemp:$PATH" run an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  PATH="$BATS_TEST_TMPDIR/nomktemp:$PATH" run an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   [ "$status" -eq 2 ]
   [ ! -e .vetdd/evidence/s1 ]
 }
 
 @test "audit-note keeps the meta.json permissions the umask gives" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  ( umask 077; an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt" )
+  printf 'r\n' > "$NOTES/r.txt"
+  ( umask 077; an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt" )
   [ "$(perm .vetdd/evidence/s1/meta.json)" = 600 ]
-  ( umask 022; an s2 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt" )
+  ( umask 022; an s2 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt" )
   [ "$(perm .vetdd/evidence/s2/meta.json)" = 644 ]
 }
 
 # --- schema --------------------------------------------------------------------------------------
 
 @test "meta.json with an audit-marked run and audits[] validates against evidence.schema.json" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  ev s1 calibration --audit undefined-imports --oracle-file test.sh -- sh test.sh
-  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
+  stub_ev s1 --oracle-file test.sh -- sh test.sh
+  an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   run validate_schema "$REPO/.vetdd/evidence/s1/meta.json"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$output" = valid ]
@@ -499,9 +504,9 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 
 # A mutation note is valid since PR7a (S3b); an unknown kind is still refused, and opts in to rule 10.
 @test "the schema rejects a tampered audit or audits entry" {
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  ev s1 calibration --audit undefined-imports --oracle-file test.sh -- sh test.sh
-  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
+  stub_ev s1 --oracle-file test.sh -- sh test.sh
+  an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   local f
   for f in '.runs[0].audit.kind = "mutation"' '.runs[0].audit.extra = 1' '.runs[0].audit = {}' '.runs[0].audit = "undefined-imports"' \
            '.audits[0].kind = "stryker"' '.audits[0].status = "done"' '.audits[0].status = "applicable"' '.audits[0].reason = ""' \
@@ -519,7 +524,7 @@ meta_unchanged() { [ ! -e "$REPO/.vetdd/evidence/$1/meta.json" ]; }
 # audit_run <slice> <command...>: an audit-marked calibration with the oracle of record_good_slice.
 audit_run() {
   local s="$1"; shift
-  ev "$s" calibration --audit undefined-imports --oracle-version v1 --oracle-file test.sh -- "$@" >/dev/null 2>&1 || true
+  stub_ev "$s" --oracle-version v1 --oracle-file test.sh -- "$@" >/dev/null 2>&1 || true
 }
 
 @test "10a fails a slice whose stubbed oracle still passed, naming the run" {
@@ -551,8 +556,8 @@ audit_run() {
 
 @test "10b is satisfied by a not_applicable entry written by audit-note.sh" {
   record_good_slice s1
-  printf 'the oracle drives the app; there is no import to stub\n' > "$BATS_TEST_TMPDIR/r.txt"
-  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'the oracle drives the app; there is no import to stub\n' > "$NOTES/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$output" = "s1: OK" ]
@@ -560,8 +565,8 @@ audit_run() {
 
 @test "10b is not satisfied by an entry without a reason, with another status or kind, or by a forced audit red" {
   record_good_slice s1
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   local f
   for f in '.audits[0].reason = ""' '.audits[0].reason = 5' '.audits[0].status = "done"' '.audits[0].kind = "stryker"'; do
     cp "$REPO/.vetdd/evidence/s1/meta.json" "$BATS_TEST_TMPDIR/keep.json"
@@ -573,7 +578,7 @@ audit_run() {
   done
   # A red forced with --outcome on a command that exited 0 is not a caught audit.
   record_good_slice s2
-  ev s2 calibration --audit undefined-imports --outcome target_failure --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1 || true
+  stub_ev s2 --outcome target_failure --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1 || true
   run check s2
   [ "$status" -eq 1 ]
   [[ "$output" == *"s2: FAIL (10b:"* ]]
@@ -583,6 +588,7 @@ audit_run() {
   record_good_slice s1
   audit_run s1 sh -c 'exit 1'
   printf '\n# a stronger test\n' >> test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason stronger >/dev/null
   ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh >/dev/null 2>&1
@@ -590,7 +596,7 @@ audit_run() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"s1: FAIL (10b: no undefined-imports audit for the final oracle"* ]]
   [[ "$output" != *"10a"* ]]
-  ev s1 calibration --audit undefined-imports --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
+  stub_ev s1 --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$output" = "s1: OK" ]
@@ -600,10 +606,11 @@ audit_run() {
   ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1
   audit_run s1 true
   printf '\n# the test now checks the product\n' >> test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason "checks the product" >/dev/null
   ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh >/dev/null 2>&1
-  ev s1 calibration --audit undefined-imports --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
+  stub_ev s1 --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   run check s1
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$output" = "s1: OK" ]
@@ -670,7 +677,7 @@ audit_run() {
 @test "an audit run is not a red: it cannot stand in for the before run (rules 1 and 8)" {
   # A stubbed product is not a defect: the red of a slice has to come from the real one.
   printf '42\n' > value.txt
-  ev s1 calibration --audit undefined-imports --oracle-version v1 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
+  stub_ev s1 --oracle-version v1 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   ev s1 after -- sh test.sh >/dev/null 2>&1
   run check s1
   [ "$status" -eq 1 ]
@@ -741,7 +748,7 @@ audit_run() {
   run check s1
   [[ "$output" == *"9b: "* ]]
   # An audit run with its own report, recorded afterwards, must not make the 9b error go away.
-  REPORT="$PASS" EXIT=1 ev s1 calibration --audit undefined-imports --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
+  REPORT="$PASS" EXIT=1 stub_ev s1 --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
   run check s1
   [[ "$output" == *"9b: "* ]] || { echo "$output"; false; }
 }
@@ -803,7 +810,7 @@ audit_run() {
   # The same command throughout, so the audit run and the real green fall in one group.
   EXIT=1 ev s1 before --oracle-version v1 --oracle-file test.sh -- sh runner.sh >/dev/null 2>&1 || true
   EXIT=0 ev s1 after --oracle-version v1 --oracle-file test.sh -- sh runner.sh >/dev/null 2>&1 || true
-  REPORT="$PASS" EXIT=1 ev s1 calibration --audit undefined-imports --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
+  REPORT="$PASS" EXIT=1 stub_ev s1 --oracle-version v1 --oracle-file test.sh --test-report "jest-json:$R" -- sh runner.sh >/dev/null 2>&1 || true
   run check s1
   [[ "$output" != *"9c"* ]] || { echo "$output"; false; }
 }
@@ -896,8 +903,8 @@ audit_run() {
 
 @test "a not_applicable note recorded before the final oracle's first run does not satisfy 10b (round 6)" {
   record_good_slice s1
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   run check s1
   [ "$output" = "s1: OK" ]
   # Written before the final oracle first ran: by run number (after_seq 0 is before run 1), and by
@@ -913,10 +920,11 @@ audit_run() {
 
 @test "a note written for version 1 stops counting once version 2 has run (round 6)" {
   record_good_slice s1
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   sleep 1
   printf '\n# the test now checks the product\n' >> test.sh
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason "checks the product" >/dev/null
   ev s1 calibration --oracle-version v2 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1
   printf '42\n' > value.txt
   ev s1 after -- sh test.sh >/dev/null 2>&1
@@ -927,8 +935,8 @@ audit_run() {
 
 @test "a note is not counted when no run of the final oracle has a start time (fail closed)" {
   record_good_slice s1
-  printf 'r\n' > "$BATS_TEST_TMPDIR/r.txt"
-  an s1 --kind undefined-imports --not-applicable --reason-file "$BATS_TEST_TMPDIR/r.txt"
+  printf 'r\n' > "$NOTES/r.txt"
+  an s1 --kind undefined-imports --not-applicable --reason-file "$NOTES/r.txt"
   tamper s1 '.runs |= map(del(.started_at)) | .audits[0] |= del(.after_seq)'
   run check s1
   [[ "$output" == *"10b:"* ]]

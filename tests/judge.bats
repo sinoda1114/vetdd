@@ -47,6 +47,8 @@ fi
 # Which CODEX_HOME each call ran with, and what it held.
 printf '%s %s\n' "$1" "${CODEX_HOME:-unset}" >> "$FAKE_SEEN.homes"
 printf '%s\n' "${HOME:-unset}" > "$FAKE_SEEN.home_env.$1"
+[ -z "${HOME:-}" ] || ls -A "$HOME" > "$FAKE_SEEN.home_ls.$1" 2>/dev/null
+[ -z "${HOME:-}" ] || ls -A "$HOME/.." > "$FAKE_SEEN.home_up.$1" 2>/dev/null
 env > "$FAKE_SEEN.env.$1"
 [ -z "${CODEX_HOME:-}" ] || { ls -A "$CODEX_HOME"; [ ! -e "$CODEX_HOME/auth.json" ] && [ ! -L "$CODEX_HOME/auth.json" ] || [ -r "$CODEX_HOME/auth.json" ] || echo unreadable-auth; } > "$FAKE_SEEN.home.$1" 2>/dev/null
 if [ "$1" = login ] && [ "$2" = status ]; then
@@ -668,12 +670,51 @@ user_codex_home() {
   [[ "$output" != *unbound* ]]
 }
 
-@test "#2 r2: codex exec runs with HOME set to the private home, so the user's personal skills (~/.agents/skills) never load" {
+@test "#2 r2: codex exec runs with HOME set to a private home, so the user's personal skills (~/.agents/skills) never load" {
   mkdir -p "$HOME/.agents/skills/x" && printf 'name: x\n' > "$HOME/.agents/skills/x/SKILL.md"
   run judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  local h; h="$(awk '$1 == "exec" { print $2 }' "$FAKE_SEEN.homes")"
-  [ "$(cat "$FAKE_SEEN.home_env.exec")" = "$h" ]
+  local jh; jh="$(cat "$FAKE_SEEN.home_env.exec")"
+  [ -n "$jh" ]
+  [ "$jh" != "$HOME" ]
+  [ ! -e "$jh" ]
+}
+
+@test "#46: the judge's HOME is an empty directory of its own, not its CODEX_HOME, so ~/auth.json is not there" {
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local h jh; h="$(awk '$1 == "exec" { print $2 }' "$FAKE_SEEN.homes")"; jh="$(cat "$FAKE_SEEN.home_env.exec")"
+  [ "$jh" != "$h" ]
+  [ "$(cat "$FAKE_SEEN.home_env.login")" = "$jh" ]
+  [ -z "$(cat "$FAKE_SEEN.home_ls.exec")" ]
+  # Nothing beside it holds the login either (review r1: no copy of auth.json in the private directory).
+  run grep -qi auth "$FAKE_SEEN.home_up.exec"
+  [ "$status" -ne 0 ] || { cat "$FAKE_SEEN.home_up.exec"; false; }
+  [ "$(cat "$FAKE_SEEN.home.exec")" = auth.json ]
+  [ ! -e "$jh" ]
+  [ ! -e "$h" ]
+}
+
+@test "#46: a login the user refreshed meanwhile is kept even when its cksum is the same (the login is compared by sha256)" {
+  mkdir -p "$BATS_TEST_TMPDIR/samesum"
+  printf '#!/bin/sh\ncat > /dev/null\necho "1 1"\n' > "$BATS_TEST_TMPDIR/samesum/cksum" && chmod +x "$BATS_TEST_TMPDIR/samesum/cksum"
+  run env PATH="$BATS_TEST_TMPDIR/samesum:$PATH" FAKE_REFRESH='{"token":"refreshed"}' FAKE_USER_AUTH="$HOME/.codex/auth.json" \
+    "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat "$HOME/.codex/auth.json")" = '{"token":"newer"}' ]
+}
+
+@test "#46: the refreshed login is written back through a temporary file mktemp makes beside the user's auth.json" {
+  local real; real="$(command -v mktemp)"
+  mkdir -p "$BATS_TEST_TMPDIR/logmk"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$BATS_TEST_TMPDIR/mktemp.log" "$real" > "$BATS_TEST_TMPDIR/logmk/mktemp"
+  chmod +x "$BATS_TEST_TMPDIR/logmk/mktemp"
+  run env PATH="$BATS_TEST_TMPDIR/logmk:$PATH" FAKE_REFRESH='{"token":"refreshed"}' \
+    "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(cat "$HOME/.codex/auth.json")" = '{"token":"refreshed"}' ]
+  grep -qF "$HOME/.codex/auth.json." "$BATS_TEST_TMPDIR/mktemp.log" || { cat "$BATS_TEST_TMPDIR/mktemp.log"; false; }
+  [ "$(ls -A "$HOME/.codex")" = auth.json ]
 }
 
 @test "#2 r2: the judge's shell gets only the core environment (CODEX_HOME and other variables left out)" {
@@ -812,12 +853,14 @@ TEST_CORP_PROXY" run judge
   grep -qx 'TEST_CORP_PROXY=p' "$FAKE_SEEN.env.exec"
 }
 
-@test "pr52 r7: the caller exporting judge.sh's own names (codex, jhome, keep_names) changes nothing" {
-  export codex=x jhome=/nonexistent keep_names=x
+@test "pr52 r7: the caller exporting judge.sh's own names (codex, jhome, judge_home, priv, keep_names) changes nothing" {
+  export codex=x jhome=/nonexistent judge_home=/nonexistent priv=/nonexistent keep_names=x
   run judge
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  local h; h="$(awk '$1 == "exec" { print $2 }' "$FAKE_SEEN.homes")"
-  [ "$h" != /nonexistent ] && [ "$(cat "$FAKE_SEEN.home_env.exec")" = "$h" ]
+  local h jh; h="$(awk '$1 == "exec" { print $2 }' "$FAKE_SEEN.homes")"; jh="$(cat "$FAKE_SEEN.home_env.exec")"
+  [ "$h" != /nonexistent ]
+  [ "$jh" != /nonexistent ]
+  [ "${jh%/*}" = "${h%/*}" ]
   grep -q '^PATH=' "$FAKE_SEEN.env.exec"
 }
 

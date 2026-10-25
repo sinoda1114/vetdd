@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Record why an audit does not apply to a slice.
-# Usage: audit-note.sh <slice-id> --kind undefined-imports|mutation --not-applicable --reason-file <path>
+# Usage: audit-note.sh <slice-id> --kind undefined-imports|mutation --not-applicable --reason-file <path under .vetdd/notes/>
 # Appends {kind, status: "not_applicable", reason, recorded_at, after_seq} to audits[] in
 # .vetdd/evidence/<slice>/meta.json. The audits themselves are `calibrate.sh stub` (undefined-imports)
 # and `evidence.sh --audit mutation` (mutation); this note is for a slice where one cannot apply (a
 # verify slice that drives the running app, a test with no product import, a language with no mutation
 # tool). check-evidence rules 10b and 10c accept the note when it was recorded after the final oracle
-# first ran. The reason is one line in a file (a regular file, no control characters, 4096 bytes at
-# most), so text from outside never passes through the shell. A second entry of the same kind is a
+# first ran. The reason is one line in a file under .vetdd/notes/ (a regular file, no control characters,
+# 4096 bytes at most), so text from outside never passes through the shell and no other file is read; it
+# goes into meta.json, which the final judge receives as data. A slice another script is recording is
+# refused (lib/meta.sh). A second entry of the same kind is a
 # usage error until a run starts after the last one (a new oracle version needs a new note). Rules 10b and 10c are tripwires, not boundaries: they check that the note exists, not
 # that the reason is true.
 # Exit 0 on success, 2 on usage errors (nothing is written).
@@ -18,14 +20,18 @@ die() { printf 'audit-note.sh: %s\n' "$1" >&2; exit 2; }
 unset CDPATH
 . "${BASH_SOURCE[0]%/*}/lib/common.sh"
 . "${BASH_SOURCE[0]%/*}/lib/text.sh"
+. "${BASH_SOURCE[0]%/*}/lib/meta.sh"
 vetdd_require_jq audit-note.sh
 
-usage="usage: audit-note.sh <slice-id> --kind undefined-imports|mutation --not-applicable --reason-file <path>"
+usage="usage: audit-note.sh <slice-id> --kind undefined-imports|mutation --not-applicable --reason-file <path under .vetdd/notes/>"
 [ $# -ge 1 ] || die "$usage"
 slice="$1"; shift
 vetdd_is_slice_id "$slice" || die "invalid slice id (letters, digits, . _ -; starting with a letter or digit)"
 
 kind=""; have_na=0; reason=""; have_reason=0
+# The repository first: a text file is read only from its .vetdd/notes/.
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
+root="$(cd "$root" && pwd -P)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --kind) [ $# -ge 2 ] || die "--kind needs a value"; [ -z "$kind" ] || die "--kind given twice"
@@ -33,7 +39,7 @@ while [ $# -gt 0 ]; do
       shift 2 ;;
     --not-applicable) have_na=1; shift ;;
     --reason-file) [ $# -ge 2 ] || die "--reason-file needs a path"; [ "$have_reason" -eq 0 ] || die "--reason-file given twice"
-      vetdd_text_file --reason-file "$2"; reason="$TEXT_FILE_VALUE"; have_reason=1; shift 2 ;;
+      vetdd_text_file --reason-file "$2" "$root"; reason="$TEXT_FILE_VALUE"; have_reason=1; shift 2 ;;
     *) die "unexpected argument '$(printf '%s' "$1" | vetdd_printable)' ($usage)" ;;
   esac
 done
@@ -41,8 +47,6 @@ done
 [ "$have_na" -eq 1 ] || die "--not-applicable is required (it is the only status there is; calibrate.sh stub and evidence.sh --audit mutation record the audits themselves)"
 [ "$have_reason" -eq 1 ] || die "--reason-file is required"
 
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
-root="$(cd "$root" && pwd -P)"
 rel=".vetdd/evidence/$slice/meta.json"
 vetdd_inside_repo "$root" "$rel" || die "$rel is a symbolic link or outside the repository"
 dir="$root/.vetdd/evidence/$slice"
@@ -55,7 +59,11 @@ done
 
 [ ! -e "$meta" ] || [ -f "$meta" ] || die "$rel is not a regular file (nothing written)"
 
-# The evidence to extend: the file, or the skeleton evidence.sh creates (so the two scripts agree).
+# One writer of the slice's meta.json at a time, from the read below to the rename (lib/meta.sh).
+vetdd_slice_lock "$slice" || die "$VETDD_SLICE_LOCK_ERR"
+trap 'vetdd_slice_unlock' EXIT
+
+# The evidence to extend: the file, or the skeleton every writer starts a slice with (lib/meta.sh).
 # Nothing is written until the whole new document is built.
 if [ -f "$meta" ]; then
   in_json="$(cat "$meta")" || die "cannot read $meta"
@@ -63,7 +71,7 @@ if [ -f "$meta" ]; then
       and ((.audits // []) | type == "array" and all(.[]; type == "object"))' >/dev/null 2>&1 \
     || die "$rel is not valid evidence for slice '$slice' (nothing written)"
 else
-  in_json="$(jq -n --arg s "$slice" '{slice_id: $s, oracle: {seam: null, version: null, files: []}, runs: []}')" \
+  in_json="$(vetdd_meta_skeleton "$slice")" \
     || die "cannot build the evidence for slice '$slice'"
 fi
 

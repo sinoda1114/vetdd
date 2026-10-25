@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Record why an oracle's version changed (and, for a change in meaning, the re-agreement).
 # Usage: oracle-version.sh <slice-id> --version <v> --change initial|implementation|meaning
-#                          --reason <text>|--reason-file <path>
+#                          --reason <text>|--reason-file <path under .vetdd/notes/>
 #                          [--agreement-via AskUserQuestion|chat --question <q> --answer <a>]
 # Appends {version, change, reason, agreement, after_seq, recorded_at} to oracle_versions[] in
 # .vetdd/evidence/<slice>/meta.json. after_seq is the highest run seq recorded so far (0 when none):
 # the new version's first red must come after it (check-evidence rule 8d). A change in the meaning
 # of the agreed behavior (principle 1a) needs all three agreement items. Run it BEFORE the red of
 # the new version. Rule 8d is a tripwire, not a boundary: it checks that the record exists and is
-# in order, not that the reason is true or that the agreement really happened.
+# in order, not that the reason is true or that the agreement really happened. A text file (--reason-file,
+# --question-file, --answer-file) is one line in a regular file under .vetdd/notes/ (lib/text.sh). The
+# entry goes into meta.json, which the final judge receives as data. One writer of a slice's meta.json at a
+# time: a slice another script is recording (an evidence.sh run going) is refused (lib/meta.sh).
 # Exit 0 on success, 2 on usage errors (nothing is written).
 set -u
 
@@ -17,6 +20,7 @@ die() { printf 'oracle-version.sh: %s\n' "$1" >&2; exit 2; }
 unset CDPATH
 . "${BASH_SOURCE[0]%/*}/lib/common.sh"
 . "${BASH_SOURCE[0]%/*}/lib/text.sh"
+. "${BASH_SOURCE[0]%/*}/lib/meta.sh"
 vetdd_require_jq oracle-version.sh
 
 [ $# -ge 1 ] || die "usage: oracle-version.sh <slice-id> --version <v> --change initial|implementation|meaning --reason <text> [--agreement-via AskUserQuestion|chat --question <q> --answer <a>]"
@@ -25,6 +29,9 @@ vetdd_is_slice_id "$slice" || die "invalid slice id (letters, digits, . _ -; sta
 
 version=""; change=""; reason=""; via=""; question=""; answer=""
 have_version=0; have_change=0; have_reason=0; have_via=0; have_question=0; have_answer=0
+# The repository first: a text file is read only from its .vetdd/notes/.
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
+root="$(cd "$root" && pwd -P)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) [ $# -ge 2 ] || die "--version needs a value"
@@ -36,18 +43,18 @@ while [ $# -gt 0 ]; do
     --reason) [ $# -ge 2 ] || die "--reason needs a value"; [ "$have_reason" -eq 0 ] || die "--reason given twice (or with --reason-file)"
       vetdd_text_opt --reason "$2"; reason="$2"; have_reason=1; shift 2 ;;
     --reason-file) [ $# -ge 2 ] || die "--reason-file needs a path"; [ "$have_reason" -eq 0 ] || die "--reason given twice (or with --reason-file)"
-      vetdd_text_file --reason-file "$2"; reason="$TEXT_FILE_VALUE"; have_reason=1; shift 2 ;;
+      vetdd_text_file --reason-file "$2" "$root"; reason="$TEXT_FILE_VALUE"; have_reason=1; shift 2 ;;
     --agreement-via) [ $# -ge 2 ] || die "--agreement-via needs a value"
       case "$2" in AskUserQuestion|chat) ;; *) die "--agreement-via takes AskUserQuestion or chat" ;; esac
       via="$2"; have_via=1; shift 2 ;;
     --question) [ $# -ge 2 ] || die "--question needs a value"; [ "$have_question" -eq 0 ] || die "--question given twice (or with --question-file)"
       vetdd_text_opt --question "$2"; question="$2"; have_question=1; shift 2 ;;
     --question-file) [ $# -ge 2 ] || die "--question-file needs a path"; [ "$have_question" -eq 0 ] || die "--question given twice (or with --question-file)"
-      vetdd_text_file --question-file "$2"; question="$TEXT_FILE_VALUE"; have_question=1; shift 2 ;;
+      vetdd_text_file --question-file "$2" "$root"; question="$TEXT_FILE_VALUE"; have_question=1; shift 2 ;;
     --answer) [ $# -ge 2 ] || die "--answer needs a value"; [ "$have_answer" -eq 0 ] || die "--answer given twice (or with --answer-file)"
       vetdd_text_opt --answer "$2"; answer="$2"; have_answer=1; shift 2 ;;
     --answer-file) [ $# -ge 2 ] || die "--answer-file needs a path"; [ "$have_answer" -eq 0 ] || die "--answer given twice (or with --answer-file)"
-      vetdd_text_file --answer-file "$2"; answer="$TEXT_FILE_VALUE"; have_answer=1; shift 2 ;;
+      vetdd_text_file --answer-file "$2" "$root"; answer="$TEXT_FILE_VALUE"; have_answer=1; shift 2 ;;
     *) die "unexpected argument '$(printf '%s' "$1" | vetdd_printable)'" ;;
   esac
 done
@@ -64,8 +71,6 @@ if [ "$change" = meaning ] && [ "$agreement_items" -ne 3 ]; then
   die "--change meaning needs the re-agreement: --agreement-via AskUserQuestion|chat, --question, --answer (principle 1a)"
 fi
 
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
-root="$(cd "$root" && pwd -P)"
 rel=".vetdd/evidence/$slice/meta.json"
 vetdd_inside_repo "$root" "$rel" || die "$rel is a symbolic link or outside the repository"
 dir="$root/.vetdd/evidence/$slice"
@@ -78,7 +83,11 @@ done
 
 [ ! -e "$meta" ] || [ -f "$meta" ] || die "$rel is not a regular file (nothing written)"
 
-# The evidence to extend: the file, or the skeleton evidence.sh creates (so the two scripts agree).
+# One writer of the slice's meta.json at a time, from the read below to the rename (lib/meta.sh).
+vetdd_slice_lock "$slice" || die "$VETDD_SLICE_LOCK_ERR"
+trap 'vetdd_slice_unlock' EXIT
+
+# The evidence to extend: the file, or the skeleton every writer starts a slice with (lib/meta.sh).
 # Nothing is written until the whole new document is built.
 if [ -f "$meta" ]; then
   in_json="$(cat "$meta")" || die "cannot read $meta"
@@ -86,7 +95,7 @@ if [ -f "$meta" ]; then
       and ((.oracle_versions // []) | type == "array" and all(.[]; type == "object"))' >/dev/null 2>&1 \
     || die "$rel is not valid evidence for slice '$slice' (nothing written)"
 else
-  in_json="$(jq -n --arg s "$slice" '{slice_id: $s, oracle: {seam: null, version: null, files: []}, runs: []}')" \
+  in_json="$(vetdd_meta_skeleton "$slice")" \
     || die "cannot build the evidence for slice '$slice'"
 fi
 

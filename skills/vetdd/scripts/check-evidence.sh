@@ -17,7 +17,8 @@
 #               files. Within the final green's version the files do not change from its first red
 #               on, nor after any green of that version (edits before the first red are the test
 #               being written); the final green has a red with the same oracle before it (a red the
-#               command produced, not one forced with --outcome on exit 0, 126, or 127); the final version is
+#               command produced: not one whose run records outcome_forced, and, for a run recorded before
+#               evidence.sh kept that field, not one on exit 0, 126, or 127); the final version is
 #               not a replaced one come back; and nothing after the final green uses another oracle. A version left behind is
 #               history: bumping it and recording its red clears an earlier slip. This catches an
 #               oracle file edited after its green, and a weakening that stops the recorded command
@@ -56,7 +57,12 @@
 #               test observes nothing.
 #           (10b) the oracle of the final green run has an accepted audit run, recorded after a green run
 #               of that oracle, that ended target_failure (not forced with --outcome; the command is
-#               not compared with the green's, a blind spot), or an audits[] entry not_applicable with a reason
+#               not compared with the green's, a blind spot) and whose audit.files are the stubs calibrate.sh
+#               stub writes (lib/stub.sh: the sha256 of each recorded file is that of a stub its extension
+#               can take; a record that is not fails, and a run recorded before audit.files existed counts
+#               with a WARN: a tripwire, since anyone who can write the git dir can fake the stub state
+#               evidence.sh asks for, and a stub's text says nothing of which product file it replaced),
+#               or an audits[] entry not_applicable with a reason
 #               (audit-note.sh) recorded after the final oracle first ran, so a note written for an older
 #               version stops counting once a new one has run. Asked only of a slice that opted in: a run with an audit mark other
 #               than mutation, or an audits key that is empty or holds an entry other than a mutation
@@ -95,7 +101,7 @@
 #               the field (an unfix, a plain calibration, evidence from before it) is not asked. A
 #               tripwire, not a boundary: a copy and its sha256 both rewritten by hand pass it.
 # Output: "<slice>: OK" or one "<slice>: FAIL (<rule>: <reason>)" line per failing rule, then one
-#         "<slice>: WARN (9c|10c|11: <reason>)" line per warning (advice for the reply's Attention section;
+#         "<slice>: WARN (9c|10b|10c|11: <reason>)" line per warning (advice for the reply's Attention section;
 #         it holds no recorded text).
 # --before-close (the pre-commit hook; also VETDD_BEFORE_CLOSE=1, which lib/common.sh sets in any
 #         pre-commit hook): a slice whose mutation audit has not run yet gets a 10c WARN, not
@@ -110,6 +116,7 @@ vetdd_require_jq check-evidence.sh
 . "${BASH_SOURCE[0]%/*}/lib/tree-hash.sh"
 . "${BASH_SOURCE[0]%/*}/lib/stall.sh"
 . "${BASH_SOURCE[0]%/*}/lib/mutation-report.sh"
+. "${BASH_SOURCE[0]%/*}/lib/stub.sh"
 
 repo="."
 slices=()
@@ -151,6 +158,10 @@ def recorded: (.oracle | type) == "object" and (.oracle.files | type) == "array"
 # A run the oracle chain can place: an oracle record and a numeric exit code (rule 8 fails any other).
 def usable: recorded and (.exit_code | type) == "number";
 def num: if type == "number" then floor | tostring else error("not a number") end;
+# An outcome the command itself produced. evidence.sh records outcome_forced on a run whose --outcome
+# differs from what its exit code says; a run recorded before that field is judged by its exit code: an
+# outcome other than pass on exit 0, or a red on a command that could not run (126, 127), was forced.
+def unforced: .outcome_forced != true and .exit_code != 0 and .exit_code != 126 and .exit_code != 127;
 # A not_applicable note counts for the final oracle when it was written after that oracle first ran:
 # by after_seq (the last run number then) when it has one, else by its time (a note written before
 # after_seq existed). With nothing to compare, it counts for nothing.
@@ -177,7 +188,7 @@ def neither: .outcome == "infrastructure_error" or .outcome == "inconclusive";
      | "2: before run \(.seq) is accepted but ended pass"),
     ($acc[] | select(green and .outcome == "target_failure")
      | "3: \(.kind) run \(.seq) is accepted but ended target_failure"),
-    ($acc[] | select(green and .outcome == "pass" and (.exit_code // 0) != 0)
+    ($acc[] | select(green and .outcome == "pass" and (.outcome_forced == true or (.exit_code // 0) != 0))
      | "3: \(.kind) run \(.seq) ended pass only because --outcome forced it (the command exited \(.exit_code)); the evidence cannot be edited back, so fix the cause and record the slice again under a new slice id"),
     (if $last_green != null and ($last_green.accepted == false or $last_green.outcome != "pass")
      then "3: latest \($last_green.kind) run \($last_green.seq) ended \($last_green.outcome)"
@@ -189,10 +200,9 @@ def neither: .outcome == "infrastructure_error" or .outcome == "inconclusive";
 
 # Rule 8, over accepted runs in seq order, each with the oracle it was measured with.
 ORACLE_RULES="$RUN_DEFS"'
-# A red the command itself produced: an outcome forced with --outcome on an exit 0, or on a
-# command that could not run (126, 127), is not one.
+# A red the command itself produced: an outcome forced with --outcome is not one.
 def red: (.kind == "before" or .kind == "calibration") and .outcome == "target_failure"
-         and .audit == null and .exit_code != 0 and .exit_code != 126 and .exit_code != 127;
+         and .audit == null and unforced;
 def vname: if . == null then "unset" else tostring end;
 . as $meta
 | [.runs[] | select(.accepted != false)] as $accepted
@@ -213,7 +223,7 @@ def vname: if . == null then "unset" else tostring end;
     (if $g != null and ([$acc[] | select(red and .seq < $g.seq and oid == ($g | oid))] | length) == 0
      then (if ([$acc[] | select((.kind == "before" or .kind == "calibration") and .outcome == "target_failure" and .audit == null
                                 and .seq < $g.seq and oid == ($g | oid))] | length) > 0
-           then "8: the only red runs with the oracle of the final green run \($g.seq) (version \(($g | oid).v | vname)) were forced with --outcome on a command that exited 0 or could not run (126, 127); make the oracle run and report failure through its exit code (references/feedback-loop-ladder.md)"
+           then "8: the only red runs with the oracle of the final green run \($g.seq) (version \(($g | oid).v | vname)) were forced with --outcome (on a command that exited 0, could not run (126, 127), or exited with a code declared with --infra-exit); make the oracle run and report failure through its exit code (references/feedback-loop-ladder.md)"
            else "8: no red run with the oracle of the final green run \($g.seq) (version \(($g | oid).v | vname)) precedes it; a new or edited oracle needs its own red before its green" end)
      else empty end),
     # Only the version that is final counts: a version left behind is history.
@@ -279,6 +289,8 @@ def vname: if . == null then "unset" else tostring end;
 # only); a value of the wrong type is an error, which the caller turns into a failure.
 AUDIT_RULES="$RUN_DEFS"'
 def audited: .audit.kind == "undefined-imports";
+# $bad: the seqs of audit runs whose audit.files are not the stubs; $old: those with no audit.files (shell).
+def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
 . as $meta
 | [.runs[] | select(.accepted != false)] as $accepted
 | [$accepted[] | select(usable)] as $acc
@@ -293,15 +305,18 @@ def audited: .audit.kind == "undefined-imports";
 | (
     ($audits[] | select(.outcome == "pass") | select($g == null or oid == ($g | oid))
      | "10a: the audit run \(.seq | num) (every import stubbed with undefined) still passed, so the test observes nothing; make the test call or check the product code"),
+    ($audits[] | select(listed($bad)) | select($g == null or oid == ($g | oid))
+     | "10b: undefined-imports audit run \(.seq | num) does not record the stubs calibrate.sh stub writes (audit.files: each stubbed file with the sha256 of its stub), so it is not counted, and the record cannot be edited back: bump --oracle-version, record the new version with oracle-version.sh first, then its red, its green, and calibrate.sh stub"),
     (if ($meta | has("audits")) and ($meta.audits | type) != "array"
      then "10: audits is not an array, so the audit notes cannot be checked"
      elif $opted and $g != null then
        ($g | oid) as $fo
        | [$acc[] | select(green and .outcome == "pass" and oid == $fo)] as $greens
        # A caught audit comes after a green run of the same oracle: before that, the red is the unfixed product.
-       | ([$acc[] | select(.kind == "calibration" and audited and .outcome == "target_failure"
-                           and .exit_code != 0 and .exit_code != 126 and .exit_code != 127 and oid == $fo)
-                  | . as $a | select(any($greens[]; .seq < $a.seq))] | length) as $caught
+       | [$acc[] | select(.kind == "calibration" and audited and .outcome == "target_failure" and unforced
+                          and oid == $fo and (listed($bad) | not))
+                 | . as $a | select(any($greens[]; .seq < $a.seq))] as $caughtruns
+       | ($caughtruns | length) as $caught
        # A note counts for the final oracle when it was recorded after that oracle first ran (the entry
        # has no version of its own); with no start time to compare, it counts for nothing.
        | ([$acc[] | select(oid == $fo) | .started_at | select(type == "string")] | min) as $first
@@ -309,9 +324,11 @@ def audited: .audit.kind == "undefined-imports";
        | ((($meta.audits // []) | map(select(type == "object" and .kind == "undefined-imports" and .status == "not_applicable"
                                               and (.reason | type) == "string" and (.reason | length) > 0
                                               and counts_for($first; $first_seq))) | length)) as $noted
-       | if $caught + $noted == 0
+       | ($caughtruns[] | select(listed($old))
+          | "WARN:10b: undefined-imports audit run \(.seq | num) records no stubbed files (it was recorded before audit runs listed them), so 10b could not check that its files were the stubs"),
+         (if $caught + $noted == 0
          then "10b: no undefined-imports audit for the final oracle after a green run of it; run calibrate.sh stub \($slice) --file <product files> --oracle-file <test files> -- <command> (it must end target_failure), or record why it does not apply with audit-note.sh \($slice) --kind undefined-imports --not-applicable --reason-file <path>"
-         else empty end
+         else empty end)
      else empty end)
   )'
 
@@ -666,10 +683,57 @@ check_slice() {
   check_oracle_files "$meta"
   check_test_reports "$slice" "$meta"
   # Rule 10: a filter that fails prints nothing; that must fail the slice, never read as OK.
-  jq -r --arg slice "$slice" "$AUDIT_RULES" "$meta" 2>/dev/null || echo "10: could not evaluate the undefined-imports audit (a run's audit record or the audits log is malformed)"
+  check_audit "$slice" "$meta"
   check_mutation "$slice" "$meta"
   check_stall "$slice" "$meta"
   check_planted "$slice" "$meta"
+}
+
+# Rule 10: the stubbed files each undefined-imports audit run records, compared with the stubs
+# calibrate.sh stub writes (lib/stub.sh), then the rules. Problems on stdout, warnings to $warn_file.
+# STUB_RUNS: per accepted audit run, NUL-separated groups of four: seq, how (file, old: no audit.files,
+# bad: a record of another shape), and for each file its path and sha256.
+STUB_RUNS='
+  .runs[] | select(type == "object" and .accepted != false and (.audit | type) == "object"
+                   and .audit.kind == "undefined-imports" and (.seq | type) == "number")
+  | (.seq | floor | tostring) as $s
+  # A seq that is not a whole number would be compared floored with the rules, which read it as is.
+  | if .seq != (.seq | floor) then [$s, "bad", "", ""]
+    elif (.audit | has("files")) | not then [$s, "old", "", ""]
+    elif (.audit.files | type) == "array" and (.audit.files | length) > 0
+         and all(.audit.files[]; type == "object" and (.path | type) == "string" and (.path | length) > 0
+                 and (.path | explode | all(. != 0)) and (.sha256 | type) == "string" and (.sha256 | test("^[0-9a-f]{64}$")))
+    then (.audit.files[] | [$s, "file", .path, .sha256])
+    else [$s, "bad", "", ""] end
+  | map(. + "\u0000") | add'
+stub_sums=""
+for k in esm cjs guarded py; do stub_sums="$stub_sums $k:$(vetdd_stub_text "$k" | vetdd_sha256 /dev/stdin) "; done
+check_audit() {
+  local slice="$1" meta="$2" seq how path sum k ok bad="" old="" out
+  if ! jq -e "[$STUB_RUNS] | length >= 0" "$meta" >/dev/null 2>&1; then
+    echo "10: could not evaluate the undefined-imports audit (a run's audit record or the audits log is malformed)"; return
+  fi
+  while IFS= read -r -d '' seq && IFS= read -r -d '' how && IFS= read -r -d '' path && IFS= read -r -d '' sum; do
+    case "$how" in
+      old) old="$old $seq"; continue ;;
+      bad) bad="$bad $seq"; continue ;;
+    esac
+    ok=0
+    for k in $(vetdd_stub_kinds "$path"); do
+      case "$stub_sums" in *" $k:$sum "*) ok=1 ;; esac
+    done
+    [ "$ok" -eq 1 ] || bad="$bad $seq"
+  done < <(jq -j "$STUB_RUNS" "$meta" 2>/dev/null)
+  if ! out="$(jq -r --arg slice "$slice" \
+       --argjson bad "$(jq -cn --arg l "$bad" '$l | split(" ") | map(select(. != "") | tonumber) | unique')" \
+       --argjson old "$(jq -cn --arg l "$old" '$l | split(" ") | map(select(. != "") | tonumber) | unique')" \
+       "$AUDIT_RULES" "$meta" 2>/dev/null)"; then
+    echo "10: could not evaluate the undefined-imports audit (a run's audit record or the audits log is malformed)"; return
+  fi
+  [ -n "$out" ] || return 0
+  # A warning line is made by the rules alone (run numbers and fixed words), never from recorded text.
+  printf '%s\n' "$out" | grep -v '^WARN:' || true
+  printf '%s\n' "$out" | sed -n 's/^WARN://p' >> "$warn_file"
 }
 
 # Rule 12: the copy of each planted patch, named from the run's seq, never from a path in the record.

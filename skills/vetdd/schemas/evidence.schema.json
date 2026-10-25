@@ -13,7 +13,7 @@
     },
     "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } },
     "oracle_versions": {
-      "description": "Why each oracle version changed, written by scripts/oracle-version.sh; absent in evidence recorded before the log existed. Once the key exists, check-evidence rule 8d asks for an entry for the version the final green rests on, unless it is the initial agreement (an older version left behind is history).",
+      "description": "Why each oracle version changed, written by scripts/oracle-version.sh; every writer starts a slice with it empty (lib/meta.sh), and it is absent in evidence recorded before the log existed. Once the key exists, check-evidence rule 8d asks for an entry for the version the final green rests on, unless it is the initial agreement (an older version left behind is history).",
       "type": "array",
       "items": { "$ref": "#/$defs/oracleVersion" }
     },
@@ -148,6 +148,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["seq", "kind", "cmd", "exit_code", "outcome", "accepted", "started_at", "ended_at", "log", "tree", "conditions", "oracle"],
+      "dependentRequired": { "outcome_forced": ["infra_exits"], "infra_exits": ["outcome_forced"] },
       "properties": {
         "seq": { "type": "integer", "minimum": 1 },
         "kind": { "enum": ["calibration", "before", "after", "integrated"] },
@@ -157,6 +158,16 @@
         "accepted": {
           "description": "false when the outcome violates the kind (before must be target_failure, after/integrated must be pass). Rejected runs stay as history.",
           "type": "boolean"
+        },
+        "outcome_forced": {
+          "description": "Present (true) only when evidence.sh --outcome set an outcome other than the exit code says (with the infra_exits): check-evidence counts no forced red (rules 8 and 10b) and fails a forced green (rule 3). A run without it ended as its exit code says, or was recorded before the field (judged by its exit code).",
+          "const": true
+        },
+        "infra_exits": {
+          "description": "With outcome_forced only: the exit codes declared with --infra-exit (126 and 127 always mean the command could not run), sorted.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 255 }
         },
         "started_at": { "$ref": "#/$defs/timestamp" },
         "ended_at": { "$ref": "#/$defs/timestamp" },
@@ -182,13 +193,29 @@
         },
         "oracle": { "description": "The oracle this run was measured with.", "$ref": "#/$defs/oracle" },
         "audit": {
-          "description": "An audit run (a calibration that is never counted as a red). undefined-imports: set by calibrate.sh stub; every product file the oracle imports was replaced by a stub whose exports are all undefined, so it must end target_failure (check-evidence rule 10a). mutation: evidence.sh --audit mutation --mutation-report; a mutation testing run whose report is summarized here.",
+          "description": "An audit run (a calibration that is never counted as a red). undefined-imports: set by calibrate.sh stub (evidence.sh takes it from no one else); every product file the oracle imports was replaced by a stub whose exports are all undefined, so it must end target_failure (check-evidence rule 10a). mutation: evidence.sh --audit mutation --mutation-report; a mutation testing run whose report is summarized here.",
           "oneOf": [
             {
               "type": "object",
               "additionalProperties": false,
               "required": ["kind"],
-              "properties": { "kind": { "const": "undefined-imports" } }
+              "properties": {
+                "kind": { "const": "undefined-imports" },
+                "files": {
+                  "description": "Each product file calibrate.sh stub stubbed, as a repository path, with the sha256 it had when the command started (check-evidence rule 10b compares it with the stubs). Absent on a run recorded before the field (rule 10b then counts it with a WARN).",
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["path", "sha256"],
+                    "properties": {
+                      "path": { "type": "string", "minLength": 1 },
+                      "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+                    }
+                  }
+                }
+              }
             },
             {
               "type": "object",
