@@ -563,6 +563,7 @@ recv() {
 @test "#11: a damaged copy of a run under an older oracle version is history: it is not opened once the final green is another version" {
   recv v1 before "$PASS" 1
   recv v1 after "$PASS" 0
+  "$SCRIPTS/oracle-version.sh" s1 --version v2 --change implementation --reason r >/dev/null
   recv v2 calibration "$PASS" 1
   recv v2 after "$PASS" 0
   printf 'damaged\n' > "$REPO/.vetdd/evidence/s1/runs/002-after.tests.json"
