@@ -48,6 +48,7 @@ fi
 printf '%s %s\n' "$1" "${CODEX_HOME:-unset}" >> "$FAKE_SEEN.homes"
 printf '%s\n' "${HOME:-unset}" > "$FAKE_SEEN.home_env.$1"
 [ -z "${HOME:-}" ] || ls -A "$HOME" > "$FAKE_SEEN.home_ls.$1" 2>/dev/null
+[ -z "${HOME:-}" ] || ls -A "$HOME/.." > "$FAKE_SEEN.home_up.$1" 2>/dev/null
 env > "$FAKE_SEEN.env.$1"
 [ -z "${CODEX_HOME:-}" ] || { ls -A "$CODEX_HOME"; [ ! -e "$CODEX_HOME/auth.json" ] && [ ! -L "$CODEX_HOME/auth.json" ] || [ -r "$CODEX_HOME/auth.json" ] || echo unreadable-auth; } > "$FAKE_SEEN.home.$1" 2>/dev/null
 if [ "$1" = login ] && [ "$2" = status ]; then
@@ -686,12 +687,14 @@ user_codex_home() {
   [ "$jh" != "$h" ]
   [ "$(cat "$FAKE_SEEN.home_env.login")" = "$jh" ]
   [ -z "$(cat "$FAKE_SEEN.home_ls.exec")" ]
+  # Nothing beside it holds the login either (review r1: no copy of auth.json in the private directory).
+  ! grep -qi auth "$FAKE_SEEN.home_up.exec" || { cat "$FAKE_SEEN.home_up.exec"; false; }
   [ "$(cat "$FAKE_SEEN.home.exec")" = auth.json ]
   [ ! -e "$jh" ]
   [ ! -e "$h" ]
 }
 
-@test "#46: a login the user refreshed meanwhile is kept even when its cksum is the same (the files are compared byte for byte)" {
+@test "#46: a login the user refreshed meanwhile is kept even when its cksum is the same (the login is compared by sha256)" {
   mkdir -p "$BATS_TEST_TMPDIR/samesum"
   printf '#!/bin/sh\ncat > /dev/null\necho "1 1"\n' > "$BATS_TEST_TMPDIR/samesum/cksum" && chmod +x "$BATS_TEST_TMPDIR/samesum/cksum"
   run env PATH="$BATS_TEST_TMPDIR/samesum:$PATH" FAKE_REFRESH='{"token":"refreshed"}' FAKE_USER_AUTH="$HOME/.codex/auth.json" \

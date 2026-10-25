@@ -13,19 +13,26 @@ vetdd_meta_skeleton() {
 # writes the slice's meta.json, so no two writers interleave (a lost write, or a version entry whose
 # after_seq misses a red that was running). It lives in the git dir, outside .vetdd/, so worktree.sh never
 # carries it back and the judge never gets it. The lock is a symbolic link naming the holder (pid:<pid>),
-# made in one step (ln -s fails when the name exists). A lock whose holder is gone (kill -0, so the pid
-# namespace must be the one it was made in) is taken over: a guard link puts two takeovers one after the
-# other, the owner is read again under it, and the new owner goes in with one rename. On success it sets
+# made in one step (ln -s fails when the name exists). A lock whose holder is gone (neither kill -0 nor ps
+# finds it, so the pid namespace must be the one it was made in) is taken over: a guard link puts two takeovers one after the
+# other, the owner is read again under it, and the new owner goes in with one rename. The guard and the
+# new link are named .takeover.<slice> and .new.<slice>.<pid>: a slice id never starts with a dot, so no
+# slice's lock has those names. Anything at the lock's name that is not a link (a directory, which ln -s
+# would put the link into) is refused. A lock naming this process's own pid was left by an earlier
+# process the pid was reused from, so it is stale. On success it sets
 # VETDD_SLICE_LOCK; the caller removes it with vetdd_slice_unlock (on EXIT). On failure it returns 1
 # with the reason in VETDD_SLICE_LOCK_ERR; a lock a live process holds is never touched.
 VETDD_SLICE_LOCK=""
 VETDD_SLICE_LOCK_ERR=""
 vetdd_slice_lock() {
-  local slice="$1" gdir lock owner opid
+  local slice="$1" gdir lock guard new owner opid
   gdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$gdir" ] \
     || { VETDD_SLICE_LOCK_ERR="cannot locate the git dir for the lock of slice $slice"; return 1; }
-  lock="$gdir/vetdd-lock/$slice"
+  lock="$gdir/vetdd-lock/$slice"; guard="$gdir/vetdd-lock/.takeover.$slice"; new="$gdir/vetdd-lock/.new.$slice.$$"
   mkdir -p "$gdir/vetdd-lock" 2>/dev/null || { VETDD_SLICE_LOCK_ERR="cannot create $gdir/vetdd-lock"; return 1; }
+  if [ -e "$lock" ] && [ ! -L "$lock" ]; then
+    VETDD_SLICE_LOCK_ERR="$lock is not a lock a vetdd script made; inspect it and remove it by hand"; return 1
+  fi
   if ln -s "pid:$$" "$lock" 2>/dev/null; then VETDD_SLICE_LOCK="$lock"; return 0; fi
   if [ ! -L "$lock" ]; then
     VETDD_SLICE_LOCK_ERR="$lock is not a lock a vetdd script made; inspect it and remove it by hand"; return 1
@@ -36,18 +43,19 @@ vetdd_slice_lock() {
   if [ -z "$opid" ]; then
     VETDD_SLICE_LOCK_ERR="the lock $lock of slice $slice is unreadable; if no vetdd script is recording the slice, remove it (rm $lock) and run again"; return 1
   fi
-  if kill -0 "$opid" 2>/dev/null; then
+  # kill -0 fails for another user's live process too (EPERM): ps sees it.
+  if [ "$opid" != "$$" ] && { kill -0 "$opid" 2>/dev/null || ps -p "$opid" >/dev/null 2>&1; }; then
     VETDD_SLICE_LOCK_ERR="another vetdd script (pid $opid) is recording slice $slice ($lock); wait for it to end, then run again. If pid $opid is not one (check with: ps -p $opid), its run was killed and the pid reused: remove $lock"
     return 1
   fi
-  if ln -s "pid:$$" "$lock.takeover" 2>/dev/null; then
-    if [ "$(readlink "$lock" 2>/dev/null)" = "$owner" ] && ln -s "pid:$$" "$lock.new.$$" 2>/dev/null \
-       && mv -f "$lock.new.$$" "$lock"; then
-      rm -f "$lock.takeover"; VETDD_SLICE_LOCK="$lock"; return 0
+  if { [ ! -e "$guard" ] || [ -L "$guard" ]; } && ln -s "pid:$$" "$guard" 2>/dev/null; then
+    if [ "$(readlink "$lock" 2>/dev/null)" = "$owner" ] && { [ ! -e "$new" ] || [ -L "$new" ]; } \
+       && rm -f "$new" && ln -s "pid:$$" "$new" 2>/dev/null && mv -f "$new" "$lock"; then
+      rm -f "$guard"; VETDD_SLICE_LOCK="$lock"; return 0
     fi
-    rm -f "$lock.new.$$" "$lock.takeover"
+    rm -f "$new" "$guard"
   fi
-  VETDD_SLICE_LOCK_ERR="another vetdd script is taking over the lock $lock of slice $slice; run again (if none is running, remove $lock.takeover)"
+  VETDD_SLICE_LOCK_ERR="another vetdd script is taking over the lock $lock of slice $slice; run again (if none is running, remove $guard)"
   return 1
 }
 

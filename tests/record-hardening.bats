@@ -102,6 +102,31 @@ sum_of_text() { printf "$1" > "$BATS_TEST_TMPDIR/text.sum"; sha256_of "$BATS_TES
   [ -z "$(find .vetdd -name 'vetdd-lock*' -o -name '*.lock' | head -1)" ]
 }
 
+@test "review r1: a directory at the lock's name is never taken for a held lock, nor written into" {
+  local lock; lock="$(lock_of s1)"
+  mkdir -p "$lock"
+  run ev s1 calibration -- touch ran
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"$lock"* ]]
+  [ ! -e ran ]
+  [ -z "$(ls -A "$lock")" ]
+  run ov s1 --version v1 --change initial --reason r
+  [ "$status" -eq 2 ]
+  [ -z "$(ls -A "$lock")" ]
+}
+
+@test "review r1: a slice named <slice>.takeover is not the takeover guard of <slice>" {
+  local lock dead; lock="$(lock_of s1)"
+  sh -c 'exit 0' & dead=$!; wait "$dead" || true
+  mkdir -p "${lock%/*}"
+  ln -s "pid:$dead" "$lock"
+  ln -s "pid:$$" "$(lock_of s1.takeover)"
+  run ev s1 calibration -- true
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -L "$lock" ]
+  [ "$(readlink "$(lock_of s1.takeover)")" = "pid:$$" ]
+}
+
 @test "an oracle-version.sh entry cannot slip in while evidence.sh runs the slice's command" {
   ev s1 calibration --oracle-version v1 --oracle-file test.sh -- sh -c 'touch started; i=0; while [ ! -e go ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done; exit 1' >/dev/null 2>&1 &
   local bg=$! i=0
@@ -216,7 +241,7 @@ sum_of_text() { printf "$1" > "$BATS_TEST_TMPDIR/text.sum"; sha256_of "$BATS_TES
   [ "$output" = "s1: OK" ]
   cp "$REPO/.vetdd/evidence/s1/meta.json" "$BATS_TEST_TMPDIR/keep.json"
   local f
-  for f in '.runs[-1].audit.files[0].sha256 = ("0" * 64)' '.runs[-1].audit.files = []' '.runs[-1].audit.files = [{"path": "", "sha256": .runs[-1].audit.files[0].sha256}]' \
+  for f in '.runs[-1].audit.files[0].sha256 += "\u0000"' '.runs[-1].audit.files[0].sha256 |= ascii_upcase' '.runs[-1].audit.files[0].sha256 = ("0" * 64)' '.runs[-1].audit.files = []' '.runs[-1].audit.files = [{"path": "", "sha256": .runs[-1].audit.files[0].sha256}]' \
            '.runs[-1].audit.files[0].path = "value.txt"' '.runs[-1].audit.files = "x"'; do
     cp "$BATS_TEST_TMPDIR/keep.json" "$REPO/.vetdd/evidence/s1/meta.json"
     tamper s1 "$f"
@@ -266,6 +291,18 @@ sum_of_text() { printf "$1" > "$BATS_TEST_TMPDIR/text.sum"; sha256_of "$BATS_TES
   mkdir -p "$BATS_TEST_TMPDIR/out" && printf 'r\n' > "$BATS_TEST_TMPDIR/out/r.txt"
   rmdir .vetdd/notes && ln -s "$BATS_TEST_TMPDIR/out" .vetdd/notes
   run ov s1 --version v1 --change initial --reason-file .vetdd/notes/r.txt
+  [ "$status" -eq 2 ]
+  [ ! -e .vetdd/evidence/s1/meta.json ]
+}
+
+@test "review r1: a hard link in .vetdd/notes/ to a file elsewhere is refused" {
+  printf 'secret-ish line\n' > "$BATS_TEST_TMPDIR/outside.txt"
+  mkdir -p .vetdd/notes
+  ln "$BATS_TEST_TMPDIR/outside.txt" .vetdd/notes/r.txt
+  run ov s1 --version v1 --change initial --reason-file .vetdd/notes/r.txt
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"link"* ]]
+  run an s1 --kind undefined-imports --not-applicable --reason-file .vetdd/notes/r.txt
   [ "$status" -eq 2 ]
   [ ! -e .vetdd/evidence/s1/meta.json ]
 }

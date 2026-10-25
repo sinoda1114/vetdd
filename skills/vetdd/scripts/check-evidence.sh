@@ -60,7 +60,9 @@
 #               not compared with the green's, a blind spot) and whose audit.files are the stubs calibrate.sh
 #               stub writes (lib/stub.sh: the sha256 of each recorded file is that of a stub its extension
 #               can take; a record that is not fails, and a run recorded before audit.files existed counts
-#               with a WARN), or an audits[] entry not_applicable with a reason
+#               with a WARN: a tripwire, since anyone who can write the git dir can fake the stub state
+#               evidence.sh asks for, and a stub's text says nothing of which product file it replaced),
+#               or an audits[] entry not_applicable with a reason
 #               (audit-note.sh) recorded after the final oracle first ran, so a note written for an older
 #               version stops counting once a new one has run. Asked only of a slice that opted in: a run with an audit mark other
 #               than mutation, or an audits key that is empty or holds an entry other than a mutation
@@ -698,7 +700,7 @@ STUB_RUNS='
   | if (.audit | has("files")) | not then [$s, "old", "", ""]
     elif (.audit.files | type) == "array" and (.audit.files | length) > 0
          and all(.audit.files[]; type == "object" and (.path | type) == "string" and (.path | length) > 0
-                 and (.path | explode | all(. != 0)) and (.sha256 | type) == "string")
+                 and (.path | explode | all(. != 0)) and (.sha256 | type) == "string" and (.sha256 | test("^[0-9a-f]{64}$")))
     then (.audit.files[] | [$s, "file", .path, .sha256])
     else [$s, "bad", "", ""] end
   | map(. + "\u0000") | add'

@@ -58,6 +58,7 @@ die() { printf 'judge.sh: %s\n' "$1" >&2; exit "${2:-2}"; }
 here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 skill="${here%/*}"
 . "$here/lib/common.sh"
+. "$here/lib/tree-hash.sh"
 . "$here/lib/secret-patterns.sh"
 . "$here/lib/blind-words.sh"
 vetdd_require_jq judge.sh
@@ -189,12 +190,13 @@ user_home="${CODEX_HOME:-}"
 case "$user_home" in /*) ;; *) user_home="$PWD/$user_home" ;; esac
 [ -f "$user_home/auth.json" ] \
   || die "the judge needs codex's file login, and $user_home/auth.json is missing (a keyring login cannot reach the judge's private CODEX_HOME); set cli_auth_credentials_store = \"file\" in $user_home/config.toml and run \`codex login\`" 3
-# One private directory (0700) holds the judge's CODEX_HOME, its HOME, and a copy of the user's login
-# as it was at the start, which the write-back below compares byte for byte (a checksum can collide).
+# The user's login as it was at the start, as a sha256 the write-back below compares with (a cksum can
+# collide; no copy of the login is kept anywhere).
+auth_sum="$(vetdd_sha256 "$user_home/auth.json")" || die "cannot read $user_home/auth.json" 3
+# One private directory (0700) holds the judge's CODEX_HOME and its HOME.
 priv="$(mktemp -d "${TMPDIR:-/tmp}/vetdd-codex.XXXXXX")" || die "cannot create a temporary directory" 1
 jhome="$priv/codex"; judge_home="$priv/home"
 mkdir "$jhome" "$judge_home" || { rm -rf "$priv"; die "cannot create $jhome" 1; }
-(umask 077 && cp "$user_home/auth.json" "$priv/auth.start") || { rm -rf "$priv"; die "cannot read $user_home/auth.json" 3; }
 # A token codex refreshes may come back as a file in place of the link (written aside, then renamed):
 # write it back, or the user's login keeps the spent token. Only a JSON object, only when the user's
 # file is as it was at the start (their own codex may have refreshed it meanwhile), and atomically: a
@@ -205,7 +207,7 @@ keep_login() {
   [ -f "$jhome/auth.json" ] && [ ! -L "$jhome/auth.json" ] || return 0
   local t="$user_home/auth.json" l n=0
   jq -e 'type == "object"' "$jhome/auth.json" >/dev/null 2>&1 || { login_note "it is not a JSON object, so it was not written back"; return 0; }
-  cmp -s "$priv/auth.start" "$t" || { login_note "your auth.json changed meanwhile, so yours was kept"; return 0; }
+  [ "$(vetdd_sha256 "$t" 2>/dev/null)" = "$auth_sum" ] || { login_note "your auth.json changed meanwhile, so yours was kept"; return 0; }
   while [ -L "$t" ] && [ "$n" -lt 20 ]; do
     l="$(readlink "$t")"; case "$l" in /*) t="$l" ;; *) t="${t%/*}/$l" ;; esac; n=$((n + 1))
   done
