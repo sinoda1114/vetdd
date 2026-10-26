@@ -59,11 +59,12 @@
 #               with the oracle of the final green (an audit of a version left behind is history): the
 #               test observes nothing. A retake clears it: an audit run recorded later (a higher seq) on
 #               the same oracle that 10b counts as caught, lists its stubs (audit.files present), ran the
-#               same command (argv) in the same directory as the passing audit, and stubbed another set
-#               of files. So an audit that passed only because --file named the wrong files needs no
-#               version bump once calibrate.sh stub is run again with the right ones. A passing audit
-#               after the last such catch still fails. A tripwire: why the retake went red is not
-#               checked (its log must show the test's own failure).
+#               same command (argv) in the same directory as the passing audit, and stubbed a file the
+#               passing audit did not (which must list its stubs too). So an audit that passed only
+#               because --file named the wrong files needs no version bump once calibrate.sh stub is run
+#               again with the right ones. A passing audit after the last such catch still fails. A
+#               tripwire: why the retake went red is not checked (its log must show the test's own
+#               failure), nor whether the product changed in between.
 #           (10b) the oracle of the final green run has an accepted audit run, recorded after a green run
 #               of that oracle, that ended target_failure (not forced with --outcome; the command is
 #               not compared with the green's, a blind spot) and whose audit.files are the stubs calibrate.sh
@@ -333,16 +334,18 @@ def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
      or any($meta.audits[]; type != "object" or .kind != "mutation"))) as $noted_key
 | ($noted_key or ([$meta.runs[] | .audit as $a | $a != null and (($a | type) != "object" or $a.kind != "mutation")] | any)) as $opted
 | (
-    # A retake clears it: a caught audit recorded later (a higher seq) on the same oracle, with its stubs
-    # listed (one recorded before audit.files existed does not show which files it stubbed), the same
-    # command in the same directory (a red of another command says nothing of the test), and another set
-    # of stubbed files (the same audit again that went red is a flaky run, not the right --file).
+    # A retake clears it: a caught audit recorded later (a higher seq) on the same oracle, the same command
+    # in the same directory (a red of another command says nothing of the test), that stubbed a file the
+    # passing audit did not (the same stubs again, or fewer, going red is a flaky run, not the right
+    # --file). Both list their stubs: a run recorded before audit.files existed does not show which files
+    # it stubbed, so it neither retakes nor is retaken.
     ($audits[] | select(.outcome == "pass") | select($g == null or oid == ($g | oid))
      | . as $p
-     | select(any($caughtruns[]; (listed($old) | not) and (.seq | type) == "number"
-                                 and ($p.seq | type) == "number" and .seq > $p.seq
-                                 and .cmd == $p.cmd and .conditions.cwd == $p.conditions.cwd
-                                 and ([.audit.files[]? | .path?] | sort) != ([$p.audit.files[]? | .path?] | sort))
+     | ([$p.audit.files[]? | .path?] | unique) as $pf
+     | select((($p.seq | type) == "number" and ($p | (listed($old) or listed($bad)) | not)
+               and any($caughtruns[]; (listed($old) | not) and (.seq | type) == "number" and .seq > $p.seq
+                                      and .cmd == $p.cmd and .conditions.cwd == $p.conditions.cwd
+                                      and ((([.audit.files[]? | .path?] | unique) - $pf) | length) > 0))
               | not)
      | "10a: the audit run \(.seq | num) (every import stubbed with undefined) still passed, so the test observes nothing; make the test call or check the product code"),
     ($audits[] | select(listed($bad)) | select($g == null or oid == ($g | oid))

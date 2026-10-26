@@ -626,6 +626,33 @@ vacuous_3() { [[ "$output" == *"10a: the audit run 3 (every import stubbed with 
   vacuous_3
 }
 
+@test "10a is not cleared when the passing audit lists no stubs, or by a retake of files it already stubbed" {
+  # The passing audit was recorded before audit.files existed: which files it stubbed is unknown.
+  record_good_slice s1
+  aud s1 0 wrong.mjs
+  aud s1 1 right.mjs
+  tamper s1 'del(.runs[2].audit.files)'
+  run check s1
+  [ "$status" -eq 1 ]
+  vacuous_3
+  # The retake stubs a subset of what the passing audit stubbed: fewer stubs going red is a flaky run.
+  record_good_slice s2
+  aud s2 0 wrong.mjs
+  aud s2 1 right.mjs
+  tamper s2 '.runs[2].audit.files += .runs[3].audit.files'
+  run check s2
+  [ "$status" -eq 1 ]
+  vacuous_3
+  # The same file named twice is the same set of stubs.
+  record_good_slice s3
+  aud s3 0 wrong.mjs
+  aud s3 1 wrong.mjs
+  tamper s3 '.runs[3].audit.files += .runs[3].audit.files'
+  run check s3
+  [ "$status" -eq 1 ]
+  vacuous_3
+}
+
 @test "10a is not cleared by a later caught audit of another oracle version" {
   record_good_slice s1
   aud s1 0 wrong.mjs
