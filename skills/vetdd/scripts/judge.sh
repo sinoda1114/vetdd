@@ -21,7 +21,8 @@
 # config (MCP servers, tools, a model provider of their own), AGENTS.md, personal skills, rules, and
 # sessions never reach the judge; refuse the reply if it holds a secret-shaped
 # string (lib/secret-patterns.sh, every kind: --allow-secrets covers input only); write the reply verbatim to
-# <out>, the judge metadata to <out>.meta.json, and codex's own output to
+# <out>, the judge metadata to <out>.meta.json (with rubric_sha256, the sha256 of the rubric copy the
+# judge was given, read from the bytes the copy holds), and codex's own output to
 # <git root>/.vetdd/judge-logs/<eval-id>-<run-id>.log (the git root of <out>'s directory, else of the
 # current directory; the path is printed); run check-verdict.sh with the labels, the rubric, and the
 # ids. <candidates> itself is never written.
@@ -292,6 +293,8 @@ for l in "${label_list[@]}"; do
   cp -R "$cand/$l" "$jdir/$l" || die "cannot copy $cand/$l" 1
 done
 cp "$rubric" "$jdir/rubric.md" || die "cannot copy the rubric" 1
+# The rubric as the judge gets it: the copy's bytes, so a --rubric changed later does not move it.
+rubric_sum="$(vetdd_sha256 "$jdir/rubric.md")" || die "cannot read the copy of the rubric" 1
 
 # write_path_words <file>: in an A/B eval (variants.json in the run directory above the candidates),
 # the absolute paths that would lead the judge from the copy back to variants.json, one per line,
@@ -412,7 +415,7 @@ if [ -n "$reply_hits" ]; then
   # Keep the reply beside the log (gitignored, outside the run directory) so a human can read it.
   held="${log%.log}.reply.json"
   cp "$work/reply.json" "$held" || die "cannot keep the reply at $held" 1
-  die "the judge's reply holds text shaped like a secret; it was not written to $out (--allow-secrets does not apply to the reply). Read the judge log ($log) and the reply ($held) locally: if the hit only quotes test data you allowed, copy the reply to $out and run $here/check-verdict.sh $out --rubric $rubric --labels $labels --eval-id $eval_id --run-id $run_id --rubric-version $version; otherwise treat the run as blocked" 8
+  die "the judge's reply holds text shaped like a secret; it was not written to $out (--allow-secrets does not apply to the reply), and no $out.meta.json is written: the rubric the judge was given has sha256 $rubric_sum. Read the judge log ($log) and the reply ($held) locally: if the hit only quotes test data you allowed, copy the reply to $out, check that $rubric still has that sha256 before you run check-verdict.sh, then run $here/check-verdict.sh $out --rubric $rubric --labels $labels --eval-id $eval_id --run-id $run_id --rubric-version $version; otherwise treat the run as blocked" 8
 fi
 
 cp "$work/reply.json" "$out" || die "cannot write $out" 1
@@ -425,9 +428,9 @@ for g in ${allow_words[@]+"${allow_words[@]}"}; do
   awords="$(jq -c --arg g "$g" '. + [$g]' <<< "$awords")" || die "cannot record --allow-words" 1
 done
 jq -n --arg model "$model" --arg effort "$effort" --arg invoked_at "$invoked_at" --arg log "$log" \
-  --argjson allowed "$allowed" --argjson awords "$awords" \
+  --argjson allowed "$allowed" --argjson awords "$awords" --arg rubric_sum "$rubric_sum" \
   '{model: $model, effort: $effort, invoked_at: $invoked_at, family: "codex", log: $log,
-    allowed_secrets: $allowed, allowed_words: $awords}' > "$out.meta.json" \
+    allowed_secrets: $allowed, allowed_words: $awords, rubric_sha256: $rubric_sum}' > "$out.meta.json" \
   || die "cannot write $out.meta.json" 1
 
 "$here/check-verdict.sh" "$out" --rubric "$jdir/rubric.md" --labels "$labels" \
