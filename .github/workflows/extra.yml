@@ -1,4 +1,8 @@
 # vetdd 固有の CI（標準 CI の ci.yml に加えて）: macOS の bash 3.2 で bats、fixture の vitest と audit。
+# fixtures/ts-kata の依存を入れて、実物の vitest / tsc / tsx / Stryker を回すテストをここで走らせる（#12）。
+# 標準 CI（ci / build、Linux の bash 5）は fixture を入れないので、そこではこれらのテストは skip になる。
+# このワークフローは fixture の依存（Stryker 一式を含む）をテストの中で実行する。secrets を渡さないこと、
+# pull_request_target にしないこと（tests/hygiene.bats が検査する）。
 name: vetdd extra
 
 on:
@@ -17,7 +21,7 @@ jobs:
   bats-bash32:
     # The scripts must run on the bash 3.2 macOS ships; the standard CI runs bats on Linux's bash 5.
     runs-on: macos-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -26,8 +30,13 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            fixtures/ts-kata/package-lock.json
       - name: Install dependencies
         run: npm ci --ignore-scripts
+      - name: Install the fixture's dependencies (the integration tests drive its vitest, tsc, tsx and Stryker)
+        run: npm ci --prefix fixtures/ts-kata --ignore-scripts
       - name: Put /bin/bash (3.2) first on PATH
         run: |
           mkdir -p "$RUNNER_TEMP/bash32"
@@ -44,11 +53,15 @@ jobs:
         env:
           # The locale tests (#50) must run here, never skip: this is the one job that can see them.
           REQUIRE_UTF8_LOCALE_TESTS: "1"
+          # The fixture tests (#12) must run here, never skip: a missing install fails them instead.
+          VETDD_REQUIRE_FIXTURES: "1"
+          # The one test that runs the real Stryker over the fixture (about 15 seconds).
+          VETDD_REAL_STRYKER: "1"
 
   fixture:
     # fixtures/ts-kata is the practice target the dogfood runs use: it must install, test, and audit clean.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: fixtures/ts-kata
@@ -60,7 +73,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: fixtures/ts-kata/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            fixtures/ts-kata/package-lock.json
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: vitest
@@ -69,3 +84,13 @@ jobs:
         run: npm run typecheck
       - name: Audit
         run: npm audit --audit-level=high
+      # The bats files that drive the fixture, on Linux's bash 5 and GNU tools (ci / build skips them).
+      - name: Install the suite's dependencies (bats)
+        working-directory: .
+        run: npm ci --ignore-scripts
+      - name: bats (the files tagged fixture)
+        working-directory: .
+        run: node_modules/.bin/bats --filter-tags fixture tests
+        env:
+          VETDD_REQUIRE_FIXTURES: "1"
+          VETDD_REAL_STRYKER: "1"
