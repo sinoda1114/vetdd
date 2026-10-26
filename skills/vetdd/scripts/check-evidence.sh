@@ -57,7 +57,14 @@
 # Audit:    (10a) a calibration run marked audit undefined-imports (calibrate.sh stub: every product file the
 #               oracle imports replaced by a stub with undefined exports) that is accepted and ended pass,
 #               with the oracle of the final green (an audit of a version left behind is history): the
-#               test observes nothing.
+#               test observes nothing. A retake clears it: an audit run recorded later (a higher seq) on
+#               the same oracle that 10b counts as caught, lists its stubs (audit.files present), ran the
+#               same command (argv) in the same directory as the passing audit, and stubbed a file the
+#               passing audit did not (which must list its stubs too). So an audit that passed only
+#               because --file named the wrong files needs no version bump once calibrate.sh stub is run
+#               again with the right ones. A passing audit after the last such catch still fails. A
+#               tripwire: why the retake went red is not checked (its log must show the test's own
+#               failure), nor whether the product changed in between.
 #           (10b) the oracle of the final green run has an accepted audit run, recorded after a green run
 #               of that oracle, that ended target_failure (not forced with --outcome; the command is
 #               not compared with the green's, a blind spot) and whose audit.files are the stubs calibrate.sh
@@ -310,6 +317,16 @@ def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
 | [$accepted[] | select(usable)] as $acc
 | ([$acc[] | select(green and .outcome == "pass")] | sort_by(.seq) | last) as $g
 | [$accepted[] | select(.kind == "calibration" and audited)] as $audits
+# The caught audits of the final oracle (10b counts them; a later one clears a 10a): ended target_failure,
+# not forced, audit.files the stubs, and recorded after a green run of the same oracle (before that, the
+# red is the unfixed product).
+| (if $g == null then [] else
+     ($g | oid) as $fo
+     | [$acc[] | select(green and .outcome == "pass" and oid == $fo)] as $greens
+     | [$acc[] | select(.kind == "calibration" and audited and .outcome == "target_failure" and unforced
+                        and oid == $fo and (listed($bad) | not))
+               | . as $a | select(any($greens[]; .seq < $a.seq))]
+   end) as $caughtruns
 # Opted in to the undefined-imports audit: a run with its mark, or an audits key that is empty, not an
 # array, or holds any entry but a mutation note; a run with any audit mark but mutation (an unknown kind
 # fails closed, in both places). A mutation run or note alone opts in to nothing here.
@@ -317,7 +334,19 @@ def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
      or any($meta.audits[]; type != "object" or .kind != "mutation"))) as $noted_key
 | ($noted_key or ([$meta.runs[] | .audit as $a | $a != null and (($a | type) != "object" or $a.kind != "mutation")] | any)) as $opted
 | (
+    # A retake clears it: a caught audit recorded later (a higher seq) on the same oracle, the same command
+    # in the same directory (a red of another command says nothing of the test), that stubbed a file the
+    # passing audit did not (the same stubs again, or fewer, going red is a flaky run, not the right
+    # --file). Both list their stubs: a run recorded before audit.files existed does not show which files
+    # it stubbed, so it neither retakes nor is retaken.
     ($audits[] | select(.outcome == "pass") | select($g == null or oid == ($g | oid))
+     | . as $p
+     | ([$p.audit.files[]? | .path?] | unique) as $pf
+     | select((($p.seq | type) == "number" and ($p | (listed($old) or listed($bad)) | not)
+               and any($caughtruns[]; (listed($old) | not) and (.seq | type) == "number" and .seq > $p.seq
+                                      and .cmd == $p.cmd and .conditions.cwd == $p.conditions.cwd
+                                      and ((([.audit.files[]? | .path?] | unique) - $pf) | length) > 0))
+              | not)
      | "10a: the audit run \(.seq | num) (every import stubbed with undefined) still passed, so the test observes nothing; make the test call or check the product code"),
     ($audits[] | select(listed($bad)) | select($g == null or oid == ($g | oid))
      | "10b: undefined-imports audit run \(.seq | num) does not record the stubs calibrate.sh stub writes (audit.files: each stubbed file with the sha256 of its stub), so it is not counted, and the record cannot be edited back: bump --oracle-version, record the new version with oracle-version.sh first, then its red, its green, and calibrate.sh stub"),
@@ -325,11 +354,6 @@ def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
      then "10: audits is not an array, so the audit notes cannot be checked"
      elif $opted and $g != null then
        ($g | oid) as $fo
-       | [$acc[] | select(green and .outcome == "pass" and oid == $fo)] as $greens
-       # A caught audit comes after a green run of the same oracle: before that, the red is the unfixed product.
-       | [$acc[] | select(.kind == "calibration" and audited and .outcome == "target_failure" and unforced
-                          and oid == $fo and (listed($bad) | not))
-                 | . as $a | select(any($greens[]; .seq < $a.seq))] as $caughtruns
        | ($caughtruns | length) as $caught
        # A note counts for the final oracle when it was recorded after that oracle first ran (the entry
        # has no version of its own); with no start time to compare, it counts for nothing.

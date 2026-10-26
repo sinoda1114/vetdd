@@ -536,6 +536,133 @@ audit_run() {
   [[ "$output" == *"s1: FAIL (10a: the audit run 3 (every import stubbed with undefined) still passed, so the test observes nothing; make the test call or check the product code)"* ]]
 }
 
+# A retake: the audit passed only because --file named the wrong files; calibrate.sh stub run again with the
+# right ones, the same command, and the same oracle catches the stub, and 10a no longer asks for a version
+# bump (#12). aud <slice> <exit> <stub name> [evidence.sh options]: an audit run of the oracle of
+# record_good_slice, always the same command, whose exit status comes from the environment.
+aud() {
+  local s="$1" code="$2" name="$3"; shift 3
+  STUB_NAME="$name" AUD="$code" stub_ev "$s" --oracle-version v1 --oracle-file test.sh "$@" -- sh -c 'exit "${AUD:-0}"' >/dev/null 2>&1 || true
+}
+vacuous_3() { [[ "$output" == *"10a: the audit run 3 (every import stubbed with undefined) still passed"* ]]; }
+
+@test "10a is cleared by a later caught audit of the same oracle and command, on other files (a retake)" {
+  record_good_slice s1
+  aud s1 0 wrong.mjs
+  aud s1 1 right.mjs
+  [ "$(mq s1 '.runs[2].cmd == .runs[3].cmd')" = true ]
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}
+
+@test "10a still fails a passing audit recorded after a caught one: only a later catch clears it" {
+  record_good_slice s1
+  aud s1 1 right.mjs
+  aud s1 0 wrong.mjs
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"s1: FAIL (10a: the audit run 4 (every import stubbed with undefined) still passed"* ]]
+  [[ "$output" != *"10a: the audit run 3"* ]]
+  [[ "$output" != *"10b"* ]]
+}
+
+@test "10a is not cleared by a later audit red that 10b does not count: forced, before a green, or not stubs" {
+  # Forced with --outcome on a command that exited 0.
+  record_good_slice s1
+  aud s1 0 wrong.mjs
+  aud s1 0 right.mjs --outcome target_failure
+  [ "$(mq s1 '.runs[3].outcome')" = target_failure ]
+  run check s1
+  [ "$status" -eq 1 ]
+  vacuous_3
+  # Recorded before any green run of the oracle: that red is the unfixed product, not the stub.
+  printf '0\n' > value.txt
+  ev s2 before --seam unit --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1 || true
+  aud s2 0 wrong.mjs
+  aud s2 1 right.mjs
+  printf '42\n' > value.txt
+  ev s2 after -- sh test.sh >/dev/null 2>&1
+  run check s2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"10a: the audit run 2 (every import stubbed with undefined) still passed"* ]]
+  # Its audit.files are not the stubs calibrate.sh stub writes, or are not recorded at all.
+  local f
+  for f in '.runs[3].audit.files[0].sha256 = ("0" * 64)' 'del(.runs[3].audit.files)'; do
+    record_good_slice s3
+    aud s3 0 wrong.mjs
+    aud s3 1 right.mjs
+    tamper s3 "$f"
+    run check s3
+    [ "$status" -eq 1 ] || { echo "$f: $output"; false; }
+    vacuous_3 || { echo "$f: $output"; false; }
+    rm -rf "$REPO/.vetdd/evidence/s3"
+  done
+}
+
+@test "10a is not cleared by a later catch with another command or directory, or on the same stubbed files" {
+  # Another command: a red that does not run the test (exit 1 of anything) proves nothing about it.
+  record_good_slice s1
+  aud s1 0 wrong.mjs
+  STUB_NAME=right.mjs stub_ev s1 --oracle-version v1 --oracle-file test.sh -- sh -c 'exit 1' >/dev/null 2>&1 || true
+  [ "$(mq s1 '.runs[3].outcome')" = target_failure ]
+  run check s1
+  [ "$status" -eq 1 ]
+  vacuous_3
+  # Another working directory.
+  record_good_slice s2
+  aud s2 0 wrong.mjs
+  aud s2 1 right.mjs
+  tamper s2 '.runs[3].conditions.cwd = "sub"'
+  run check s2
+  [ "$status" -eq 1 ]
+  vacuous_3
+  # The same stubbed files: the same audit again, a flaky red, not a retake with the right files.
+  record_good_slice s3
+  aud s3 0 wrong.mjs
+  aud s3 1 wrong.mjs
+  run check s3
+  [ "$status" -eq 1 ]
+  vacuous_3
+}
+
+@test "10a is not cleared when the passing audit lists no stubs, or by a retake of files it already stubbed" {
+  # The passing audit was recorded before audit.files existed: which files it stubbed is unknown.
+  record_good_slice s1
+  aud s1 0 wrong.mjs
+  aud s1 1 right.mjs
+  tamper s1 'del(.runs[2].audit.files)'
+  run check s1
+  [ "$status" -eq 1 ]
+  vacuous_3
+  # The retake stubs a subset of what the passing audit stubbed: fewer stubs going red is a flaky run.
+  record_good_slice s2
+  aud s2 0 wrong.mjs
+  aud s2 1 right.mjs
+  tamper s2 '.runs[2].audit.files += .runs[3].audit.files'
+  run check s2
+  [ "$status" -eq 1 ]
+  vacuous_3
+  # The same file named twice is the same set of stubs.
+  record_good_slice s3
+  aud s3 0 wrong.mjs
+  aud s3 1 wrong.mjs
+  tamper s3 '.runs[3].audit.files += .runs[3].audit.files'
+  run check s3
+  [ "$status" -eq 1 ]
+  vacuous_3
+}
+
+@test "10a is not cleared by a later caught audit of another oracle version" {
+  record_good_slice s1
+  aud s1 0 wrong.mjs
+  STUB_NAME=right.mjs AUD=1 stub_ev s1 --oracle-version v2 --oracle-file test.sh -- sh -c 'exit "${AUD:-0}"' >/dev/null 2>&1 || true
+  [ "$(mq s1 '.runs[-1].oracle.version')" = v2 ]
+  run check s1
+  [ "$status" -eq 1 ]
+  vacuous_3
+}
+
 @test "10b fails a slice that opted in (an audits key) and has no audit for the final oracle" {
   record_good_slice s1
   tamper s1 '.audits = []'
@@ -712,6 +839,10 @@ audit_run() {
   grep -q 'calibrate.sh" stub' "$SCRIPTS/../modes/test.md"
   grep -q 'audit-note.sh' "$SCRIPTS/../modes/test.md"
   grep -q 'audit-note.sh' "$SCRIPTS/../modes/verify.md"
+  # A wrong --file is retaken on the same oracle, not by bumping the version (#12).
+  grep -q 'clears that 10a' "$SCRIPTS/../modes/test.md"
+  run grep -c 'rule 10a stays until you bump' "$SCRIPTS/../modes/test.md"
+  [ "$output" = 0 ]
 }
 
 # --- real vitest ---------------------------------------------------------------------------------
