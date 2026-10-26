@@ -27,9 +27,9 @@
 # Without --file: every file the slice changed except its oracle files (every oracle file its evidence
 # names) and .vetdd/. --file (relative to the current directory, repeatable) limits the output to
 # the files named, in that order; name a file's new path with it when a later change moved the file.
-# Only JS and TS files are printed (lib/common.sh VETDD_JS_TS_RE, as for rule 10c): Stryker stops the
-# whole run on a file it has no parser for (a README.md, a package.json), so each other one is named
-# on stderr and left out.
+# Only files Stryker mutates are printed (JS and TS, .vue .svelte .html .htm: lib/common.sh
+# VETDD_STRYKER_RE): Stryker stops the whole run on a file it has no parser for (a README.md, a
+# package.json), so each other one is named on stderr and left out.
 # The ranges are the changed lines only: widening them to whole statements stays with the caller
 # (modes/test.md, Audits › Mutation). A file the slice deleted, or in which it only removed lines,
 # has nothing to mutate: it is named on stderr and left out, as is a changed file outside the current
@@ -126,14 +126,19 @@ check_tree() {  # <hash> <run description>
 entry_in() {
   git --literal-pathspecs ls-tree -z --full-tree "$1" -- "$2" | tr '\0' '\n' | head -n 1 | cut -f 1
 }
-# unfix_red <red tree> <after tree> <head commit>: true when every product file that differs between
-# the red and the after holds in the red what HEAD held (calibrate.sh unfix puts HEAD's content back;
-# a planted defect is new content), and at least one does.
+# unfix_red <red tree> <after tree> <head commit> <after's head commit> <after seq>: true when every
+# product file that differs between the red and the after holds in the red what HEAD held
+# (calibrate.sh unfix puts HEAD's content back; a planted defect is new content), and at least one
+# does. HEAD must be the same at both: a commit between them (A.4's verify red reused in B) makes the
+# red's committed files look like an unfix of the change committed since.
 # Sets unfix_why to the reason when it is not.
 unfix_red() {
   local rec p n=0
   unfix_why="its HEAD commit is not in the repository"
   case "$3" in *[!0-9a-f]*|'') return 1 ;; esac
+  unfix_why="HEAD moved between it and the passing after that follows it (run $5)"
+  [ "$3" = "$4" ] || return 1
+  unfix_why="its HEAD commit is not in the repository"
   [ "$(git cat-file -t "$3" 2>/dev/null)" = commit ] || return 1
   unfix_why="the trees cannot be compared"
   git diff-tree -r -z --no-renames --raw "$1" "$2" > "$tmp/unfix" || return 1
@@ -165,9 +170,9 @@ shape="$(jq -r '
       | ([$r[] | select(red) | .seq as $s | select(any($a[]; .seq > $s))] | first) as $c
       # The passing after that follows the red: the red is compared with it.
       | (if $c == null then null else ([$a[] | select(.seq > $c.seq)] | first) end) as $f
-      | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val) \(if $c != null and ($c | has("planted")) then "planted" else "-" end) \($f.tree.tree_hash | val) \($f.seq | val)"
+      | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val) \(if $c != null and ($c | has("planted")) then "planted" else "-" end) \($f.tree.tree_hash | val) \($f.seq | val) \($f.tree.head_sha | val)"
     end' "$meta")" || die "cannot read the runs of $rel"
-read -r kind n_after a0t a0s alt als ct cs ch cp ft fs <<EOF
+read -r kind n_after a0t a0s alt als ct cs ch cp ft fs fh <<EOF
 $shape
 EOF
 first=""; refactor=0; why="it has no red calibration that a passing after follows"
@@ -181,7 +186,7 @@ else
     # without that record (an unfix, a plain run, or evidence from before it) is compared with HEAD.
     if [ "$cp" = planted ]; then why="its red calibration (run $cs) was planted (calibrate.sh plant and planted, as its record says)"
     # Compared with the first passing after that follows the red.
-    elif unfix_red "$ct" "$ft" "$ch"; then first="$cs"
+    elif unfix_red "$ct" "$ft" "$ch" "$fh" "$fs"; then first="$cs"
     else why="its red calibration (run $cs) is not an unfix red: $unfix_why"; fi
   fi
   if [ -z "$first" ]; then
@@ -338,11 +343,11 @@ if [ ${#files[@]} -gt 0 ]; then
 else
   targets=(${changed[@]+"${changed[@]}"})
 fi
-# Only files Stryker can mutate: it stops the whole run on a file it has no parser for (#74).
+# Only files Stryker mutates: it stops the whole run on a file it has no parser for (#74).
 mutable=()
 for r in ${targets[@]+"${targets[@]}"}; do
-  if vetdd_is_js_ts "$r"; then mutable+=("$r")
-  else say "$r: not a JS or TS file (.js .jsx .mjs .cjs .ts .tsx .mts .cts), which Stryker cannot mutate: left out"; fi
+  if vetdd_stryker_mutates "$r"; then mutable+=("$r")
+  else say "$r: not a file Stryker mutates (.js .jsx .mjs .cjs .ts .tsx .mts .cts .vue .svelte .html .htm): left out"; fi
 done
 targets=(${mutable[@]+"${mutable[@]}"})
 

@@ -131,6 +131,23 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/a.js:2-2" ] || { echo "$status $output $stderr"; false; }
 }
 
+@test "an unfix-shaped red whose HEAD moved before the after that follows it is not an unfix: taken as a refactor (verify mode, A.4's red reused; review r1)" {
+  # A.4: the calibration red and pass on a clean tree.
+  ev s1-verify calibration --oracle-version 1 --oracle-file test.sh --infra-exit 2 -- false >/dev/null 2>&1
+  ev s1-verify calibration -- true >/dev/null 2>&1
+  # Another change is committed before B; its lines hold HEAD's content in no red tree.
+  printf '%s\n' a1 C2 a3 a4 a5 > src/a.js
+  git commit -q -am other
+  # B.1: the pre-change green, then the change, then the green.
+  green s1-verify
+  printf '%s\n' a1 C2 a3 a4 X5 > src/a.js
+  green s1-verify
+  run --separate-stderr mr s1-verify
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:5-5" ]
+  [[ "$stderr" == *"HEAD moved"*"refactor"* ]] || { echo "$stderr"; false; }
+}
+
 @test "a red after the first after with no passing after following it yet: not a start, so the slice cannot be attributed (exit 2)" {
   printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
   ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
@@ -468,11 +485,15 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "a.js:1-1" ]
 }
 
-@test "only JS and TS files are printed: a README.md, package.json, or .css the slice changed is named on stderr and left out (#74 item 6)" {
+@test "only files Stryker mutates are printed: a README.md, package.json, or .css the slice changed is named on stderr and left out (#74 item 6)" {
   red s1
   printf '%s\n' X1 a2 a3 a4 a5 > src/a.js
   printf '%s\n' 'export const b = 1;' > src/b.ts
   printf '%s\n' 'export const c = 1;' > src/c.MJS
+  # Stryker 10 parses .vue .svelte .html .htm too (getFormat in @stryker-mutator/instrumenter).
+  printf '%s\n' '<script>const d = 1;</script>' > src/d.vue
+  printf '%s\n' '<script>let e = 1;</script>' > src/e.Svelte
+  printf '%s\n' '<script>var f = 1;</script>' > src/f.htm
   printf '# readme\n' > README.md
   printf '{"name": "x"}\n' > package.json
   printf 'a {}\n' > src/s.css
@@ -481,21 +502,21 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   green s1
   run --separate-stderr mr s1
   [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
-  [ "$output" = "src/a.js:1-1,src/b.ts:1-1,src/c.MJS:1-1" ]
+  [ "$output" = "src/a.js:1-1,src/b.ts:1-1,src/c.MJS:1-1,src/d.vue:1-1,src/e.Svelte:1-1,src/f.htm:1-1" ]
   local f
   for f in README.md package.json src/s.css 'notes,1.md'; do
-    [[ "$stderr" == *"$f: not a JS or TS file"* ]] || { echo "$f: $stderr"; false; }
+    [[ "$stderr" == *"$f: not a file Stryker mutates"* ]] || { echo "$f: $stderr"; false; }
   done
   [[ "$stderr" != *"src/a.js"* ]] || { echo "$stderr"; false; }
   # Named with --file: left out the same way.
   run --separate-stderr mr s1 --file README.md --file src/a.js
   [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
   [ "$output" = "src/a.js:1-1" ]
-  [[ "$stderr" == *"README.md: not a JS or TS file"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"README.md: not a file Stryker mutates"* ]] || { echo "$stderr"; false; }
   run --separate-stderr mr s1 --file package.json
   [ "$status" -eq 3 ]
   [ -z "$output" ]
-  [[ "$stderr" == *"package.json: not a JS or TS file"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"package.json: not a file Stryker mutates"* ]] || { echo "$stderr"; false; }
 }
 
 @test "a slice whose only product change is a README.md: nothing printed, exit 3, the file named and the mutation note pointed to (#74 item 6)" {
@@ -505,7 +526,7 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   run --separate-stderr mr s1
   [ "$status" -eq 3 ]
   [ -z "$output" ]
-  [[ "$stderr" == *"README.md: not a JS or TS file"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"README.md: not a file Stryker mutates"* ]] || { echo "$stderr"; false; }
   [[ "$stderr" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$stderr"; false; }
 }
 
@@ -823,10 +844,11 @@ b.js"
   sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -q 'audit-note.sh <slice> --kind mutation --not-applicable'
 }
 
-@test "the header and test mode say only JS and TS files are printed, and a red after the first after can start the slice" {
+@test "the header and test mode say only files Stryker mutates are printed, and a red after the first after can start the slice" {
   local doc="$SCRIPTS/../modes/test.md" sec
-  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -q 'VETDD_JS_TS_RE'
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -q 'VETDD_STRYKER_RE'
+  grep -q '^VETDD_STRYKER_RE=' "$SCRIPTS/lib/common.sh"
   sec="$(sed -n '/^### Mutation/,/^## /p' "$doc" | tr '\n' ' ')"
-  [[ "$sec" == *'only JS and TS files'* ]] || { echo "$sec"; false; }
+  [[ "$sec" == *'only files Stryker mutates'*'.vue'* ]] || { echo "$sec"; false; }
   [[ "$sec" == *'the first such red that a passing `after` follows'* ]] || { echo "$sec"; false; }
 }

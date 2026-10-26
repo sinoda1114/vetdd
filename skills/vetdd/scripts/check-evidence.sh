@@ -355,7 +355,7 @@ def nn: if type == "number" and . >= 0 then . else error("not a count") end;
 def mut: (.audit | type) == "object" and .audit.kind == "mutation";
 # The way out of a run of no mutant when the --mutate value was empty: mutate-ranges.sh had nothing to
 # print (#74), and a note does not lift a run after the last green, so the green is recorded again.
-def test_only: "; when the --mutate value was empty because mutate-ranges.sh \($slice) exits 3 (nothing to mutate: a slice that changed only its tests), record why with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>, then the slice'"'"'s green again (evidence.sh \($slice) integrated -- <the slice'"'"'s test command>), since a note does not lift a mutation run after the last green";
+def test_only: "; only when mutate-ranges.sh \($slice) exits 3 (nothing to mutate: a slice that changed only its tests), so the --mutate value was empty, record why with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>, then the slice'"'"'s green again (evidence.sh \($slice) integrated -- <the slice'"'"'s test command>), since a note does not lift a mutation run after the last green";
 . as $meta
 | [.runs[] | select(.accepted != false and usable)] as $acc
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
@@ -398,7 +398,7 @@ def test_only: "; when the --mutate value was empty because mutate-ranges.sh \($
             | ($rep.files | if type == "array" and length > 0 and all(.[]; type == "object" and (.path | type) == "string" and (.sha256 | type) == "string")
                             then . else error("files") end) as $files
             | {problems: (
-                 (if $t == 0 then ["10c: mutation run \($s) mutated nothing (0 mutants); --mutate must cover the lines the slice changed\(test_only)"]
+                 (if $t == 0 then ["10c: mutation run \($s) mutated nothing (0 mutants); --mutate must cover the lines the slice changed"]
                   elif $k + $to + $sv + $nc == 0 then ["10c: mutation run \($s) tested no mutant (\($ce) compile errors, \($re) runtime errors, and \($ig) ignored of \($t)); fix the setup (a type checker or a broken build rejects every mutant) and run the audit again"]
                   else [] end)
                  + (if $sv + $nc > 0 then ["10c: mutation run \($s): \($sv) survived and \($nc) without coverage of \($t) mutants; strengthen the test until each is killed, or, for a mutant that cannot change behavior, disable it in the product code with // Stryker disable next-line <mutator>: <reason> and run the audit again"] else [] end)),

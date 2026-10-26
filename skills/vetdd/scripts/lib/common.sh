@@ -123,6 +123,14 @@ VETDD_JS_TS_RE='\.([cCmM]?[jJtT][sS]|[jJtT][sS][xX])$'
 # vetdd_is_js_ts <path>: true when the path names a JS or TS file (VETDD_JS_TS_RE).
 vetdd_is_js_ts() { printf '%s' "$1" | LC_ALL=C grep -Eq -- "$VETDD_JS_TS_RE"; }
 
+# VETDD_STRYKER_RE: the names of a file StrykerJS mutates, any ASCII letter case: the JS and TS ones
+# above and .vue .svelte .html .htm (getFormat in @stryker-mutator/instrumenter 10.0.0); Stryker stops
+# the whole run on any other file named in --mutate (#74). mutate-ranges.sh prints only these.
+VETDD_STRYKER_RE='\.([cCmM]?[jJtT][sS]|[jJtT][sS][xX]|[vV][uU][eE]|[sS][vV][eE][lL][tT][eE]|[hH][tT][mM][lL]?)$'
+
+# vetdd_stryker_mutates <path>: true when the path names a file Stryker mutates (VETDD_STRYKER_RE).
+vetdd_stryker_mutates() { printf '%s' "$1" | LC_ALL=C grep -Eq -- "$VETDD_STRYKER_RE"; }
+
 # A slice abandoned in a swarm or an arena (a stall, a conflict, a lane that lost) keeps its evidence;
 # the parent marks it with `worktree.sh abandon`, which writes .vetdd/evidence/<slice>/abandoned:
 # {"cause": "stall"|"conflict"|"lost", "replaced_by": "<slice id>" (optional), "recorded_at": "<UTC Z>"}.

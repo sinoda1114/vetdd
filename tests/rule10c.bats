@@ -1064,10 +1064,13 @@ jsts_slice() {
   [[ "$output" == *"mutate-ranges.sh s1 exits 3"* ]] || { echo "$output"; false; }
   [[ "$output" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$output"; false; }
   [[ "$output" == *"evidence.sh s1 integrated -- <the slice's test command>"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"; only when mutate-ranges.sh s1 exits 3"* ]] || { echo "$output"; false; }
+  # A report with files but no mutant came from a --mutate value that was not empty: no test-only way out.
   record_good_slice s2
   mutation s2 "$(report "$M = []")"
   run check s2
-  [[ "$output" == *"mutated nothing"*"mutate-ranges.sh s2 exits 3"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"mutated nothing (0 mutants)"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"mutate-ranges.sh s2 exits 3"* ]] || { echo "$output"; false; }
 }
 
 @test "the advice of a 0-mutant report works: the note, then the green again, and 10c passes (#74 item 7)" {
