@@ -121,3 +121,17 @@ EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
   grep -q 'unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit, --test-report)' "$SCRIPTS/calibrate.sh"
   sed -n 13,14p "$SCRIPTS/calibrate.sh" | grep -q -- '--infra-exit'
 }
+
+@test "verify mode takes the mutation ranges from mutate-ranges.sh, not by hand (#71)" {
+  local m; m="$(grep -- '- \*\*Mutation\.\*\*' "$VERIFY")"
+  [[ "$m" == *'mutate-ranges.sh" <app>-verify'* ]] || { echo "$m"; false; }
+  [[ "$m" != *"on the changed lines"* ]] || { echo "$m"; false; }
+  [[ "$m" == *'--mutate "$r"'* ]] || { echo "$m"; false; }
+  # B.1: the pre-change green is for an exempt or behavior-preserving change only (review r4).
+  local b; b="$(grep -- '^1\. Record `before` for each feature' "$VERIFY")"
+  [[ "$b" == *'after a defect'*'record no `after` before the change'* ]] || { echo "$b"; false; }
+  # The wrapper and the Stryker config are committed before B.1, so A.4's red is not taken for an
+  # unfix of them (review r5); exit 2 names the same-tree case.
+  [[ "$m" == *'commit them before'* ]] || { echo "$m"; false; }
+  [[ "$m" == *'exit 2'*'"the same tree"'* ]] || { echo "$m"; false; }
+}

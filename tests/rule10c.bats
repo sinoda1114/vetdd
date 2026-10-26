@@ -1038,3 +1038,65 @@ jsts_slice() {
   [ "${lines[0]}" = "s1: OK" ]
   [[ "${lines[1]}" == "s1: WARN (10c: mutation run 3 ran Stryker's ? runner"* ]] || { echo "$output"; false; }
 }
+
+# --- mranges package (#71, #74 item 7) ------------------------------------------------------------
+
+@test "a missing audit's 10c line takes the ranges from mutate-ranges.sh, not by hand (#71)" {
+  printf '0\n' > value.txt
+  ev s1 before --oracle-version v1 --oracle-file test.sh -- sh test.sh >/dev/null 2>&1 || true
+  mutation s1 "$(killed)"
+  printf '42\n' > value.txt
+  ev s1 after -- sh test.sh >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"10c: no mutation audit for the final oracle after its last green run"* ]]
+  [[ "$output" == *"mutate-ranges.sh s1"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"on the lines the slice changed"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"npx --no-install stryker run"* ]]
+  [[ "$output" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]]
+}
+
+@test "a 0-mutant report of an empty --mutate names the test-only case: mutate-ranges.sh exit 3, the note, and the green again (#74 item 7)" {
+  local v
+  # The value as the shell passes it: --mutate "", -m "", --mutate= , or --mutate last with no value.
+  for v in "--mutate|" "-m|" "--mutate=" "--mutate"; do
+    rm -rf .vetdd
+    record_good_slice s1 >/dev/null 2>&1
+    case "$v" in
+      *'|') REPORT="$(report '.files = {}')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh "${v%|}" '' >/dev/null 2>&1 || true ;;
+      *) REPORT="$(report '.files = {}')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh "$v" >/dev/null 2>&1 || true ;;
+    esac
+    run check s1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"widen them to the function's closing brace"* ]] || { echo "$v: $output"; false; }
+    [[ "$output" == *"; the --mutate value was empty: when mutate-ranges.sh s1 exits 3"* ]] || { echo "$v: $output"; false; }
+    [[ "$output" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$v: $output"; false; }
+    [[ "$output" == *"evidence.sh s1 integrated -- <the slice's test command>"* ]] || { echo "$v: $output"; false; }
+    [[ "$output" == *"no file Stryker mutates"* ]] || { echo "$v: $output"; false; }
+  done
+  # An empty report of a --mutate that held ranges: widen them, no test-only way out.
+  rm -rf .vetdd
+  record_good_slice s1 >/dev/null 2>&1
+  REPORT="$(report '.files = {}')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh --mutate 'src/dueDate.ts:3-3' >/dev/null 2>&1 || true
+  run check s1
+  [[ "$output" == *"widen them to the function's closing brace"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"mutate-ranges.sh s1 exits 3"* ]] || { echo "$output"; false; }
+  # A report with files but no mutant came from a --mutate value that was not empty: no test-only way out.
+  record_good_slice s2
+  mutation s2 "$(report "$M = []")"
+  run check s2
+  [[ "$output" == *"mutated nothing (0 mutants)"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"mutate-ranges.sh s2 exits 3"* ]] || { echo "$output"; false; }
+}
+
+@test "the advice of a 0-mutant report works: the note, then the green again, and 10c passes (#74 item 7)" {
+  record_good_slice s1
+  mutation s1 "$(report '.files = {}')"
+  run check s1
+  [ "$status" -eq 1 ]
+  an s1 --kind mutation --not-applicable --reason-file "$(note_text n.txt 'the slice changed only its tests')" >/dev/null
+  ev s1 integrated -- sh test.sh >/dev/null 2>&1
+  run check s1
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "s1: OK" ]
+}

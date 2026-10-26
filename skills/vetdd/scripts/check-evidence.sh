@@ -353,6 +353,13 @@ def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
 MUTATION_RULES="$RUN_DEFS$VETDD_JQ_CLEAN"'
 def nn: if type == "number" and . >= 0 then . else error("not a count") end;
 def mut: (.audit | type) == "object" and .audit.kind == "mutation";
+# The way out of a run of no mutant whose --mutate value was empty (in the argv of the run: --mutate or -m
+# followed by an empty word or by nothing, or --mutate=): mutate-ranges.sh had nothing to print (#74),
+# and a note does not lift a run after the last green, so the green is recorded again.
+def empty_mutate: (.cmd | if type == "array" then . else [] end) as $c
+  | any(range(0; $c | length); ($c[.] == "--mutate" or $c[.] == "-m") and (($c[. + 1] // "") == ""))
+    or any($c[]; . == "--mutate=" or . == "-m=");
+def test_only: "; the --mutate value was empty: when mutate-ranges.sh \($slice) exits 3 (nothing to mutate: a slice that changed only its tests, or no file Stryker mutates), run no audit: record why with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>, then the slice'"'"'s green again (evidence.sh \($slice) integrated -- <the slice'"'"'s test command>), since a note does not lift a mutation run after the last green";
 . as $meta
 | [.runs[] | select(.accepted != false and usable)] as $acc
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
@@ -373,7 +380,7 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
     | ([($meta.audits // [])[] | select(type == "object" and .kind == "mutation" and .status == "not_applicable"
           and (.reason | type) == "string" and (.reason | length) > 0 and counts_for($first; $first_seq))] | length) as $noted
     | if $m == null then
-        ("10c: no mutation audit for the final oracle after its last green run; run VETDD_MUTATION_TESTS=<the slice'"'"'s test files, one per line> evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run --mutate <file>:<first>-<last>,... on the lines the slice changed, or record why it does not apply with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>") as $missing
+        ("10c: no mutation audit for the final oracle after its last green run; run r=\"$(mutate-ranges.sh \($slice))\" && VETDD_MUTATION_TESTS=<the slice'"'"'s test files, one per line> evidence.sh \($slice) calibration --audit mutation --mutation-report stryker-json:<the jsonReporter.fileName of the Stryker config> -- npx --no-install stryker run <the Stryker config> --mutate \"$r\" (the ranges widened to whole statements when they need it, modes/test.md Audits › Mutation), or record why it does not apply (mutate-ranges.sh exits 3 when there is nothing to mutate) with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>") as $missing
         # Before Close (the pre-commit hook) the audit of a JS or TS slice is not due yet: say so, do not
         # block. Another slice is asked only once it ran an audit or wrote a note: a missing one fails.
         | if $noted > 0 then {copy: null, problems: [], warns: [], files: []}
@@ -384,7 +391,7 @@ def mut: (.audit | type) == "object" and .audit.kind == "mutation";
         | if ($rep | type) != "object" then error("no report")
           elif $rep.status != "ok" then
             {copy: null, problems: [if $rep.status == "empty"
-                then "10c: mutation run \($s) mutated nothing: the --mutate ranges held no mutant; widen them to the function'"'"'s closing brace"
+                then "10c: mutation run \($s) mutated nothing: the --mutate ranges held no mutant; widen them to the function'"'"'s closing brace\(if $m | empty_mutate then test_only else "" end)"
                 elif $rep.status == "missing" then "10c: the report of mutation run \($s) is missing; run the mutation audit again"
                 else "10c: the report of mutation run \($s) is invalid; run the mutation audit again (evidence.sh printed why when it recorded the run)" end], warns: [], files: []}
           else

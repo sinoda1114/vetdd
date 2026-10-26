@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Print the value for StrykerJS's --mutate: the lines a slice added or changed, in current line numbers.
 # Usage: mutate-ranges.sh <slice-id> [--file <path>]...
-#   npx --no-install stryker run <config> --mutate "$(mutate-ranges.sh <slice>)"
+#   r="$(mutate-ranges.sh <slice>)" && npx --no-install stryker run <config> --mutate "$r"
+#   (a command substitution inside --mutate would run Stryker with an empty value on exit 2 or 3)
 # Prints one line, `file:a-b,file:c-d` (each range a run of contiguous lines; one line is `a-a`), with
 # paths relative to the current directory, where Stryker runs.
 # The lines are attributed with git blame, not a diff from a base, over a chain of throwaway commits:
@@ -13,11 +14,14 @@
 # are not, and an `after` recorded again within a version moves nothing. A version whose red
 # calibrate.sh planted (its run records planted: {patch, sha256, files}) starts at that red's tree
 # before the plant (the planted patch taken back out), so the line its `after` puts back is not the
-# slice's. A slice without a `before` starts at its red when calibrate.sh unfix took it (a red with no
-# planted record whose changed files hold HEAD's content: an older planted red without the record can
-# be taken for one), and otherwise (a refactor, a behavior-preserving change, its red planted) has one
-# step, its first passing `after` to its last. The lines each step wrote are taken
-# exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10 -C10, so
+# slice's. A slice without a `before` starts at its first red that a passing `after` follows, when
+# calibrate.sh unfix took it (a red with no planted record whose changed files hold HEAD's content,
+# HEAD the same at that after: an older planted red without the record can be taken for one), even
+# after an earlier `after` on the fixed tree (modes/test.md, a surface slice; an earlier `after` that
+# does not hold the files the red took out as the red's `after` does makes it a refactor from it);
+# otherwise (a refactor, a behavior-preserving change, its
+# red planted) it has one step, its first passing `after` to its last. The lines each step wrote are
+# taken exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10 -C10, so
 # another slice between two versions, a later slice, or a refactor moves the lines without adding its
 # own (a line only reindented or moved, also to another file named with --file or copied into a new
 # one, stays the slice's), and two slices in one file each get only their own. The commits are never
@@ -25,6 +29,9 @@
 # Without --file: every file the slice changed except its oracle files (every oracle file its evidence
 # names) and .vetdd/. --file (relative to the current directory, repeatable) limits the output to
 # the files named, in that order; name a file's new path with it when a later change moved the file.
+# Only files Stryker mutates are printed (JS and TS, .vue .svelte .html .htm: lib/common.sh
+# VETDD_STRYKER_RE): Stryker stops the whole run on a file it has no parser for (a README.md, a
+# package.json), so each other one is named on stderr and left out.
 # The ranges are the changed lines only: widening them to whole statements stays with the caller
 # (modes/test.md, Audits › Mutation). A file the slice deleted, or in which it only removed lines,
 # has nothing to mutate: it is named on stderr and left out, as is a changed file outside the current
@@ -32,9 +39,11 @@
 # !), one a shell reads (' " ` $ ; & | < >), or one with a newline or another control, bidirectional,
 # or invisible character is refused (exit 2), so the value is one line and safe inside single quotes.
 # Exit 0 when ranges were printed; 2 on usage errors and when the evidence cannot be attributed (no
-# before run or unfix red and fewer than two passing afters, no passing after after the red, malformed
-# evidence, a tree object git gc removed); 3 when there is nothing to mutate (nothing printed: a
-# slice that changed only its oracle files, or no line of the slice is left).
+# before run or unfix red and fewer than two passing afters, no passing after after the red, every
+# red-to-green on one tree, malformed evidence, a tree object git gc removed); 3 when there is nothing to mutate (nothing printed: a
+# slice that changed only its oracle files, an empty refactor, no file Stryker mutates, or no line of
+# the slice is left; stderr says which): record why with
+# audit-note.sh <slice> --kind mutation --not-applicable --reason-file <path> (modes/test.md).
 set -u
 
 unset CDPATH
@@ -120,14 +129,19 @@ check_tree() {  # <hash> <run description>
 entry_in() {
   git --literal-pathspecs ls-tree -z --full-tree "$1" -- "$2" | tr '\0' '\n' | head -n 1 | cut -f 1
 }
-# unfix_red <red tree> <after tree> <head commit>: true when every product file that differs between
-# the red and the after holds in the red what HEAD held (calibrate.sh unfix puts HEAD's content back;
-# a planted defect is new content), and at least one does.
+# unfix_red <red tree> <after tree> <head commit> <after's head commit> <after seq>: true when every
+# product file that differs between the red and the after holds in the red what HEAD held
+# (calibrate.sh unfix puts HEAD's content back; a planted defect is new content), and at least one
+# does. HEAD must be the same at both: a commit between them (A.4's verify red reused in B) makes the
+# red's committed files look like an unfix of the change committed since.
 # Sets unfix_why to the reason when it is not.
 unfix_red() {
   local rec p n=0
   unfix_why="its HEAD commit is not in the repository"
   case "$3" in *[!0-9a-f]*|'') return 1 ;; esac
+  unfix_why="HEAD moved between it and the passing after that follows it (run $5)"
+  [ "$3" = "$4" ] || return 1
+  unfix_why="its HEAD commit is not in the repository"
   [ "$(git cat-file -t "$3" 2>/dev/null)" = commit ] || return 1
   unfix_why="the trees cannot be compared"
   git diff-tree -r -z --no-renames --raw "$1" "$2" > "$tmp/unfix" || return 1
@@ -142,9 +156,27 @@ unfix_red() {
   [ "$n" -gt 0 ]
 }
 
-# Where the slice's own change starts: its first accepted before; without one, a red calibration
-# before its first passing after when that red is an unfix (the fix taken out); otherwise (a refactor
-# or a behavior-preserving change, its red planted) one step from its first passing after to its last.
+# not_fixed_before <earlier after tree> <tree of the after that follows the red> <red tree>: the
+# product files (not oracle files, not .vetdd/) the red took out (they differ between the red and the
+# after that follows it) that the earlier after did not hold as that after does, each followed by a
+# space. Empty when the earlier after was on the fixed tree; a change to any other file in between
+# (another slice's) does not count (PR #119, Devin). A function, not a loop inside $(...): bash 3.2
+# misreads the ) of a case pattern there.
+not_fixed_before() {
+  local rec p
+  git diff-tree -r -z --no-renames --raw "$3" "$2" > "$tmp/redfix" || return 1
+  while IFS= read -r -d '' rec && IFS= read -r -d '' p; do
+    case "$p" in .vetdd/*) continue ;; esac
+    is_oracle "$p" && continue
+    [ "$(entry_in "$1" "$p")" = "$(entry_in "$2" "$p")" ] || printf '%s ' "$p"
+  done < "$tmp/redfix"
+}
+
+# Where the slice's own change starts: its first accepted before; without one, its first red
+# calibration that a passing after follows, when that red is an unfix (the fix taken
+# out), even when an after came before it (an after on the fixed tree, then the red with calibrate.sh unfix: a surface
+# slice, #82); otherwise (a refactor or a behavior-preserving change, its red planted) one step from
+# its first passing after to its last.
 shape="$(jq -r '
   def ok: .kind == "after" and .accepted != false and .outcome == "pass";
   def red: .kind == "calibration" and .accepted != false and .outcome == "target_failure" and .audit == null;
@@ -154,24 +186,41 @@ shape="$(jq -r '
   | if $b != null then "before \($b.seq | val)"
     else
       [$r[] | select(ok)] as $a
-      | (if ($a | length) == 0 then null else ([$r[] | select(red and .seq < $a[0].seq)] | first) end) as $c
-      | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val) \(if $c != null and ($c | has("planted")) then "planted" else "-" end)"
+      # The first red that a passing after follows (also after an earlier after: #82), and that after,
+      # which the red is compared with. The first one: later reds of other versions before the first
+      # green (planted, plain, or unfix ones) pass the start on (the segments below).
+      | ([$r[] | select(red) | .seq as $s | select(any($a[]; .seq > $s))] | first) as $c
+      | (if $c == null then null else ([$a[] | select(.seq > $c.seq)] | first) end) as $f
+      | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val) \(if $c != null and ($c | has("planted")) then "planted" else "-" end) \($f.tree.tree_hash | val) \($f.seq | val) \($f.tree.head_sha | val)"
     end' "$meta")" || die "cannot read the runs of $rel"
-read -r kind n_after a0t a0s alt als ct cs ch cp <<EOF
+read -r kind n_after a0t a0s alt als ct cs ch cp ft fs fh <<EOF
 $shape
 EOF
-first=""; refactor=0; why="it has no red calibration before its first passing after"
+first=""; refactor=0; why="no passing after follows a red calibration of it"
 if [ "$kind" = before ]; then
   first="$n_after"
 else
   if [ "$ct" != - ] && [ "$n_after" -ge 1 ]; then
     check_tree "$ct" "red calibration (run $cs)"
-    check_tree "$a0t" "after run (run $a0s)"
+    check_tree "$ft" "after run (run $fs)"
     # A red calibrate.sh planted says so on the run (planted: {patch, sha256, files}); only a red
     # without that record (an unfix, a plain run, or evidence from before it) is compared with HEAD.
     if [ "$cp" = planted ]; then why="its red calibration (run $cs) was planted (calibrate.sh plant and planted, as its record says)"
-    # The after that follows the red: the first passing after.
-    elif unfix_red "$ct" "$a0t" "$ch"; then first="$cs"
+    # Compared with the first passing after that follows the red.
+    elif unfix_red "$ct" "$ft" "$ch" "$fh" "$fs"; then
+      first="$cs"
+      # A red after an earlier after starts the slice only when that after was on the fixed tree (#82:
+      # after, unfix red, after): it may differ from the after that follows the red only in the files
+      # the red took out. Otherwise (a refactor, then a red of a stronger test that looks like an
+      # unfix) the slice is taken as a refactor from that first after, so nothing it wrote is lost.
+      if [ "$a0s" -lt "$cs" ]; then
+        check_tree "$a0t" "after run (run $a0s)"
+        early="$(not_fixed_before "$a0t" "$ft" "$ct")" || die "could not compare the trees of runs $a0s, $cs and $fs"
+        if [ -n "$early" ]; then
+          first=""
+          why="its red calibration (run $cs) comes after a passing after (run $a0s) that does not hold the fix the red took out as the after that follows the red (run $fs) does, in ${early% }, so that after was not on the fixed tree"
+        fi
+      fi
     else why="its red calibration (run $cs) is not an unfix red: $unfix_why"; fi
   fi
   if [ -z "$first" ]; then
@@ -312,7 +361,12 @@ if [ ${#changed[@]} -gt 1 ]; then
 fi
 
 if [ "$product" -eq 0 ]; then
-  [ "$same" -eq 0 ] || say "each red-to-green of slice '$slice' recorded the same tree at its start and its end"
+  if [ "$same" -eq 1 ] && [ "$refactor" -eq 1 ]; then
+    say "slice '$slice' recorded all its passing afters on the same tree: an empty refactor; record why there is nothing to mutate with audit-note.sh $slice --kind mutation --not-applicable --reason-file <path> (modes/test.md, Audits › Mutation)"
+    exit 3
+  fi
+  # Not "nothing to mutate": the change is not on file, so the not-applicable note would skip it.
+  [ "$same" -eq 0 ] || die "each red-to-green of slice '$slice' recorded the same tree at its start and its end: its first passing after was recorded on the unchanged tree (before the change, or before the test), so the slice's change is not on file; take a red of a new oracle version (oracle-version.sh, then calibrate.sh unfix $slice --file <product file> --oracle-version <new>) and record its after"
   say "slice '$slice' changed no product file (only its oracle files): there is nothing to mutate; record why with audit-note.sh $slice --kind mutation --not-applicable --reason-file <path> (modes/test.md, Audits › Mutation: a slice that only adds tests)"
   exit 3
 fi
@@ -328,6 +382,13 @@ if [ ${#files[@]} -gt 0 ]; then
 else
   targets=(${changed[@]+"${changed[@]}"})
 fi
+# Only files Stryker mutates: it stops the whole run on a file it has no parser for (#74).
+mutable=()
+for r in ${targets[@]+"${targets[@]}"}; do
+  if vetdd_stryker_mutates "$r"; then mutable+=("$r")
+  else say "$r: not a file Stryker mutates (.js .jsx .mjs .cjs .ts .tsx .mts .cts .vue .svelte .html .htm): left out"; fi
+done
+targets=(${mutable[@]+"${mutable[@]}"})
 
 # A path Stryker reads safely: its --mutate is split at commas, a range is the last :a-b, and the
 # file part is a minimatch pattern (a leading ! negates it). A path that a shell would read (a quote,

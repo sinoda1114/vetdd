@@ -114,6 +114,183 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/a.js:2-2" ]
 }
 
+@test "an after on the fixed tree, then an unfix red, then an after (the surface-slice order): the fix is the slice's change, not a refactor (#82 item 2)" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  [ "$(mq s1 '[.runs[].kind] | join(" ")')" = "after calibration" ] || { cat .vetdd/evidence/s1/meta.json; false; }
+  [ "$(sed -n 2p src/a.js)" = F2 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  [[ "$stderr" != *"refactor"* ]] || { echo "$stderr"; false; }
+  # Another after on the same tree (Close's coverage oracle) moves nothing.
+  green s1
+  run --separate-stderr mr s1
+  [ "$output" = "src/a.js:2-2" ] || { echo "$status $output $stderr"; false; }
+}
+
+@test "an unfix-shaped red whose HEAD moved before the after that follows it is not an unfix: taken as a refactor (verify mode, A.4's red reused; review r1)" {
+  # A.4: the calibration red and pass on a clean tree.
+  ev s1-verify calibration --oracle-version 1 --oracle-file test.sh --infra-exit 2 -- false >/dev/null 2>&1
+  ev s1-verify calibration -- true >/dev/null 2>&1
+  # Another change is committed before B; its lines hold HEAD's content in no red tree.
+  printf '%s\n' a1 C2 a3 a4 a5 > src/a.js
+  git commit -q -am other
+  # B.1: the pre-change green, then the change, then the green.
+  green s1-verify
+  printf '%s\n' a1 C2 a3 a4 X5 > src/a.js
+  green s1-verify
+  run --separate-stderr mr s1-verify
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:5-5" ]
+  [[ "$stderr" == *"HEAD moved"*"refactor"* ]] || { echo "$stderr"; false; }
+}
+
+@test "verify mode: A.4's red, an untracked Stryker config, B.1's red of the new version and its pre-change green, the change, a green: the change is the slice's (review r2)" {
+  # A.4 on a clean tree.
+  ev s1-verify calibration --oracle-version 1 --oracle-file test.sh --infra-exit 2 -- false >/dev/null 2>&1
+  ev s1-verify calibration -- true >/dev/null 2>&1
+  # The wrapper (an oracle file) and the Stryker config, committed before B.1 as verify.md says: a
+  # new oracle version. HEAD moved since A.4, so A.4's red is not an unfix of them.
+  printf 'exit 0\n' > wrap.sh
+  printf '%s\n' 'export default { testRunner: "command" };' > stryker.config.mjs
+  git add wrap.sh stryker.config.mjs && git commit -q -m 'verify wrapper and Stryker config'
+  ev s1-verify calibration --oracle-version 2 --oracle-file test.sh --oracle-file wrap.sh --infra-exit 2 -- false >/dev/null 2>&1
+  green s1-verify
+  printf '%s\n' a1 a2 a3 X4 a5 > src/a.js
+  green s1-verify
+  run --separate-stderr mr s1-verify
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:4-4" ]
+}
+
+@test "the start is the first red that a passing after follows: an unfix red of a later version after an earlier one" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf '%s\n' a1 F2 F3 a4 a5 > src/a.js
+  printf 'echo stronger\n' >> test.sh
+  cal unfix s1 --file src/a.js --oracle-version v2 --oracle-file test.sh -- false
+  [ "$(mq s1 '[.runs[] | .kind + ":" + .outcome] | join(" ")')" = "calibration:target_failure calibration:target_failure" ] || { cat .vetdd/evidence/s1/meta.json; false; }
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-3" ]
+}
+
+@test "a v1 unfix red, then a v2 red planted before the first green, then an after: the start stays the unfix red (review r3, Codex P2)" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf 'echo stronger\n' >> test.sh
+  cal plant s1 --file src/a.js --oracle-version v2 --oracle-file test.sh
+  printf '%s\n' a1 F2 a3 BAD a5 > src/a.js
+  cal planted s1 --oracle-file test.sh -- false
+  [ "$(sed -n 4p src/a.js)" = a4 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  # Close's green again on the same tree moves nothing.
+  green s1
+  run --separate-stderr mr s1
+  [ "$output" = "src/a.js:2-2" ] || { echo "$status $output $stderr"; false; }
+}
+
+@test "an after before the red that differs from the after after it (not the fixed tree): a refactor from that after, so nothing is lost (review r3, r6)" {
+  printf '%s\n' b1 > src/b.js && git add -A && git commit -q -m b
+  ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  printf '%s\n' b1 B2 > src/b.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2,src/b.js:2-2" ]
+  [[ "$stderr" == *"src/a.js"*"refactor"* ]] || { echo "$stderr"; false; }
+  # A refactor, then a plain red of a stronger test, then an edit of a file HEAD still holds: the red
+  # looks like an unfix of that file, but the after before it is not on that tree (review r6).
+  rm -rf .vetdd
+  git checkout -q -- src/a.js src/b.js
+  ev s3 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  printf '%s\n' a1 a2 R3 a4 a5 > src/a.js
+  green s3
+  printf 'echo stronger\n' >> test.sh
+  ev s3 calibration --oracle-version v2 -- false >/dev/null 2>&1
+  printf '%s\n' b1 B2 > src/b.js
+  green s3
+  run --separate-stderr mr s3
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:3-3,src/b.js:2-2" ]
+  git checkout -q -- test.sh src/a.js src/b.js
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  printf '%s\n' b1 B2 > src/b.js
+  # The surface order on the fixed tree says nothing.
+  rm -rf .vetdd
+  ev s2 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  cal unfix s2 --file src/a.js --file src/b.js --oracle-version v1 --oracle-file test.sh -- false
+  green s2
+  run --separate-stderr mr s2
+  [ "$output" = "src/a.js:2-2,src/b.js:2-2" ] || { echo "$status $output $stderr"; false; }
+  [[ "$stderr" != *"not counted"* ]] || { echo "$stderr"; false; }
+}
+
+@test "surface order with another slice editing another file between the after and the unfix red: only the fix is the slice's (PR #119, Devin)" {
+  printf '%s\n' b1 > src/b.js && git add -A && git commit -q -m b
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  # Another slice adds a line to b.js.
+  red s2
+  printf '%s\n' b1 B2 > src/b.js
+  green s2
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  [ "$(sed -n 2p src/a.js)" = F2 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  [[ "$stderr" != *"refactor"* ]] || { echo "$stderr"; false; }
+  run --separate-stderr mr s2
+  [ "$output" = "src/b.js:2-2" ] || { echo "$status $output $stderr"; false; }
+}
+
+@test "a v1 unfix red, then a plain v2 red on the fixed tree, then an after: the start stays the unfix red (review r5, Codex P2)" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf 'echo stronger\n' >> test.sh
+  ev s1 calibration --oracle-version v2 -- false >/dev/null 2>&1
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$output" = "src/a.js:2-2" ] || { echo "$status $output $stderr"; false; }
+}
+
+@test "unfix reds of two versions before the first green: the lines of both count (review r4, Codex P2)" {
+  printf '%s\n' b1 > src/b.js && git add -A && git commit -q -m b
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf '%s\n' b1 G2 > src/b.js
+  printf 'echo stronger\n' >> test.sh
+  cal unfix s1 --file src/b.js --oracle-version v2 --oracle-file test.sh -- false
+  [ "$(sed -n 2p src/b.js)" = G2 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2,src/b.js:2-2" ]
+}
+
+@test "a red after the first after with no passing after following it yet: not a start, so the slice cannot be attributed (exit 2)" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  run --separate-stderr mr s1
+  [ "$status" -eq 2 ] || { echo "$status $output $stderr"; false; }
+  [ -z "$output" ]
+}
+
 @test "a before that passed (rejected) does not start the slice; the unfix red after it does" {
   printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
   ev s1 before --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1 || true
@@ -442,6 +619,51 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "a.js:1-1" ]
 }
 
+@test "only files Stryker mutates are printed: a README.md, package.json, or .css the slice changed is named on stderr and left out (#74 item 6)" {
+  red s1
+  printf '%s\n' X1 a2 a3 a4 a5 > src/a.js
+  printf '%s\n' 'export const b = 1;' > src/b.ts
+  printf '%s\n' 'export const c = 1;' > src/c.MJS
+  # Stryker 10 parses .vue .svelte .html .htm too (getFormat in @stryker-mutator/instrumenter).
+  printf '%s\n' '<script>const d = 1;</script>' > src/d.vue
+  printf '%s\n' '<script>let e = 1;</script>' > src/e.Svelte
+  printf '%s\n' '<script>var f = 1;</script>' > src/f.htm
+  printf '# readme\n' > README.md
+  printf '{"name": "x"}\n' > package.json
+  printf 'a {}\n' > src/s.css
+  # Never handed to Stryker, so a name it would misread is left out, not refused.
+  printf 'n\n' > 'notes,1.md'
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:1-1,src/b.ts:1-1,src/c.MJS:1-1,src/d.vue:1-1,src/e.Svelte:1-1,src/f.htm:1-1" ]
+  local f
+  for f in README.md package.json src/s.css 'notes,1.md'; do
+    [[ "$stderr" == *"$f: not a file Stryker mutates"* ]] || { echo "$f: $stderr"; false; }
+  done
+  [[ "$stderr" != *"src/a.js"* ]] || { echo "$stderr"; false; }
+  # Named with --file: left out the same way.
+  run --separate-stderr mr s1 --file README.md --file src/a.js
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:1-1" ]
+  [[ "$stderr" == *"README.md: not a file Stryker mutates"* ]] || { echo "$stderr"; false; }
+  run --separate-stderr mr s1 --file package.json
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"package.json: not a file Stryker mutates"* ]] || { echo "$stderr"; false; }
+}
+
+@test "a slice whose only product change is a README.md: nothing printed, exit 3, the file named and the mutation note pointed to (#74 item 6)" {
+  red s1
+  printf '# readme\n' > README.md
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"README.md: not a file Stryker mutates"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$stderr"; false; }
+}
+
 # --- 6. deletions -------------------------------------------------------------------------------
 
 @test "a deletion-only change: no range for that file, and a note on stderr naming it" {
@@ -483,6 +705,28 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/moved.js:2-2" ]
 }
 
+# --- verify mode (#71) ---------------------------------------------------------------------------
+
+@test "verify mode: after a calibration red, the pre-change green to the last one is the change; after a before, a green on the unchanged tree leaves nothing (as verify.md says)" {
+  ev s1-verify calibration --oracle-version 1 --oracle-file test.sh --infra-exit 2 -- false >/dev/null 2>&1
+  ev s1-verify calibration -- true >/dev/null 2>&1
+  green s1-verify
+  printf '%s\n' a1 X2 a3 a4 a5 > src/a.js
+  green s1-verify
+  run --separate-stderr mr s1-verify
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  git checkout -q -- src/a.js
+  red s2-verify
+  green s2-verify
+  printf '%s\n' a1 a2 a3 Y4 a5 > src/a.js
+  green s2-verify
+  run --separate-stderr mr s2-verify
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"same tree"* ]] || { echo "$stderr"; false; }
+  grep -- '- \*\*Mutation\.\*\*' "$SCRIPTS/../modes/verify.md" | grep -q '"the same tree"'
+}
+
 # --- 7. a test-only slice -----------------------------------------------------------------------
 
 @test "a slice with no product change: prints nothing, exit 3, points to the mutation note" {
@@ -496,12 +740,24 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [[ "$stderr" == *"modes/test.md"* ]]
 }
 
-@test "a slice whose before and after trees are the same says so" {
+@test "a slice whose before and after trees are the same cannot be attributed: exit 2, pointing to a new red rather than the note (review r4, r5)" {
   red s1
   green s1
   run --separate-stderr mr s1
-  [ "$status" -eq 3 ]
+  [ "$status" -eq 2 ]
+  [ -z "$output" ]
   [[ "$stderr" == *"same tree"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"unchanged tree"*"--oracle-version"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" != *"audit-note.sh"* ]] || { echo "$stderr"; false; }
+}
+
+@test "an empty refactor (its afters all on one tree): exit 3, and the note is right (review r5)" {
+  green s1
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"empty refactor"*"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$stderr"; false; }
 }
 
 # --- 8. errors ----------------------------------------------------------------------------------
@@ -701,14 +957,14 @@ b.js"
 # --- docs ---------------------------------------------------------------------------------------
 
 @test "the script's header names its usage and exit codes" {
-  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q 'Usage: mutate-ranges.sh <slice-id> \[--file <path>\]'
-  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q 'Exit 0'
-  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q ' 3 '
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | grep -q 'Usage: mutate-ranges.sh <slice-id> \[--file <path>\]'
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | grep -q 'Exit 0'
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | grep -q ' 3 '
 }
 
 @test "test mode takes the ranges from mutate-ranges.sh, keeps the widening rule, and drops git diff -U0" {
   local doc="$SCRIPTS/../modes/test.md"
-  sed -n '/^### Mutation/,/^## /p' "$doc" | grep -q 'mutate-ranges.sh <slice>'
+  sed -n '/^### Mutation/,/^## /p' "$doc" | grep -qF 'mutate-ranges.sh" <slice>'
   ! grep -q 'git diff -U0' "$doc" || false
   sed -n '/^### Mutation/,/^## /p' "$doc" | grep -q 'widen'
   sed -n '/^### Mutation/,/^## /p' "$doc" | grep -q "Attention"
@@ -718,4 +974,27 @@ b.js"
 @test "swarm and arena Close run each slice's mutation audit on mutate-ranges.sh over the integrated tree" {
   grep -q 'mutate-ranges.sh <slice>' "$SCRIPTS/../parallel/swarm.md"
   grep -q 'mutate-ranges.sh' "$SCRIPTS/../parallel/arena.md"
+}
+
+@test "the documented use stops on exit 2 or 3 instead of running Stryker with an empty --mutate (#74 item 7)" {
+  local doc="$SCRIPTS/../modes/test.md" sec
+  # No command substitution inside --mutate: it would go on with an empty value when the script fails.
+  ! grep -rn -- '--mutate "$(' "$SCRIPTS" "$SCRIPTS/../modes" "$SCRIPTS/../parallel" "$SCRIPTS/../SKILL.md" || false
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | grep -qF 'r="$(mutate-ranges.sh <slice>)" && npx --no-install stryker run <config> --mutate "$r"'
+  sec="$(sed -n '/^### Mutation/,/^## /p' "$doc" | tr '\n' ' ')"
+  [[ "$sec" == *'r="$("$VETDD/scripts/mutate-ranges.sh" <slice>)" &&'* ]] || { echo "$sec"; false; }
+  [[ "$sec" == *'--mutate "$r"'* ]]
+  # Exit 3 points to the test-only note, in the doc and in the script's header.
+  [[ "$sec" == *'Exit 3'*'audit-note.sh <slice> --kind mutation --not-applicable'* ]] || { echo "$sec"; false; }
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -qF '3 when there is nothing to mutate'
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -q 'audit-note.sh <slice> --kind mutation --not-applicable'
+}
+
+@test "the header and test mode say only files Stryker mutates are printed, and a red after the first after can start the slice" {
+  local doc="$SCRIPTS/../modes/test.md" sec
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -q 'VETDD_STRYKER_RE'
+  grep -q '^VETDD_STRYKER_RE=' "$SCRIPTS/lib/common.sh"
+  sec="$(sed -n '/^### Mutation/,/^## /p' "$doc" | tr '\n' ' ')"
+  [[ "$sec" == *'only files Stryker mutates'*'.vue'* ]] || { echo "$sec"; false; }
+  [[ "$sec" == *'the first red that a passing `after` follows'* ]] || { echo "$sec"; false; }
 }
