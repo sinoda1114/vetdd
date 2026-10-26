@@ -100,17 +100,17 @@ check() { "$SCRIPTS/check-evidence.sh" "$@"; }
 # stub_ev <slice> [evidence.sh options] -- <command...>: evidence.sh <slice> calibration --audit
 # undefined-imports, run as calibrate.sh stub runs it (evidence.sh takes the option from nobody else): the
 # slice's calibration state in stub mode, listing the stubbed file, with the pid of the process that runs
-# evidence.sh. The stubbed file is ignored/stub.mjs holding the ES module stub, there only for the run, so
-# the working tree is as it was afterwards.
+# evidence.sh. The stubbed file is ignored/stub.mjs (ignored/$STUB_NAME when set, a plain .mjs name) holding
+# the ES module stub, there only for the run, so the working tree is as it was afterwards.
 stub_ev() {
-  local slice="$1" st top rc=0; shift
+  local slice="$1" st top rc=0 name="${STUB_NAME:-stub.mjs}"; shift
   st="$(git rev-parse --absolute-git-dir)/vetdd-calib/$slice"
   top="$(git rev-parse --show-toplevel)"
-  mkdir -p "$st" "$top/ignored" && printf 'export {};\n' > "$top/ignored/stub.mjs" \
-    && echo stub > "$st/mode" && printf 'ignored/stub.mjs\n' > "$st/files" || return 1
+  mkdir -p "$st" "$top/ignored" && printf 'export {};\n' > "$top/ignored/$name" \
+    && echo stub > "$st/mode" && printf 'ignored/%s\n' "$name" > "$st/files" || return 1
   bash -c 'echo "$$" > "$1/pid"; shift; "$@"; rc=$?; exit "$rc"' stub_ev "$st" \
     "$SCRIPTS/evidence.sh" "$slice" calibration --audit undefined-imports "$@" || rc=$?
-  rm -rf "$st"; rm -f "$top/ignored/stub.mjs"; rmdir "$top/ignored" 2>/dev/null || true
+  rm -rf "$st"; rm -f "$top/ignored/$name"; rmdir "$top/ignored" 2>/dev/null || true
   return "$rc"
 }
 
