@@ -14,7 +14,8 @@
 # are not, and an `after` recorded again within a version moves nothing. A version whose red
 # calibrate.sh planted (its run records planted: {patch, sha256, files}) starts at that red's tree
 # before the plant (the planted patch taken back out), so the line its `after` puts back is not the
-# slice's. A slice without a `before` starts at its first red that a passing `after` follows, when
+# slice's. A slice without a `before` starts at the red right before the first passing `after` that
+# follows a red, when
 # calibrate.sh unfix took it (a red with no planted record whose changed files hold HEAD's content: an
 # older planted red without the record can be taken for one), even after an earlier `after` on the
 # fixed tree (modes/test.md, a surface slice); otherwise (a refactor, a behavior-preserving change, its
@@ -153,9 +154,9 @@ unfix_red() {
   [ "$n" -gt 0 ]
 }
 
-# Where the slice's own change starts: its first accepted before; without one, its first red
-# calibration that a passing after follows, when that red is an unfix (the fix taken out), even when an
-# after came before it (an after on the fixed tree, then the red with calibrate.sh unfix: a surface
+# Where the slice's own change starts: its first accepted before; without one, the red calibration
+# right before the first passing after that follows a red, when that red is an unfix (the fix taken
+# out), even when an after came before it (an after on the fixed tree, then the red with calibrate.sh unfix: a surface
 # slice, #82); otherwise (a refactor or a behavior-preserving change, its red planted) one step from
 # its first passing after to its last.
 shape="$(jq -r '
@@ -167,15 +168,17 @@ shape="$(jq -r '
   | if $b != null then "before \($b.seq | val)"
     else
       [$r[] | select(ok)] as $a
-      | ([$r[] | select(red) | .seq as $s | select(any($a[]; .seq > $s))] | first) as $c
-      # The passing after that follows the red: the red is compared with it.
-      | (if $c == null then null else ([$a[] | select(.seq > $c.seq)] | first) end) as $f
+      # The first passing after that follows a red, and the red right before it (a red with no passing
+      # after between it and that after): an older red (the A.4 red of verify mode, reused before an oracle
+      # bump and its new red) is not the start. The red is compared with that after.
+      | ([$r[] | select(red) | .seq as $s | $a[] | select(.seq > $s)] | first) as $f
+      | (if $f == null then null else ([$r[] | select(red and .seq < $f.seq)] | last) end) as $c
       | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val) \(if $c != null and ($c | has("planted")) then "planted" else "-" end) \($f.tree.tree_hash | val) \($f.seq | val) \($f.tree.head_sha | val)"
     end' "$meta")" || die "cannot read the runs of $rel"
 read -r kind n_after a0t a0s alt als ct cs ch cp ft fs fh <<EOF
 $shape
 EOF
-first=""; refactor=0; why="it has no red calibration that a passing after follows"
+first=""; refactor=0; why="no passing after follows a red calibration of it"
 if [ "$kind" = before ]; then
   first="$n_after"
 else

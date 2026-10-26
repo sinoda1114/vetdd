@@ -1055,16 +1055,31 @@ jsts_slice() {
   [[ "$output" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]]
 }
 
-@test "a 0-mutant report's 10c line names the test-only case: mutate-ranges.sh exit 3, the note, and the green again (#74 item 7)" {
-  record_good_slice s1
-  mutation s1 "$(report '.files = {}')"
+@test "a 0-mutant report of an empty --mutate names the test-only case: mutate-ranges.sh exit 3, the note, and the green again (#74 item 7)" {
+  local v
+  # The value as the shell passes it: --mutate "", -m "", --mutate= , or --mutate last with no value.
+  for v in "--mutate|" "-m|" "--mutate=" "--mutate"; do
+    rm -rf .vetdd
+    record_good_slice s1 >/dev/null 2>&1
+    case "$v" in
+      *'|') REPORT="$(report '.files = {}')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh "${v%|}" '' >/dev/null 2>&1 || true ;;
+      *) REPORT="$(report '.files = {}')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh "$v" >/dev/null 2>&1 || true ;;
+    esac
+    run check s1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"widen them to the function's closing brace"* ]] || { echo "$v: $output"; false; }
+    [[ "$output" == *"; the --mutate value was empty: when mutate-ranges.sh s1 exits 3"* ]] || { echo "$v: $output"; false; }
+    [[ "$output" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$v: $output"; false; }
+    [[ "$output" == *"evidence.sh s1 integrated -- <the slice's test command>"* ]] || { echo "$v: $output"; false; }
+    [[ "$output" == *"no file Stryker mutates"* ]] || { echo "$v: $output"; false; }
+  done
+  # An empty report of a --mutate that held ranges: widen them, no test-only way out.
+  rm -rf .vetdd
+  record_good_slice s1 >/dev/null 2>&1
+  REPORT="$(report '.files = {}')" ev s1 calibration --audit mutation --mutation-report "stryker-json:$R" -- sh mrun.sh --mutate 'src/dueDate.ts:3-3' >/dev/null 2>&1 || true
   run check s1
-  [ "$status" -eq 1 ]
   [[ "$output" == *"widen them to the function's closing brace"* ]] || { echo "$output"; false; }
-  [[ "$output" == *"mutate-ranges.sh s1 exits 3"* ]] || { echo "$output"; false; }
-  [[ "$output" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$output"; false; }
-  [[ "$output" == *"evidence.sh s1 integrated -- <the slice's test command>"* ]] || { echo "$output"; false; }
-  [[ "$output" == *"; only when mutate-ranges.sh s1 exits 3"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"mutate-ranges.sh s1 exits 3"* ]] || { echo "$output"; false; }
   # A report with files but no mutant came from a --mutate value that was not empty: no test-only way out.
   record_good_slice s2
   mutation s2 "$(report "$M = []")"

@@ -353,9 +353,13 @@ def listed($l): (.seq | floor) as $s | any($l[]; . == $s);
 MUTATION_RULES="$RUN_DEFS$VETDD_JQ_CLEAN"'
 def nn: if type == "number" and . >= 0 then . else error("not a count") end;
 def mut: (.audit | type) == "object" and .audit.kind == "mutation";
-# The way out of a run of no mutant when the --mutate value was empty: mutate-ranges.sh had nothing to
-# print (#74), and a note does not lift a run after the last green, so the green is recorded again.
-def test_only: "; only when mutate-ranges.sh \($slice) exits 3 (nothing to mutate: a slice that changed only its tests), so the --mutate value was empty, record why with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>, then the slice'"'"'s green again (evidence.sh \($slice) integrated -- <the slice'"'"'s test command>), since a note does not lift a mutation run after the last green";
+# The way out of a run of no mutant whose --mutate value was empty (in the argv of the run: --mutate or -m
+# followed by an empty word or by nothing, or --mutate=): mutate-ranges.sh had nothing to print (#74),
+# and a note does not lift a run after the last green, so the green is recorded again.
+def empty_mutate: (.cmd | if type == "array" then . else [] end) as $c
+  | any(range(0; $c | length); ($c[.] == "--mutate" or $c[.] == "-m") and (($c[. + 1] // "") == ""))
+    or any($c[]; . == "--mutate=" or . == "-m=");
+def test_only: "; the --mutate value was empty: when mutate-ranges.sh \($slice) exits 3 (nothing to mutate: a slice that changed only its tests, or no file Stryker mutates), run no audit: record why with audit-note.sh \($slice) --kind mutation --not-applicable --reason-file <path>, then the slice'"'"'s green again (evidence.sh \($slice) integrated -- <the slice'"'"'s test command>), since a note does not lift a mutation run after the last green";
 . as $meta
 | [.runs[] | select(.accepted != false and usable)] as $acc
 | ($acc | map(select(green and .outcome == "pass")) | sort_by(.seq) | last) as $g
@@ -387,7 +391,7 @@ def test_only: "; only when mutate-ranges.sh \($slice) exits 3 (nothing to mutat
         | if ($rep | type) != "object" then error("no report")
           elif $rep.status != "ok" then
             {copy: null, problems: [if $rep.status == "empty"
-                then "10c: mutation run \($s) mutated nothing: the --mutate ranges held no mutant; widen them to the function'"'"'s closing brace\(test_only)"
+                then "10c: mutation run \($s) mutated nothing: the --mutate ranges held no mutant; widen them to the function'"'"'s closing brace\(if $m | empty_mutate then test_only else "" end)"
                 elif $rep.status == "missing" then "10c: the report of mutation run \($s) is missing; run the mutation audit again"
                 else "10c: the report of mutation run \($s) is invalid; run the mutation audit again (evidence.sh printed why when it recorded the run)" end], warns: [], files: []}
           else

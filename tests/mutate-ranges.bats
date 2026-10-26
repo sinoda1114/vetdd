@@ -148,6 +148,35 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [[ "$stderr" == *"HEAD moved"*"refactor"* ]] || { echo "$stderr"; false; }
 }
 
+@test "verify mode: A.4's red, an untracked Stryker config, B.1's red of the new version and its pre-change green, the change, a green: the change is the slice's (review r2)" {
+  # A.4 on a clean tree.
+  ev s1-verify calibration --oracle-version 1 --oracle-file test.sh --infra-exit 2 -- false >/dev/null 2>&1
+  ev s1-verify calibration -- true >/dev/null 2>&1
+  # The wrapper (an oracle file) and the Stryker config, not committed: a new oracle version.
+  printf 'exit 0\n' > wrap.sh
+  printf '%s\n' 'export default { testRunner: "command" };' > stryker.config.mjs
+  ev s1-verify calibration --oracle-version 2 --oracle-file test.sh --oracle-file wrap.sh --infra-exit 2 -- false >/dev/null 2>&1
+  green s1-verify
+  printf '%s\n' a1 a2 a3 X4 a5 > src/a.js
+  green s1-verify
+  run --separate-stderr mr s1-verify
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:4-4" ]
+}
+
+@test "the start is the red right before the first passing after: an unfix red of a later version after an earlier one" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf '%s\n' a1 F2 F3 a4 a5 > src/a.js
+  printf 'echo stronger\n' >> test.sh
+  cal unfix s1 --file src/a.js --oracle-version v2 --oracle-file test.sh -- false
+  [ "$(mq s1 '[.runs[] | .kind + ":" + .outcome] | join(" ")')" = "calibration:target_failure calibration:target_failure" ] || { cat .vetdd/evidence/s1/meta.json; false; }
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-3" ]
+}
+
 @test "a red after the first after with no passing after following it yet: not a start, so the slice cannot be attributed (exit 2)" {
   printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
   ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
@@ -850,5 +879,5 @@ b.js"
   grep -q '^VETDD_STRYKER_RE=' "$SCRIPTS/lib/common.sh"
   sec="$(sed -n '/^### Mutation/,/^## /p' "$doc" | tr '\n' ' ')"
   [[ "$sec" == *'only files Stryker mutates'*'.vue'* ]] || { echo "$sec"; false; }
-  [[ "$sec" == *'the first such red that a passing `after` follows'* ]] || { echo "$sec"; false; }
+  [[ "$sec" == *'the one right before the first passing `after` that follows a red'* ]] || { echo "$sec"; false; }
 }
