@@ -53,6 +53,8 @@ utf8_locale() {
 # The suite's own switches, VETDD_REQUIRE_FIXTURES and VETDD_REAL_STRYKER, are moved to names without
 # the VETDD_ prefix before any test runs a script: evidence.sh records the names of the VETDD_
 # variables it runs under (conditions.env_keys), so a switch left there would change what tests record.
+# REQUIRE_FIXTURE_TESTS and REAL_STRYKER_TESTS are those internal names, not switches to set by hand:
+# a VETDD_ value always replaces them, and the messages name the VETDD_ switch.
 if [ -n "${VETDD_REQUIRE_FIXTURES+x}" ]; then
   export REQUIRE_FIXTURE_TESTS="$VETDD_REQUIRE_FIXTURES"; unset VETDD_REQUIRE_FIXTURES
 fi
