@@ -121,3 +121,10 @@ EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
   grep -q 'unknown option: $1 (--file, --oracle-file, --seam, --oracle-version, --infra-exit, --test-report)' "$SCRIPTS/calibrate.sh"
   sed -n 13,14p "$SCRIPTS/calibrate.sh" | grep -q -- '--infra-exit'
 }
+
+@test "verify mode takes the mutation ranges from mutate-ranges.sh, not by hand (#71)" {
+  local m; m="$(grep -- '- \*\*Mutation\.\*\*' "$VERIFY")"
+  [[ "$m" == *'mutate-ranges.sh" <app>-verify'* ]] || { echo "$m"; false; }
+  [[ "$m" != *"on the changed lines"* ]] || { echo "$m"; false; }
+  [[ "$m" == *'--mutate "$r"'* ]] || { echo "$m"; false; }
+}

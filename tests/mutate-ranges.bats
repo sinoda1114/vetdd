@@ -114,6 +114,32 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/a.js:2-2" ]
 }
 
+@test "an after on the fixed tree, then an unfix red, then an after (the surface-slice order): the fix is the slice's change, not a refactor (#82 item 2)" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  [ "$(mq s1 '[.runs[].kind] | join(" ")')" = "after calibration" ] || { cat .vetdd/evidence/s1/meta.json; false; }
+  [ "$(sed -n 2p src/a.js)" = F2 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  [[ "$stderr" != *"refactor"* ]] || { echo "$stderr"; false; }
+  # Another after on the same tree (Close's coverage oracle) moves nothing.
+  green s1
+  run --separate-stderr mr s1
+  [ "$output" = "src/a.js:2-2" ] || { echo "$status $output $stderr"; false; }
+}
+
+@test "a red after the first after with no passing after following it yet: not a start, so the slice cannot be attributed (exit 2)" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  run --separate-stderr mr s1
+  [ "$status" -eq 2 ] || { echo "$status $output $stderr"; false; }
+  [ -z "$output" ]
+}
+
 @test "a before that passed (rejected) does not start the slice; the unfix red after it does" {
   printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
   ev s1 before --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1 || true
@@ -442,6 +468,47 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "a.js:1-1" ]
 }
 
+@test "only JS and TS files are printed: a README.md, package.json, or .css the slice changed is named on stderr and left out (#74 item 6)" {
+  red s1
+  printf '%s\n' X1 a2 a3 a4 a5 > src/a.js
+  printf '%s\n' 'export const b = 1;' > src/b.ts
+  printf '%s\n' 'export const c = 1;' > src/c.MJS
+  printf '# readme\n' > README.md
+  printf '{"name": "x"}\n' > package.json
+  printf 'a {}\n' > src/s.css
+  # Never handed to Stryker, so a name it would misread is left out, not refused.
+  printf 'n\n' > 'notes,1.md'
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:1-1,src/b.ts:1-1,src/c.MJS:1-1" ]
+  local f
+  for f in README.md package.json src/s.css 'notes,1.md'; do
+    [[ "$stderr" == *"$f: not a JS or TS file"* ]] || { echo "$f: $stderr"; false; }
+  done
+  [[ "$stderr" != *"src/a.js"* ]] || { echo "$stderr"; false; }
+  # Named with --file: left out the same way.
+  run --separate-stderr mr s1 --file README.md --file src/a.js
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:1-1" ]
+  [[ "$stderr" == *"README.md: not a JS or TS file"* ]] || { echo "$stderr"; false; }
+  run --separate-stderr mr s1 --file package.json
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"package.json: not a JS or TS file"* ]] || { echo "$stderr"; false; }
+}
+
+@test "a slice whose only product change is a README.md: nothing printed, exit 3, the file named and the mutation note pointed to (#74 item 6)" {
+  red s1
+  printf '# readme\n' > README.md
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"README.md: not a JS or TS file"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$stderr"; false; }
+}
+
 # --- 6. deletions -------------------------------------------------------------------------------
 
 @test "a deletion-only change: no range for that file, and a note on stderr naming it" {
@@ -481,6 +548,28 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   run --separate-stderr mr s1 --file src/moved.js
   [ "$status" -eq 0 ] || { echo "$output $stderr"; false; }
   [ "$output" = "src/moved.js:2-2" ]
+}
+
+# --- verify mode (#71) ---------------------------------------------------------------------------
+
+@test "verify mode: after a calibration red, the pre-change green to the last one is the change; after a before, a green on the unchanged tree leaves nothing (as verify.md says)" {
+  ev s1-verify calibration --oracle-version 1 --oracle-file test.sh --infra-exit 2 -- false >/dev/null 2>&1
+  ev s1-verify calibration -- true >/dev/null 2>&1
+  green s1-verify
+  printf '%s\n' a1 X2 a3 a4 a5 > src/a.js
+  green s1-verify
+  run --separate-stderr mr s1-verify
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  git checkout -q -- src/a.js
+  red s2-verify
+  green s2-verify
+  printf '%s\n' a1 a2 a3 Y4 a5 > src/a.js
+  green s2-verify
+  run --separate-stderr mr s2-verify
+  [ "$status" -eq 3 ]
+  [[ "$stderr" == *"same tree"* ]] || { echo "$stderr"; false; }
+  grep -- '- \*\*Mutation\.\*\*' "$SCRIPTS/../modes/verify.md" | grep -q '"the same tree"'
 }
 
 # --- 7. a test-only slice -----------------------------------------------------------------------
@@ -701,14 +790,14 @@ b.js"
 # --- docs ---------------------------------------------------------------------------------------
 
 @test "the script's header names its usage and exit codes" {
-  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q 'Usage: mutate-ranges.sh <slice-id> \[--file <path>\]'
-  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q 'Exit 0'
-  sed -n 2,40p "$SCRIPTS/mutate-ranges.sh" | grep -q ' 3 '
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | grep -q 'Usage: mutate-ranges.sh <slice-id> \[--file <path>\]'
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | grep -q 'Exit 0'
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | grep -q ' 3 '
 }
 
 @test "test mode takes the ranges from mutate-ranges.sh, keeps the widening rule, and drops git diff -U0" {
   local doc="$SCRIPTS/../modes/test.md"
-  sed -n '/^### Mutation/,/^## /p' "$doc" | grep -q 'mutate-ranges.sh <slice>'
+  sed -n '/^### Mutation/,/^## /p' "$doc" | grep -qF 'mutate-ranges.sh" <slice>'
   ! grep -q 'git diff -U0' "$doc" || false
   sed -n '/^### Mutation/,/^## /p' "$doc" | grep -q 'widen'
   sed -n '/^### Mutation/,/^## /p' "$doc" | grep -q "Attention"
@@ -718,4 +807,26 @@ b.js"
 @test "swarm and arena Close run each slice's mutation audit on mutate-ranges.sh over the integrated tree" {
   grep -q 'mutate-ranges.sh <slice>' "$SCRIPTS/../parallel/swarm.md"
   grep -q 'mutate-ranges.sh' "$SCRIPTS/../parallel/arena.md"
+}
+
+@test "the documented use stops on exit 2 or 3 instead of running Stryker with an empty --mutate (#74 item 7)" {
+  local doc="$SCRIPTS/../modes/test.md" sec
+  # No command substitution inside --mutate: it would go on with an empty value when the script fails.
+  ! grep -rn -- '--mutate "$(' "$SCRIPTS" "$SCRIPTS/../modes" "$SCRIPTS/../parallel" "$SCRIPTS/../SKILL.md" || false
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | grep -qF 'r="$(mutate-ranges.sh <slice>)" && npx --no-install stryker run <config> --mutate "$r"'
+  sec="$(sed -n '/^### Mutation/,/^## /p' "$doc" | tr '\n' ' ')"
+  [[ "$sec" == *'r="$("$VETDD/scripts/mutate-ranges.sh" <slice>)" &&'* ]] || { echo "$sec"; false; }
+  [[ "$sec" == *'--mutate "$r"'* ]]
+  # Exit 3 points to the test-only note, in the doc and in the script's header.
+  [[ "$sec" == *'Exit 3'*'audit-note.sh <slice> --kind mutation --not-applicable'* ]] || { echo "$sec"; false; }
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -qF '3 when there is nothing to mutate'
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -q 'audit-note.sh <slice> --kind mutation --not-applicable'
+}
+
+@test "the header and test mode say only JS and TS files are printed, and a red after the first after can start the slice" {
+  local doc="$SCRIPTS/../modes/test.md" sec
+  sed -n '2,/^set -u/p' "$SCRIPTS/mutate-ranges.sh" | tr '\n' ' ' | grep -q 'VETDD_JS_TS_RE'
+  sec="$(sed -n '/^### Mutation/,/^## /p' "$doc" | tr '\n' ' ')"
+  [[ "$sec" == *'only JS and TS files'* ]] || { echo "$sec"; false; }
+  [[ "$sec" == *'the first such red that a passing `after` follows'* ]] || { echo "$sec"; false; }
 }
