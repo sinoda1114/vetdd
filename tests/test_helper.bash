@@ -53,8 +53,10 @@ utf8_locale() {
 # The suite's own switches, VETDD_REQUIRE_FIXTURES and VETDD_REAL_STRYKER, are moved to names without
 # the VETDD_ prefix before any test runs a script: evidence.sh records the names of the VETDD_
 # variables it runs under (conditions.env_keys), so a switch left there would change what tests record.
-# REQUIRE_FIXTURE_TESTS and REAL_STRYKER_TESTS are those internal names, not switches to set by hand:
-# a VETDD_ value always replaces them, and the messages name the VETDD_ switch.
+# REQUIRE_FIXTURE_TESTS and REAL_STRYKER_TESTS are those internal names. They are not unset when no
+# VETDD_ switch is given: bats sources a test file once for the whole file and again for each test, so
+# the second load sees only the moved names. Set by hand they work too, but the VETDD_ names are the
+# switches, a VETDD_ value always replaces them, and the messages name the VETDD_ switch.
 if [ -n "${VETDD_REQUIRE_FIXTURES+x}" ]; then
   export REQUIRE_FIXTURE_TESTS="$VETDD_REQUIRE_FIXTURES"; unset VETDD_REQUIRE_FIXTURES
 fi
@@ -66,8 +68,10 @@ fi
 # node, and skips when node or that bin is missing (install it with
 # `npm ci --prefix fixtures/ts-kata --ignore-scripts`). With VETDD_REQUIRE_FIXTURES=1 (the CI jobs
 # that install the fixture set it) the test fails instead, so a missing install never passes as a skip.
+# A file whose tests call it carries `# bats file_tags=fixture`, so the Linux fixture job selects it.
 needs_fixture() {
   local why=""
+  [ -n "${1:-}" ] || { echo "needs_fixture: name the fixture's bin (vitest, tsc, tsx, stryker)" >&2; return 1; }
   command -v node >/dev/null 2>&1 || why="node is not installed"
   [ -n "$why" ] || [ -x "$VETDD_ROOT/fixtures/ts-kata/node_modules/.bin/$1" ] \
     || why="fixtures/ts-kata/node_modules/.bin/$1 is missing (npm ci --prefix fixtures/ts-kata --ignore-scripts)"

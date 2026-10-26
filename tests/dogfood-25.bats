@@ -2,6 +2,7 @@
 # #25: what the 2026-10-06 dogfood run of test mode found (a fresh agent, ts-kata's February bug).
 
 load test_helper
+# bats file_tags=fixture
 
 TEST_MD="$BATS_TEST_DIRNAME/../skills/vetdd/modes/test.md"
 SKILL_MD="$BATS_TEST_DIRNAME/../skills/vetdd/SKILL.md"

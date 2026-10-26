@@ -3,6 +3,7 @@
 # 2 could not observe or usage error. Usage errors must never look like "not met".
 
 load test_helper
+# bats file_tags=fixture
 
 V="$VETDD_ROOT/fixtures/ts-kata/.claude/skills/verify-ts-kata/scripts"
 

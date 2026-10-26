@@ -7,6 +7,7 @@
 #   check-evidence       rule 10a (a stubbed oracle that still passed) and 10b (no audit for the final oracle)
 
 load test_helper
+# bats file_tags=fixture
 
 setup() {
   make_repo

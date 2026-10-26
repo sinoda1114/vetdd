@@ -1,6 +1,8 @@
 # vetdd 固有の CI（標準 CI の ci.yml に加えて）: macOS の bash 3.2 で bats、fixture の vitest と audit。
 # fixtures/ts-kata の依存を入れて、実物の vitest / tsc / tsx / Stryker を回すテストをここで走らせる（#12）。
 # 標準 CI（ci / build、Linux の bash 5）は fixture を入れないので、そこではこれらのテストは skip になる。
+# このワークフローは fixture の依存（Stryker 一式を含む）をテストの中で実行する。secrets を渡さないこと、
+# pull_request_target にしないこと（tests/hygiene.bats が検査する）。
 name: vetdd extra
 
 on:
@@ -19,7 +21,7 @@ jobs:
   bats-bash32:
     # The scripts must run on the bash 3.2 macOS ships; the standard CI runs bats on Linux's bash 5.
     runs-on: macos-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,7 +61,7 @@ jobs:
   fixture:
     # fixtures/ts-kata is the practice target the dogfood runs use: it must install, test, and audit clean.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: fixtures/ts-kata
@@ -86,14 +88,9 @@ jobs:
       - name: Install the suite's dependencies (bats)
         working-directory: .
         run: npm ci --ignore-scripts
-      - name: bats (the files that use the fixture)
+      - name: bats (the files tagged fixture)
         working-directory: .
-        run: |
-          files="$(grep -l 'needs_fixture ' tests/*.bats)"
-          [ -n "$files" ]
-          echo "$files"
-          # shellcheck disable=SC2086
-          node_modules/.bin/bats $files
+        run: node_modules/.bin/bats --filter-tags fixture tests
         env:
           VETDD_REQUIRE_FIXTURES: "1"
           VETDD_REAL_STRYKER: "1"

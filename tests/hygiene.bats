@@ -102,22 +102,35 @@ fake_bin() {
 }
 
 @test "#12: with VETDD_REQUIRE_FIXTURES=1 a missing node fails too" {
-  local d="$BATS_TEST_TMPDIR/root"
+  local d="$BATS_TEST_TMPDIR/root" bin="$BATS_TEST_TMPDIR/bin"
   fixture_suite "$d" tsc
   fake_bin "$d" tsc
-  # A PATH without node: the system directories, and this bash first.
-  [ -z "$(PATH=/usr/bin:/bin command -v node)" ] || skip "node is in /usr/bin or /bin here"
-  mkdir -p "$BATS_TEST_TMPDIR/bin"
-  ln -s "$(command -v bash)" "$BATS_TEST_TMPDIR/bin/bash"
-  inner_bats "$d" PATH="$BATS_TEST_TMPDIR/bin:/usr/bin:/bin" VETDD_REQUIRE_FIXTURES=1
+  # A PATH without node: links to every command of /bin and /usr/bin (a name in both keeps the first),
+  # none named node, and this bash.
+  mkdir -p "$bin"
+  ln -s /bin/* "$bin/" 2>/dev/null || true
+  ln -s /usr/bin/* "$bin/" 2>/dev/null || true
+  rm -f "$bin/node" "$bin/bash"
+  ln -s "$(command -v bash)" "$bin/bash"
+  inner_bats "$d" PATH="$bin" VETDD_REQUIRE_FIXTURES=1
   [ "$status" -eq 1 ] || { echo "status $status: $output"; false; }
-  [[ "$output" == *"node is not installed"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"node is not installed, and VETDD_REQUIRE_FIXTURES=1"* ]] || { echo "$output"; false; }
+}
+
+@test "#12: needs_fixture without a bin name is an error, not a pass on the .bin directory" {
+  local d="$BATS_TEST_TMPDIR/root"
+  fixture_suite "$d" ""
+  fake_bin "$d" tsc
+  inner_bats "$d"
+  [ "$status" -eq 1 ] || { echo "status $status: $output"; false; }
+  [[ "$output" == *"needs_fixture: name the fixture's bin"* ]] || { echo "$output"; false; }
 }
 
 @test "#12: every test that needs fixtures/ts-kata's dependencies asks needs_fixture, never a bare skip" {
   # A skip on the fixture's node_modules written in a test would pass CI silently again: no test file
-  # checks a node_modules bin itself, no skip names the fixture, and every file that runs the
-  # fixture's bins calls needs_fixture. (The patterns are spelled so they do not match this file.)
+  # checks a node_modules bin itself, no skip names the fixture, every file that runs the fixture's
+  # bins or its verify scripts calls needs_fixture, and every file that calls it is tagged fixture
+  # (the Linux fixture job runs the tagged files). The patterns are spelled so they miss this file.
   run sh -c 'grep -nE "\[ -x [^]]*node_module[s]" "$1"/tests/*.bats' _ "$VETDD_ROOT"
   [ "$status" -eq 1 ] || { echo "$output"; false; }
   run sh -c 'grep -hnE "(^|[^a-z_-])skip [\"'"'"']" "$1"/tests/*.bats | grep -iE "node_module[s]|ts-kat[a]|fixtur[e]|npm c[i]" | grep -v "@test"' _ "$VETDD_ROOT"
@@ -126,16 +139,44 @@ fake_bin() {
   while IFS= read -r f; do
     [ "$f" != "$VETDD_ROOT/tests/hygiene.bats" ] || continue
     n=$((n + 1))
-    grep -q 'needs_fixture ' "$f" || { echo "$f runs the fixture without needs_fixture"; false; }
-  done < <(grep -lE 'node_modules/\.bin/(vitest|tsc|tsx|stryker)|(kata|APP)/node_modules' "$VETDD_ROOT"/tests/*.bats)
-  [ "$n" -ge 5 ] || { echo "only $n files"; false; }
+    grep -q '^ *needs_fixture [a-z]' "$f" || { echo "$f runs the fixture without needs_fixture"; false; }
+  done < <(grep -lE 'node_modules/\.bin/(vitest|tsc|tsx|stryker)|(kata|APP)/node_modules|skills/verify-ts-kata' "$VETDD_ROOT"/tests/*.bats)
+  [ "$n" -ge 6 ] || { echo "only $n files"; false; }
+  n=0
+  while IFS= read -r f; do
+    [ "$f" != "$VETDD_ROOT/tests/hygiene.bats" ] || continue
+    n=$((n + 1))
+    grep -qx '# bats file_tags=fixture' "$f" || { echo "$f calls needs_fixture but is not tagged fixture"; false; }
+  done < <(grep -l 'needs_fixture' "$VETDD_ROOT"/tests/*.bats)
+  [ "$n" -ge 6 ] || { echo "only $n files"; false; }
 }
 
-@test "#12: both CI jobs that run the suite install the fixture with npm ci and set VETDD_REQUIRE_FIXTURES=1" {
-  local wf="$VETDD_ROOT/.github/workflows/extra.yml"
-  [ "$(grep -c 'npm ci --prefix fixtures/ts-kata --ignore-scripts' "$wf")" -ge 1 ]
-  [ "$(grep -c 'VETDD_REQUIRE_FIXTURES: "1"' "$wf")" -ge 2 ]
-  [ "$(grep -c 'VETDD_REAL_STRYKER: "1"' "$wf")" -ge 1 ]
-  run grep -nE 'npm install|npm i ' "$wf"
+# job_of <name>: the lines of extra.yml's job <name>, from its key to the next job's.
+job_of() {
+  awk -v job="  $1:" '$0 == job { on = 1; print; next } on && /^  [a-z0-9_-]+:$/ { on = 0 } on' \
+    "$VETDD_ROOT/.github/workflows/extra.yml"
+}
+
+@test "#12: both CI jobs that run the fixture tests install it with npm ci and set VETDD_REQUIRE_FIXTURES=1" {
+  local job
+  job="$(job_of bats-bash32)"
+  [ -n "$job" ]
+  [[ "$job" == *"run: npm ci --prefix fixtures/ts-kata --ignore-scripts"* ]] || { echo "$job"; false; }
+  [[ "$job" == *'VETDD_REQUIRE_FIXTURES: "1"'* ]] || { echo "$job"; false; }
+  [[ "$job" == *'VETDD_REAL_STRYKER: "1"'* ]] || { echo "$job"; false; }
+  job="$(job_of fixture)"
+  [ -n "$job" ]
+  # The fixture's own install (the job's default directory), the suite's, and the tagged files.
+  [ "$(printf '%s\n' "$job" | grep -c 'run: npm ci --ignore-scripts')" -eq 2 ] || { echo "$job"; false; }
+  [[ "$job" == *"run: node_modules/.bin/bats --filter-tags fixture tests"* ]] || { echo "$job"; false; }
+  [[ "$job" == *'VETDD_REQUIRE_FIXTURES: "1"'* ]] || { echo "$job"; false; }
+  [[ "$job" == *'VETDD_REAL_STRYKER: "1"'* ]] || { echo "$job"; false; }
+  run grep -nE 'npm install|npm i ' "$VETDD_ROOT/.github/workflows/extra.yml"
   [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
+@test "#12: the workflow that runs the fixture's code passes it no secrets and never runs on pull_request_target" {
+  run grep -nE '^[^#]*(secrets|pull_request_target)' "$VETDD_ROOT/.github/workflows/extra.yml"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  grep -qx '  contents: read' "$VETDD_ROOT/.github/workflows/extra.yml"
 }

@@ -7,6 +7,7 @@
 # Also: audit-note.sh --kind mutation, the copy's location rebuilt, the docs, and real Stryker (opt-in).
 
 load test_helper
+# bats file_tags=fixture
 
 # mut_section <test.md>: the "### Mutation" section of test mode on one line (#25 split it into paragraphs).
 mut_section() { sed -n '/^### Mutation/,/^## /p' "$1" | tr '\n' ' '; }

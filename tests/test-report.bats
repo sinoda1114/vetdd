@@ -5,6 +5,7 @@
 # (local paths replaced by /work/ts-kata).
 
 load test_helper
+# bats file_tags=fixture
 
 setup() {
   make_repo

@@ -4,6 +4,7 @@
 # tsc missing -> infrastructure_error.
 
 load test_helper
+# bats file_tags=fixture
 bats_require_minimum_version 1.5.0
 
 APP="$VETDD_ROOT/fixtures/ts-kata"
