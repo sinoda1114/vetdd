@@ -85,6 +85,8 @@ EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
   [[ "$pin" == *"changed after the judge graded it"* ]]
   # A meta file from before the field: the run's copy, as before.
   [[ "$pin" == *"has no \`rubric_sha256\`"* ]]
+  # judge.sh exit 8 writes no meta file and prints the sha256 instead.
+  [[ "$pin" == *"exit 8"* ]]
   layout="$(grep '^      judge.json.meta.json ' "$EVAL")"
   [[ "$layout" == *"rubric_sha256"* ]]
 }

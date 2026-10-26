@@ -191,7 +191,9 @@ arg_after() { awk -v f="$1" 'p { print; exit } $0 == f { p = 1 }' "$FAKE_ARGS"; 
   [ "$sum" = "$(sha256_of "$BATS_TEST_TMPDIR/fake/seen.rubric")" ]
 }
 
-@test "#102: rubric_sha256 is taken from the bytes sent, not from --rubric read again after the judge returns" {
+# The fake changes --rubric while it runs, so this catches a --rubric read again after the copy reached
+# the judge; that the value is the copy's own bytes is the seen.rubric assertion here and above.
+@test "#102: rubric_sha256 is taken from the bytes sent, not from --rubric read again while or after the judge runs" {
   local before; before="$(sha256_of "$RUBRIC")"
   run env FAKE_EDIT_RUBRIC="$RUBRIC" "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" \
     --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
@@ -556,6 +558,8 @@ write_reply_with_token() {
   [[ "$output" != *"ghp_"* ]]
   [ ! -e "$OUT" ]
   [ ! -e "$OUT.meta.json" ]
+  # #102: no meta file holds rubric_sha256 here, so the message gives it for a reply copied by hand.
+  [[ "$output" == *"the rubric the judge was given has sha256 $(sha256_of "$RUBRIC")"* ]]
 }
 
 @test "Z2: --allow-secrets never exempts the judge's reply: it covers input paths, not what the judge read elsewhere" {
