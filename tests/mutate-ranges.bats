@@ -206,6 +206,8 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
   [ "$output" = "src/a.js:2-2" ]
   [[ "$stderr" == *"src/b.js"*"not counted"* ]] || { echo "$stderr"; false; }
+  # The fix the red took out is counted, so it is not named (review r4).
+  [[ "$stderr" != *"src/a.js"* ]] || { echo "$stderr"; false; }
   # The surface order on the fixed tree says nothing.
   rm -rf .vetdd
   ev s2 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
@@ -214,6 +216,20 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   run --separate-stderr mr s2
   [ "$output" = "src/a.js:2-2,src/b.js:2-2" ] || { echo "$status $output $stderr"; false; }
   [[ "$stderr" != *"not counted"* ]] || { echo "$stderr"; false; }
+}
+
+@test "unfix reds of two versions before the first green: the lines of both count (review r4, Codex P2)" {
+  printf '%s\n' b1 > src/b.js && git add -A && git commit -q -m b
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf '%s\n' b1 G2 > src/b.js
+  printf 'echo stronger\n' >> test.sh
+  cal unfix s1 --file src/b.js --oracle-version v2 --oracle-file test.sh -- false
+  [ "$(sed -n 2p src/b.js)" = G2 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2,src/b.js:2-2" ]
 }
 
 @test "a red after the first after with no passing after following it yet: not a start, so the slice cannot be attributed (exit 2)" {
@@ -674,12 +690,14 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [[ "$stderr" == *"modes/test.md"* ]]
 }
 
-@test "a slice whose before and after trees are the same says so" {
+@test "a slice whose before and after trees are the same says so, and points to a new red rather than the note (review r4)" {
   red s1
   green s1
   run --separate-stderr mr s1
   [ "$status" -eq 3 ]
   [[ "$stderr" == *"same tree"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"unchanged tree"*"--oracle-version"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" != *"audit-note.sh"* ]] || { echo "$stderr"; false; }
 }
 
 # --- 8. errors ----------------------------------------------------------------------------------

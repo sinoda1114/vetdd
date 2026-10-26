@@ -127,4 +127,7 @@ EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
   [[ "$m" == *'mutate-ranges.sh" <app>-verify'* ]] || { echo "$m"; false; }
   [[ "$m" != *"on the changed lines"* ]] || { echo "$m"; false; }
   [[ "$m" == *'--mutate "$r"'* ]] || { echo "$m"; false; }
+  # B.1: the pre-change green is for an exempt or behavior-preserving change only (review r4).
+  local b; b="$(grep -- '^1\. Record `before` for each feature' "$VERIFY")"
+  [[ "$b" == *'after a defect'*'record no `after` before the change'* ]] || { echo "$b"; false; }
 }
