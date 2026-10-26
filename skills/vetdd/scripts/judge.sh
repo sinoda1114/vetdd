@@ -21,7 +21,8 @@
 # config (MCP servers, tools, a model provider of their own), AGENTS.md, personal skills, rules, and
 # sessions never reach the judge; refuse the reply if it holds a secret-shaped
 # string (lib/secret-patterns.sh, every kind: --allow-secrets covers input only); write the reply verbatim to
-# <out>, the judge metadata to <out>.meta.json, and codex's own output to
+# <out>, the judge metadata to <out>.meta.json (with rubric_sha256, the sha256 of the rubric copy the
+# judge was given, read from the bytes the copy holds), and codex's own output to
 # <git root>/.vetdd/judge-logs/<eval-id>-<run-id>.log (the git root of <out>'s directory, else of the
 # current directory; the path is printed); run check-verdict.sh with the labels, the rubric, and the
 # ids. <candidates> itself is never written.
@@ -292,6 +293,8 @@ for l in "${label_list[@]}"; do
   cp -R "$cand/$l" "$jdir/$l" || die "cannot copy $cand/$l" 1
 done
 cp "$rubric" "$jdir/rubric.md" || die "cannot copy the rubric" 1
+# The rubric as the judge gets it: the copy's bytes, so a --rubric changed later does not move it.
+rubric_sum="$(vetdd_sha256 "$jdir/rubric.md")" || die "cannot read the copy of the rubric" 1
 
 # write_path_words <file>: in an A/B eval (variants.json in the run directory above the candidates),
 # the absolute paths that would lead the judge from the copy back to variants.json, one per line,
@@ -425,9 +428,9 @@ for g in ${allow_words[@]+"${allow_words[@]}"}; do
   awords="$(jq -c --arg g "$g" '. + [$g]' <<< "$awords")" || die "cannot record --allow-words" 1
 done
 jq -n --arg model "$model" --arg effort "$effort" --arg invoked_at "$invoked_at" --arg log "$log" \
-  --argjson allowed "$allowed" --argjson awords "$awords" \
+  --argjson allowed "$allowed" --argjson awords "$awords" --arg rubric_sum "$rubric_sum" \
   '{model: $model, effort: $effort, invoked_at: $invoked_at, family: "codex", log: $log,
-    allowed_secrets: $allowed, allowed_words: $awords}' > "$out.meta.json" \
+    allowed_secrets: $allowed, allowed_words: $awords, rubric_sha256: $rubric_sum}' > "$out.meta.json" \
   || die "cannot write $out.meta.json" 1
 
 "$here/check-verdict.sh" "$out" --rubric "$jdir/rubric.md" --labels "$labels" \

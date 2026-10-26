@@ -73,7 +73,20 @@ EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
 
 @test "index.tsv has a rubric_sha256 column, of the run's copy of the rubric (M5)" {
   grep -q 'index.tsv .*promoted  rubric_sha256' "$EVAL"
-  grep -q 'runs/<run-id>/rubric.md`, in `synthesis.md` and in the `rubric_sha256` column' "$EVAL"
+  sed -n '/^## Audits/,/^## /p' "$EVAL" | grep -q 'runs/<run-id>/rubric.md'
+}
+
+@test "#102: the rubric pin copies rubric_sha256 from judge.json.meta.json and checks the run's copy against it" {
+  local pin layout
+  pin="$(grep -- '- \*\*Rubric pin\.\*\*' "$EVAL")"
+  [[ "$pin" == *'`rubric_sha256` in `judge.json.meta.json`'* ]]
+  [[ "$pin" == *'in `synthesis.md` and in the `rubric_sha256` column of its `index.tsv` line'* ]]
+  [[ "$pin" == *'`runs/<run-id>/rubric.md`'* ]]
+  [[ "$pin" == *"changed after the judge graded it"* ]]
+  # A meta file from before the field: the run's copy, as before.
+  [[ "$pin" == *"has no \`rubric_sha256\`"* ]]
+  layout="$(grep '^      judge.json.meta.json ' "$EVAL")"
+  [[ "$layout" == *"rubric_sha256"* ]]
 }
 
 # --- review round 2 ------------------------------------------------------------------------------

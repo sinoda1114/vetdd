@@ -64,6 +64,9 @@ for a in "$@"; do
   prev="$a"
 done
 cat > "$FAKE_STDIN"
+# The rubric the judge was given, byte for byte; FAKE_EDIT_RUBRIC: the --rubric file changed while the judge runs.
+[ -z "$cdir" ] || cp "$cdir/rubric.md" "$FAKE_SEEN.rubric" 2>/dev/null
+[ -z "${FAKE_EDIT_RUBRIC:-}" ] || printf 'changed while the judge ran\n' >> "$FAKE_EDIT_RUBRIC"
 [ -n "$out" ] || { echo "fake codex: no -o given" >&2; exit 64; }
 # What the judge could see from its working directory, and what TMPDIR held during the run.
 (cd "$cdir" && find . | sort > "$FAKE_SEEN.tree"
@@ -83,7 +86,7 @@ FAKE
   chmod +x "$BATS_TEST_TMPDIR/fake/codex"
   export VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/fake/codex"
   # codex runs with an allowlisted environment: the fake's own variables are kept by name.
-  export VETDD_JUDGE_KEEP_ENV="FAKE_LOGIN_ESC FAKE_VERSION_READS FAKE_ARGS FAKE_EXEC_FAIL FAKE_LOGGED_OUT FAKE_OLD_CODEX FAKE_REFRESH FAKE_REPLY FAKE_SEEN FAKE_SHIM FAKE_STDIN FAKE_USER_AUTH"
+  export VETDD_JUDGE_KEEP_ENV="FAKE_LOGIN_ESC FAKE_VERSION_READS FAKE_ARGS FAKE_EDIT_RUBRIC FAKE_EXEC_FAIL FAKE_LOGGED_OUT FAKE_OLD_CODEX FAKE_REFRESH FAKE_REPLY FAKE_SEEN FAKE_SHIM FAKE_STDIN FAKE_USER_AUTH"
   unset VETDD_MODEL_JUDGE VETDD_MODEL_JUDGE_EFFORT CODEX_HOME
   # The user's file login (isolate_git set HOME to a private directory).
   mkdir -p "$HOME/.codex" && printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
@@ -177,6 +180,34 @@ arg_after() { awk -v f="$1" 'p { print; exit } $0 == f { p = 1 }' "$FAKE_ARGS"; 
   [ "$(arg_after -m)" = "gpt-test-x" ]
   [ "$(arg_after -c)" = 'model_reasoning_effort="low"' ]
   [ "$(jq -r '.model + " " + .effort' "$OUT.meta.json")" = "gpt-test-x low" ]
+}
+
+@test "#102: the metadata records rubric_sha256, the sha256 of the rubric the judge was given" {
+  run judge
+  [ "$status" -eq 0 ]
+  local sum; sum="$(jq -r '.rubric_sha256' "$OUT.meta.json")"
+  [[ "$sum" =~ ^[0-9a-f]{64}$ ]]
+  [ "$sum" = "$(sha256_of "$RUBRIC")" ]
+  [ "$sum" = "$(sha256_of "$BATS_TEST_TMPDIR/fake/seen.rubric")" ]
+}
+
+@test "#102: rubric_sha256 is taken from the bytes sent, not from --rubric read again after the judge returns" {
+  local before; before="$(sha256_of "$RUBRIC")"
+  run env FAKE_EDIT_RUBRIC="$RUBRIC" "$SCRIPTS/judge.sh" --rubric "$RUBRIC" --candidates "$CAND" --out "$OUT" \
+    --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 0 ]
+  [ "$(sha256_of "$RUBRIC")" != "$before" ]
+  [ "$(jq -r '.rubric_sha256' "$OUT.meta.json")" = "$before" ]
+  [ "$(sha256_of "$BATS_TEST_TMPDIR/fake/seen.rubric")" = "$before" ]
+}
+
+@test "#102: a rubric that ends in blank lines is hashed as the file is, not as the prompt carries it" {
+  printf '%s' "$(cat "$RUBRIC")" > "$RUBRIC.trim" && printf '\n\n' >> "$RUBRIC.trim"
+  run "$SCRIPTS/judge.sh" --rubric "$RUBRIC.trim" --candidates "$CAND" --out "$OUT" \
+    --eval-id kata-1 --run-id 20260926-1200 --rubric-version 1
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.rubric_sha256' "$OUT.meta.json")" = "$(sha256_of "$RUBRIC.trim")" ]
+  [ "$(jq -r '.rubric_sha256' "$OUT.meta.json")" != "$(sha256_of "$RUBRIC")" ]
 }
 
 @test "the rendered prompt carries the rubric verbatim, the ids, the version, and 'none recorded'" {

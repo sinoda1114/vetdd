@@ -28,7 +28,7 @@ evals/
       blind-words.txt                the words sanitize-candidates.sh stripped (workspace, branch, variant, --strip), one per line (judge.sh --extra-words)
       rubric.md                      copy of the rubric at this version
       judge.json                     verdict, schema schemas/verdict.schema.json
-      judge.json.meta.json           judge model, effort, time, the path of its log, the --allow-secrets values, glob and kinds (allowed_secrets), and the --allow-words values (allowed_words)
+      judge.json.meta.json           judge model, effort, time, the path of its log, the --allow-secrets values, glob and kinds (allowed_secrets), the --allow-words values (allowed_words), and the sha256 of the rubric the judge was given (rubric_sha256; a file written before the field existed has none)
       synthesis.md                   parent's reading, agreement with the judge, promote decision
 ```
 
@@ -58,7 +58,7 @@ An eval has no evidence slice, so check-evidence never sees it; record each audi
 
 - **Empty candidate.** Add a third artifact to the rubric calibration (step 2): an empty output, or the task text echoed back. It must score 0 on every criterion. A criterion that gives it more observes the candidate's presence, not its work; rewrite it as an observable (a new rubric version, re-agreed).
 - **Label swap.** Grade the known-good and known-bad pair a second time with their labels swapped (`c1` and `c2` exchanged), under its own run id (`<run-id>-swap`) and output path, so the first grading and its judge log are kept. Each artifact must keep its verdict, and the winner must stay the same artifact. If the result follows the label instead, the judge is not stable on this rubric: make the criteria more observable before any candidate run.
-- **Rubric pin.** Write the sha256 of the run's copy, `runs/<run-id>/rubric.md`, in `synthesis.md` and in the `rubric_sha256` column of its `index.tsv` line. A run graded under another sha256 is graded under another rubric, whatever its version number says (principle 6: never revise the rubric after a result).
+- **Rubric pin.** `judge.sh` records the sha256 of the rubric it gave the judge, read from the bytes of its private copy, as `rubric_sha256` in `judge.json.meta.json`. Write that value in `synthesis.md` and in the `rubric_sha256` column of its `index.tsv` line, and check that the run's copy, `runs/<run-id>/rubric.md`, still has it: a copy with another sha256 was changed after the judge graded it. A meta file written before the field existed has no `rubric_sha256`; for such a run, write the sha256 of `runs/<run-id>/rubric.md`. A run graded under another sha256 is graded under another rubric, whatever its version number says (principle 6: never revise the rubric after a result).
 
 ## Regression
 
