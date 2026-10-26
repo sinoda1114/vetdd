@@ -1,0 +1,114 @@
+version: 2
+
+goal:
+  title: "第 3 周の残りのうち vetdd の流れに当たるものを直し、仕組みが機能することを回帰で示す"
+  slug: "round3-hits"
+  kind: existing_plan
+  tranche: "P1〜P4 のマージ、EDGE と済みの Issue の整理、Phase 3 と Phase 6 swarm の回帰"
+  status: done
+  intake:
+    original_request: "第 3 周の残りもゴールコマンドでバンバンやって。目的は検証駆動開発などの仕組みを作ること。その仕組みが機能するかの検証は要る。"
+    interpreted_outcome: "vetdd の流れを壊す 6 項目を直してマージし、通常の流れで当たらない Issue を閉じ、回帰で仕組みが今も機能することを実測で示す。"
+    input_shape: existing_plan
+    audience: "篠田さん"
+    authority: approved
+    proof_type: artifact
+    completion_proof: "P1〜P4 の PR がマージ済み（必須チェック緑・未解決スレッド 0・両 bash の全テスト緑）、約 24 件の Issue が理由付きで閉じた、Phase 3 と Phase 6 swarm の回帰が clean install で通った記録"
+    likely_misfire: "直したが、回帰を回さず「機能する」と言う"
+    blind_spots_considered:
+      - "P3 で skip が消えた本物の統合テストが macOS の CI で落ちる可能性"
+      - "P2 は判定を緩める変更（篠田さんの了承済み）"
+    existing_plan_facts:
+      - "memory: round3-triage-2026-10-26"
+      - "worker-brief.md（新しい scratchpad に移した版）"
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 3
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  continuous_until_full_outcome: true
+
+agents:
+  scout: unknown
+  worker: "subagent (general-purpose, worker-brief.md)"
+  judge: unknown
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P1 mutation の範囲（#71 の 2 項目、#74 の 6・7、#82 の 2）。"
+    receipt:
+      result: done
+      summary: "#119 を squash マージ（4e0f004、Closes #71、Part of #74・#82）。mutate-ranges.sh は Stryker が変異させるファイルだけを出し、after の後の unfix の赤を始点に取る。文書は exit 3 で止まる。形の変更なし。必須チェック緑、未解決スレッド 0、全テスト bash 5・3.2 とも 1481/1481。Devin 🔴 は再現テストつきで修正。残りは #115。片付けと install.sh 済み。"
+      evidence: ["gh pr view 119"]
+  - id: T002
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P2 10a の取り直し（#12）。同じオラクルで後から捕まえた監査があれば 10a の FAIL を消す。P1 の後。"
+    receipt:
+      result: done
+      summary: "#121 を squash マージ（968dfb7、Part of #12、#12 の該当項目にチェック）。同じオラクル・同じコマンドと場所で、新しい stub を 1 つ以上含む後の捕まえた監査が 10a を消す（承認より厳しい条件はレビュー 1・2 周目の穴を塞ぐため、緩める幅を狭める方向）。形の変更なし。必須チェック緑、未解決スレッド 0、全テスト bash 5・3.2 とも 1487/1487。残りは #120。片付けと install.sh 済み。"
+      evidence: ["gh pr view 121"]
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3 CI の bats-bash32 で fixture を npm ci し、本物の統合テストの skip をなくす（#12）。"
+    receipt:
+      result: done
+      summary: "#118 を squash マージ（Part of #12）。CI の bats-bash32 の skip が 30 から 2（環境によるもの）に減り、本物の vitest・tsc・Stryker のテストが CI で回るようになった（1461 件、失敗 0）。Linux の fixture ジョブでも fixture タグのテストを実行。全テスト bash 5・3.2 とも 1461/1461。残りは #117。片付けと install.sh 済み。"
+      evidence: ["CI job 121421864785（skips=2）", "gh pr view 118"]
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P4 judge.json.meta.json に rubric_sha256（#102、承認済みの形）。"
+    receipt:
+      result: done
+      summary: "#116 を squash マージ（Closes #102）。形の変更は meta.json の rubric_sha256 のみ。必須チェック緑、未解決スレッド 0、全テスト bash 5・3.2 とも 1453/1453。レビュー 3 周とも PASS。残りは #113。片付けと install.sh 済み。"
+      evidence: ["gh pr view 116"]
+  - id: T005
+    type: pm
+    assignee: PM
+    status: done
+    objective: "EDGE と済みの約 24 件を理由付きで閉じる。判断 9 件は「変えない」と記録して閉じる。"
+    receipt:
+      result: done
+      summary: "29 件が閉じた（担当が 22 件、ユーザーのアカウントで先に閉じられていた #50・#48・#44、まとめ役が #38・#40・#16・#89）。rubric の 2 項目（#40 の基準 2、#16 の 10c の帯）は #95 に移した。開いているのは #12・#71・#74・#82・#102（作業中）と #95（次の rubric の版）の 6 件。"
+      evidence: ["gh issue list --state open", "scratchpad/close/<n>.txt"]
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "回帰: clean install の後、Phase 3（test モード、ts-kata の複製）と Phase 6 swarm を回し、記録を research/ に残す。P1〜P4 のマージ後。"
+    receipt:
+      result: done
+      summary: "main 968dfb7 を install.sh で入れ直し（diff -rq 一致）。Phase 3 は最終判定 pass（high、全 6 基準 2 点）、約 5 分 45 秒。Phase 6 swarm は 1 回目 partial（返信のラベル漏れと判定者の行番号の読み違い）、返信の下書きを直した 2 回目 pass（high、全 6 基準 2 点）、約 7 分。mutate-ranges.sh（#119）が test モード・空の refactor・swarm のマージ越しで正しい範囲を出し、Phase 7 の摩擦 10・12 は再発せず。rubric_sha256（#116）は 2 回とも meta に記録。記録は research/round3-regression-log.md。"
+      evidence: ["research/round3-regression-log.md（判定の各基準の点と確信度を転記）", "local only, not committed: scratchpad の reg3-judge.json と reg6-judge2.json（判定の生ファイル。セッションの scratchpad にあり、消える）"]
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "最終の監査。"
+    receipt:
+      result: done
+      decision: complete
+      full_outcome_complete: true
+      summary: "P1〜P4 の 4 PR（#116・#118・#119・#121）がマージ済み。どれも必須チェック（ci / build・bats-bash32・fixture）緑、未解決スレッド 0、作業担当の全テストは bash 5・3.2 とも緑。マージごとに worktree とブランチを片付け、main を pull、install.sh で入れ直し済み（~/.claude/skills/vetdd は main の skills/vetdd と diff -rq で一致、git worktree list は main のみ）。Issue は 29 件を理由付きで閉じ、#113 も EDGE として閉じた。回帰は Phase 3・Phase 6 swarm とも最終判定 pass。最後の main 968dfb7 の CI・Push on main・vetdd extra も緑。"
+      evidence: ["gh pr view 116 118 119 121", "git worktree list", "diff -rq skills/vetdd ~/.claude/skills/vetdd", "gh run list --branch main (968dfb7 success x3)", "research/round3-regression-log.md"]
+      remaining_outside_scope: ["第 3 周の各パッケージの残り: #12 #74 #82 #115 #117 #120（レビューの Low・Medium）", "#95 rubric の次の版（判定者の行番号の読み違いを材料に追加）"]
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: unknown
+    task: null
+    commands: []
