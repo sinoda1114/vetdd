@@ -415,7 +415,7 @@ if [ -n "$reply_hits" ]; then
   # Keep the reply beside the log (gitignored, outside the run directory) so a human can read it.
   held="${log%.log}.reply.json"
   cp "$work/reply.json" "$held" || die "cannot keep the reply at $held" 1
-  die "the judge's reply holds text shaped like a secret; it was not written to $out (--allow-secrets does not apply to the reply). Read the judge log ($log) and the reply ($held) locally: if the hit only quotes test data you allowed, copy the reply to $out and run $here/check-verdict.sh $out --rubric $rubric --labels $labels --eval-id $eval_id --run-id $run_id --rubric-version $version; otherwise treat the run as blocked. No $out.meta.json is written: the rubric the judge was given has sha256 $rubric_sum" 8
+  die "the judge's reply holds text shaped like a secret; it was not written to $out (--allow-secrets does not apply to the reply), and no $out.meta.json is written: the rubric the judge was given has sha256 $rubric_sum. Read the judge log ($log) and the reply ($held) locally: if the hit only quotes test data you allowed, copy the reply to $out, check that $rubric still has that sha256 before you run check-verdict.sh, then run $here/check-verdict.sh $out --rubric $rubric --labels $labels --eval-id $eval_id --run-id $run_id --rubric-version $version; otherwise treat the run as blocked" 8
 fi
 
 cp "$work/reply.json" "$out" || die "cannot write $out" 1
