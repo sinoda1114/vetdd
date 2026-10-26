@@ -92,7 +92,7 @@ tasks:
     receipt:
       result: done
       summary: "main 968dfb7 を install.sh で入れ直し（diff -rq 一致）。Phase 3 は最終判定 pass（high、全 6 基準 2 点）、約 5 分 45 秒。Phase 6 swarm は 1 回目 partial（返信のラベル漏れと判定者の行番号の読み違い）、返信の下書きを直した 2 回目 pass（high、全 6 基準 2 点）、約 7 分。mutate-ranges.sh（#119）が test モード・空の refactor・swarm のマージ越しで正しい範囲を出し、Phase 7 の摩擦 10・12 は再発せず。rubric_sha256（#116）は 2 回とも meta に記録。記録は research/round3-regression-log.md。"
-      evidence: ["research/round3-regression-log.md", "scratchpad/reg3-judge.json", "scratchpad/reg6-judge2.json"]
+      evidence: ["research/round3-regression-log.md（判定の各基準の点と確信度を転記）", "local only, not committed: scratchpad の reg3-judge.json と reg6-judge2.json（判定の生ファイル。セッションの scratchpad にあり、消える）"]
   - id: T999
     type: judge
     assignee: Judge
