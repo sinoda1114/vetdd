@@ -3,6 +3,7 @@
 # 2 could not observe or usage error. Usage errors must never look like "not met".
 
 load test_helper
+# bats file_tags=fixture
 
 V="$VETDD_ROOT/fixtures/ts-kata/.claude/skills/verify-ts-kata/scripts"
 
@@ -47,8 +48,7 @@ make_bin_broken_node() {
 }
 
 needs_tsx() {
-  command -v node >/dev/null || skip "node not installed"
-  [ -x "$APP/node_modules/.bin/tsx" ] || skip "fixture dependencies not installed (npm ci in fixtures/ts-kata)"
+  needs_fixture tsx
 }
 
 # Copy the fixture outside git (node_modules linked) so a test can break its cli.

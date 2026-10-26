@@ -130,8 +130,9 @@ blind() { "$SCRIPTS/check-blind.sh" "$@"; }
 copy_kata() {
   K="$BATS_TEST_TMPDIR/work/${1:-invoice-app}"
   mkdir -p "${K%/*}"
-  cp -R "$VETDD_ROOT/fixtures/ts-kata" "$K"
-  rm -rf "$K/node_modules"
+  # Without the fixture's node_modules (CI installs it): a candidate gets the sources only.
+  mkdir -p "$K"
+  ( cd "$VETDD_ROOT/fixtures/ts-kata" && tar cf - --exclude ./node_modules . ) | ( cd "$K" && tar xf - )
   TASK="$BATS_TEST_TMPDIR/work/request.md"
   printf 'Invoices closing on the 31st get the wrong due date in February. Please fix it.\n' > "$TASK"
 }

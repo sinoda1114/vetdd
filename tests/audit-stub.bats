@@ -7,6 +7,7 @@
 #   check-evidence       rule 10a (a stubbed oracle that still passed) and 10b (no audit for the final oracle)
 
 load test_helper
+# bats file_tags=fixture
 
 setup() {
   make_repo
@@ -717,7 +718,7 @@ audit_run() {
 
 @test "integration: real vitest 5 in a ts-kata copy, through calibrate.sh stub" {
   local kata="$VETDD_ROOT/fixtures/ts-kata"
-  [ -x "$kata/node_modules/.bin/vitest" ] || skip "fixtures/ts-kata/node_modules is missing"
+  needs_fixture vitest
   local K="$BATS_TEST_TMPDIR/kata"
   mkdir -p "$K" && cp -R "$kata/package.json" "$kata/tsconfig.json" "$kata/src" "$K/"
   ln -s "$kata/node_modules" "$K/node_modules"
