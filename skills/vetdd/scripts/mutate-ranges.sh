@@ -17,8 +17,9 @@
 # slice's. A slice without a `before` starts at its first red that a passing `after` follows, when
 # calibrate.sh unfix took it (a red with no planted record whose changed files hold HEAD's content,
 # HEAD the same at that after: an older planted red without the record can be taken for one), even
-# after an earlier `after` on the fixed tree (modes/test.md, a surface slice; stderr names what such
-# an `after` held that the red's does not); otherwise (a refactor, a behavior-preserving change, its
+# after an earlier `after` on the fixed tree (modes/test.md, a surface slice; an earlier `after` that
+# differs from the red's outside the files the red took out makes it a refactor from that `after`);
+# otherwise (a refactor, a behavior-preserving change, its
 # red planted) it has one step, its first passing `after` to its last. The lines each step wrote are
 # taken exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10 -C10, so
 # another slice between two versions, a later slice, or a refactor moves the lines without adding its
@@ -192,10 +193,12 @@ else
     # Compared with the first passing after that follows the red.
     elif unfix_red "$ct" "$ft" "$ch" "$fh" "$fs"; then
       first="$cs"
-      # An after before the red is ignored: say what it held that is not counted, the files where it
-      # differs from the after that follows the red and the red does not (the fix the red took out is
-      # counted). Only a warning: a tree git gc removed skips it.
-      if [ "$a0s" -lt "$first" ] && [ "$(git cat-file -t "$a0t" 2>/dev/null)" = tree ]; then
+      # A red after an earlier after starts the slice only when that after was on the fixed tree (#82:
+      # after, unfix red, after): it may differ from the after that follows the red only in the files
+      # the red took out. Otherwise (a refactor, then a red of a stronger test that looks like an
+      # unfix) the slice is taken as a refactor from that first after, so nothing it wrote is lost.
+      if [ "$a0s" -lt "$cs" ]; then
+        check_tree "$a0t" "after run (run $a0s)"
         git diff-tree -r -z --no-renames --name-only "$ct" "$ft" | tr '\0' '\n' > "$tmp/redfix"
         early="$(git diff-tree -r -z --no-renames --name-only "$a0t" "$ft" | tr '\0' '\n' \
           | while IFS= read -r p; do
@@ -203,7 +206,10 @@ else
               is_oracle "$p" && continue
               LC_ALL=C grep -Fxq -- "$p" "$tmp/redfix" || printf '%s ' "$p"
             done)"
-        [ -z "$early" ] || say "slice '$slice': its passing after run $a0s, before its unfix red (run $first), differs from the after that follows the red (run $fs) in ${early% }: what changed there before the red is not counted (record that after on the fixed tree, or take the red first)"
+        if [ -n "$early" ]; then
+          first=""
+          why="its red calibration (run $cs) comes after a passing after (run $a0s) that differs from the after that follows the red (run $fs) in ${early% }, outside what the red took out, so that after was not on the fixed tree"
+        fi
       fi
     else why="its red calibration (run $cs) is not an unfix red: $unfix_why"; fi
   fi

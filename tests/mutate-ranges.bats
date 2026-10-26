@@ -197,7 +197,7 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/a.js:2-2" ] || { echo "$status $output $stderr"; false; }
 }
 
-@test "an after before the red that differs from the after after it: stderr names what is not counted (review r3)" {
+@test "an after before the red that differs from the after after it (not the fixed tree): a refactor from that after, so nothing is lost (review r3, r6)" {
   printf '%s\n' b1 > src/b.js && git add -A && git commit -q -m b
   ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
   printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
@@ -206,10 +206,25 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   green s1
   run --separate-stderr mr s1
   [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
-  [ "$output" = "src/a.js:2-2" ]
-  [[ "$stderr" == *"src/b.js"*"not counted"* ]] || { echo "$stderr"; false; }
-  # The fix the red took out is counted, so it is not named (review r4).
-  [[ "$stderr" != *"src/a.js"* ]] || { echo "$stderr"; false; }
+  [ "$output" = "src/a.js:2-2,src/b.js:2-2" ]
+  [[ "$stderr" == *"src/b.js"*"refactor"* ]] || { echo "$stderr"; false; }
+  # A refactor, then a plain red of a stronger test, then an edit of a file HEAD still holds: the red
+  # looks like an unfix of that file, but the after before it is not on that tree (review r6).
+  rm -rf .vetdd
+  git checkout -q -- src/a.js src/b.js
+  ev s3 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  printf '%s\n' a1 a2 R3 a4 a5 > src/a.js
+  green s3
+  printf 'echo stronger\n' >> test.sh
+  ev s3 calibration --oracle-version v2 -- false >/dev/null 2>&1
+  printf '%s\n' b1 B2 > src/b.js
+  green s3
+  run --separate-stderr mr s3
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:3-3,src/b.js:2-2" ]
+  git checkout -q -- test.sh src/a.js src/b.js
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  printf '%s\n' b1 B2 > src/b.js
   # The surface order on the fixed tree says nothing.
   rm -rf .vetdd
   ev s2 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
