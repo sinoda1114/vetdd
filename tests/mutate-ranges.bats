@@ -177,6 +177,45 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/a.js:2-3" ]
 }
 
+@test "a v1 unfix red, then a v2 red planted before the first green, then an after: the start stays the unfix red (review r3, Codex P2)" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf 'echo stronger\n' >> test.sh
+  cal plant s1 --file src/a.js --oracle-version v2 --oracle-file test.sh
+  printf '%s\n' a1 F2 a3 BAD a5 > src/a.js
+  cal planted s1 --oracle-file test.sh -- false
+  [ "$(sed -n 4p src/a.js)" = a4 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  # Close's green again on the same tree moves nothing.
+  green s1
+  run --separate-stderr mr s1
+  [ "$output" = "src/a.js:2-2" ] || { echo "$status $output $stderr"; false; }
+}
+
+@test "an after before the red that differs from the after after it: stderr names what is not counted (review r3)" {
+  printf '%s\n' b1 > src/b.js && git add -A && git commit -q -m b
+  ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  printf '%s\n' b1 B2 > src/b.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  [[ "$stderr" == *"src/b.js"*"not counted"* ]] || { echo "$stderr"; false; }
+  # The surface order on the fixed tree says nothing.
+  rm -rf .vetdd
+  ev s2 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  cal unfix s2 --file src/a.js --file src/b.js --oracle-version v1 --oracle-file test.sh -- false
+  green s2
+  run --separate-stderr mr s2
+  [ "$output" = "src/a.js:2-2,src/b.js:2-2" ] || { echo "$status $output $stderr"; false; }
+  [[ "$stderr" != *"not counted"* ]] || { echo "$stderr"; false; }
+}
+
 @test "a red after the first after with no passing after following it yet: not a start, so the slice cannot be attributed (exit 2)" {
   printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
   ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
@@ -879,5 +918,5 @@ b.js"
   grep -q '^VETDD_STRYKER_RE=' "$SCRIPTS/lib/common.sh"
   sec="$(sed -n '/^### Mutation/,/^## /p' "$doc" | tr '\n' ' ')"
   [[ "$sec" == *'only files Stryker mutates'*'.vue'* ]] || { echo "$sec"; false; }
-  [[ "$sec" == *'the one right before the first passing `after` that follows a red'* ]] || { echo "$sec"; false; }
+  [[ "$sec" == *'the latest one before the first passing `after` that follows a red'* ]] || { echo "$sec"; false; }
 }
