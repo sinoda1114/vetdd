@@ -207,7 +207,7 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   run --separate-stderr mr s1
   [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
   [ "$output" = "src/a.js:2-2,src/b.js:2-2" ]
-  [[ "$stderr" == *"src/b.js"*"refactor"* ]] || { echo "$stderr"; false; }
+  [[ "$stderr" == *"src/a.js"*"refactor"* ]] || { echo "$stderr"; false; }
   # A refactor, then a plain red of a stronger test, then an edit of a file HEAD still holds: the red
   # looks like an unfix of that file, but the after before it is not on that tree (review r6).
   rm -rf .vetdd
@@ -233,6 +233,25 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   run --separate-stderr mr s2
   [ "$output" = "src/a.js:2-2,src/b.js:2-2" ] || { echo "$status $output $stderr"; false; }
   [[ "$stderr" != *"not counted"* ]] || { echo "$stderr"; false; }
+}
+
+@test "surface order with another slice editing another file between the after and the unfix red: only the fix is the slice's (PR #119, Devin)" {
+  printf '%s\n' b1 > src/b.js && git add -A && git commit -q -m b
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  ev s1 after --seam unit --oracle-version v1 --oracle-file test.sh -- true >/dev/null 2>&1
+  # Another slice adds a line to b.js.
+  red s2
+  printf '%s\n' b1 B2 > src/b.js
+  green s2
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  [ "$(sed -n 2p src/a.js)" = F2 ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  [[ "$stderr" != *"refactor"* ]] || { echo "$stderr"; false; }
+  run --separate-stderr mr s2
+  [ "$output" = "src/b.js:2-2" ] || { echo "$status $output $stderr"; false; }
 }
 
 @test "a v1 unfix red, then a plain v2 red on the fixed tree, then an after: the start stays the unfix red (review r5, Codex P2)" {

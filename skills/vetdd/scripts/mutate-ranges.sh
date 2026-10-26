@@ -18,7 +18,7 @@
 # calibrate.sh unfix took it (a red with no planted record whose changed files hold HEAD's content,
 # HEAD the same at that after: an older planted red without the record can be taken for one), even
 # after an earlier `after` on the fixed tree (modes/test.md, a surface slice; an earlier `after` that
-# differs from the red's outside the files the red took out makes it a refactor from that `after`);
+# does not hold the files the red took out as the red's `after` does makes it a refactor from it);
 # otherwise (a refactor, a behavior-preserving change, its
 # red planted) it has one step, its first passing `after` to its last. The lines each step wrote are
 # taken exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10 -C10, so
@@ -156,19 +156,20 @@ unfix_red() {
   [ "$n" -gt 0 ]
 }
 
-# not_taken_out <earlier after tree> <tree of the after that follows the red> <red tree>: the product
-# files (not oracle files, not .vetdd/) where the first two trees differ and the red does not differ
-# from the second, each followed by a space. A function, not a loop inside $(...): bash 3.2 misreads
-# the ) of a case pattern there.
-not_taken_out() {
-  local p
-  git diff-tree -r -z --no-renames --name-only "$3" "$2" | tr '\0' '\n' > "$tmp/redfix"
-  git diff-tree -r -z --no-renames --name-only "$1" "$2" | tr '\0' '\n' > "$tmp/early"
-  while IFS= read -r p; do
-    case "$p" in ''|.vetdd/*) continue ;; esac
+# not_fixed_before <earlier after tree> <tree of the after that follows the red> <red tree>: the
+# product files (not oracle files, not .vetdd/) the red took out (they differ between the red and the
+# after that follows it) that the earlier after did not hold as that after does, each followed by a
+# space. Empty when the earlier after was on the fixed tree; a change to any other file in between
+# (another slice's) does not count (PR #119, Devin). A function, not a loop inside $(...): bash 3.2
+# misreads the ) of a case pattern there.
+not_fixed_before() {
+  local rec p
+  git diff-tree -r -z --no-renames --raw "$3" "$2" > "$tmp/redfix" || return 1
+  while IFS= read -r -d '' rec && IFS= read -r -d '' p; do
+    case "$p" in .vetdd/*) continue ;; esac
     is_oracle "$p" && continue
-    LC_ALL=C grep -Fxq -- "$p" "$tmp/redfix" || printf '%s ' "$p"
-  done < "$tmp/early"
+    [ "$(entry_in "$1" "$p")" = "$(entry_in "$2" "$p")" ] || printf '%s ' "$p"
+  done < "$tmp/redfix"
 }
 
 # Where the slice's own change starts: its first accepted before; without one, its first red
@@ -214,10 +215,10 @@ else
       # unfix) the slice is taken as a refactor from that first after, so nothing it wrote is lost.
       if [ "$a0s" -lt "$cs" ]; then
         check_tree "$a0t" "after run (run $a0s)"
-        early="$(not_taken_out "$a0t" "$ft" "$ct")"
+        early="$(not_fixed_before "$a0t" "$ft" "$ct")" || die "could not compare the trees of runs $a0s, $cs and $fs"
         if [ -n "$early" ]; then
           first=""
-          why="its red calibration (run $cs) comes after a passing after (run $a0s) that differs from the after that follows the red (run $fs) in ${early% }, outside what the red took out, so that after was not on the fixed tree"
+          why="its red calibration (run $cs) comes after a passing after (run $a0s) that does not hold the fix the red took out as the after that follows the red (run $fs) does, in ${early% }, so that after was not on the fixed tree"
         fi
       fi
     else why="its red calibration (run $cs) is not an unfix red: $unfix_why"; fi
