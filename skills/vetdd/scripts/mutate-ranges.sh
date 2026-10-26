@@ -156,6 +156,21 @@ unfix_red() {
   [ "$n" -gt 0 ]
 }
 
+# not_taken_out <earlier after tree> <tree of the after that follows the red> <red tree>: the product
+# files (not oracle files, not .vetdd/) where the first two trees differ and the red does not differ
+# from the second, each followed by a space. A function, not a loop inside $(...): bash 3.2 misreads
+# the ) of a case pattern there.
+not_taken_out() {
+  local p
+  git diff-tree -r -z --no-renames --name-only "$3" "$2" | tr '\0' '\n' > "$tmp/redfix"
+  git diff-tree -r -z --no-renames --name-only "$1" "$2" | tr '\0' '\n' > "$tmp/early"
+  while IFS= read -r p; do
+    case "$p" in ''|.vetdd/*) continue ;; esac
+    is_oracle "$p" && continue
+    LC_ALL=C grep -Fxq -- "$p" "$tmp/redfix" || printf '%s ' "$p"
+  done < "$tmp/early"
+}
+
 # Where the slice's own change starts: its first accepted before; without one, its first red
 # calibration that a passing after follows, when that red is an unfix (the fix taken
 # out), even when an after came before it (an after on the fixed tree, then the red with calibrate.sh unfix: a surface
@@ -199,13 +214,7 @@ else
       # unfix) the slice is taken as a refactor from that first after, so nothing it wrote is lost.
       if [ "$a0s" -lt "$cs" ]; then
         check_tree "$a0t" "after run (run $a0s)"
-        git diff-tree -r -z --no-renames --name-only "$ct" "$ft" | tr '\0' '\n' > "$tmp/redfix"
-        early="$(git diff-tree -r -z --no-renames --name-only "$a0t" "$ft" | tr '\0' '\n' \
-          | while IFS= read -r p; do
-              case "$p" in ''|.vetdd/*) continue ;; esac
-              is_oracle "$p" && continue
-              LC_ALL=C grep -Fxq -- "$p" "$tmp/redfix" || printf '%s ' "$p"
-            done)"
+        early="$(not_taken_out "$a0t" "$ft" "$ct")"
         if [ -n "$early" ]; then
           first=""
           why="its red calibration (run $cs) comes after a passing after (run $a0s) that differs from the after that follows the red (run $fs) in ${early% }, outside what the red took out, so that after was not on the fixed tree"
