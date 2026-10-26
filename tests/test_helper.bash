@@ -50,6 +50,33 @@ utf8_locale() {
   [ -z "$l" ] || printf '%s\n' "$l"
 }
 
+# The suite's own switches, VETDD_REQUIRE_FIXTURES and VETDD_REAL_STRYKER, are moved to names without
+# the VETDD_ prefix before any test runs a script: evidence.sh records the names of the VETDD_
+# variables it runs under (conditions.env_keys), so a switch left there would change what tests record.
+if [ -n "${VETDD_REQUIRE_FIXTURES+x}" ]; then
+  export REQUIRE_FIXTURE_TESTS="$VETDD_REQUIRE_FIXTURES"; unset VETDD_REQUIRE_FIXTURES
+fi
+if [ -n "${VETDD_REAL_STRYKER+x}" ]; then
+  export REAL_STRYKER_TESTS="$VETDD_REAL_STRYKER"; unset VETDD_REAL_STRYKER
+fi
+
+# needs_fixture <bin>: the test drives fixtures/ts-kata's own <bin> (vitest, tsc, tsx, stryker) under
+# node, and skips when node or that bin is missing (install it with
+# `npm ci --prefix fixtures/ts-kata --ignore-scripts`). With VETDD_REQUIRE_FIXTURES=1 (the CI jobs
+# that install the fixture set it) the test fails instead, so a missing install never passes as a skip.
+needs_fixture() {
+  local why=""
+  command -v node >/dev/null 2>&1 || why="node is not installed"
+  [ -n "$why" ] || [ -x "$VETDD_ROOT/fixtures/ts-kata/node_modules/.bin/$1" ] \
+    || why="fixtures/ts-kata/node_modules/.bin/$1 is missing (npm ci --prefix fixtures/ts-kata --ignore-scripts)"
+  [ -n "$why" ] || return 0
+  if [ "${REQUIRE_FIXTURE_TESTS:-}" = 1 ]; then
+    echo "$why, and VETDD_REQUIRE_FIXTURES=1" >&2
+    return 1
+  fi
+  skip "$why"
+}
+
 meta() { cat "$REPO/.vetdd/evidence/$1/meta.json"; }
 
 # jq query against a slice's meta.json

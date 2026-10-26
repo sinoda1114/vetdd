@@ -66,7 +66,7 @@ section() { awk -v h="$1" '$0 ~ "^## " { on = ($0 ~ h) } on' "$TEST_MD"; }
 }
 
 @test "verify-due.sh --date drives the February case: the buggy kata is observed and not met (exit 1)" {
-  [ -x "$BATS_TEST_DIRNAME/../fixtures/ts-kata/node_modules/.bin/tsx" ] || skip "fixtures/ts-kata/node_modules is missing (npm ci there)"
+  needs_fixture tsx
   local A="$BATS_TEST_TMPDIR/artifacts"
   VETDD_ARTIFACTS="$A" run "$V/verify-due.sh" --date 2026-02-15 --expect 'closing: 2026-02-28' --expect-due 'due: 2026-03-30'
   [ "$status" -eq 1 ] || { echo "$output"; false; }
@@ -87,7 +87,7 @@ section() { awk -v h="$1" '$0 ~ "^## " { on = ($0 ~ h) } on' "$TEST_MD"; }
   run "$V/verify-due.sh" --date 2026-02-15
   [ "$status" -eq 2 ]
   [[ "$output" == *"--expect"* ]]
-  [ -x "$BATS_TEST_DIRNAME/../fixtures/ts-kata/node_modules/.bin/tsx" ] || skip "fixtures/ts-kata/node_modules is missing (npm ci there)"
+  needs_fixture tsx
   VETDD_ARTIFACTS="$BATS_TEST_TMPDIR/a" run "$V/verify-due.sh" --date 2026-02-30 --expect 'closing: x' --expect-due 'due: y'
   [ "$status" -eq 2 ] || { echo "$output"; false; }
 }

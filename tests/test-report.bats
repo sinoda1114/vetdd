@@ -174,7 +174,7 @@ write_report() { printf 'mkdir -p .vetdd/reports && cp "%s" %s; exit %s' "$1" "$
 
 @test "integration: real vitest in a ts-kata copy, through evidence.sh" {
   local kata="$VETDD_ROOT/fixtures/ts-kata"
-  [ -x "$kata/node_modules/.bin/vitest" ] || skip "fixtures/ts-kata/node_modules is missing"
+  needs_fixture vitest
   local K="$BATS_TEST_TMPDIR/kata"
   mkdir -p "$K" && cp -R "$kata/package.json" "$kata/tsconfig.json" "$kata/src" "$K/"
   ln -s "$kata/node_modules" "$K/node_modules"

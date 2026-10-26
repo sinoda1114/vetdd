@@ -10,8 +10,7 @@ APP="$VETDD_ROOT/fixtures/ts-kata"
 LADDER="$VETDD_ROOT/skills/vetdd/references/feedback-loop-ladder.md"
 
 needs_tsc() {
-  command -v node >/dev/null || skip "node not installed"
-  [ -x "$APP/node_modules/.bin/tsc" ] || skip "fixture dependencies not installed (npm ci in fixtures/ts-kata)"
+  needs_fixture tsc
 }
 
 # Copy the fixture into a fresh git repository (node_modules linked, ignored) with a type-level test:

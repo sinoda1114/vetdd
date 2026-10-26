@@ -228,9 +228,9 @@ no_control() { ! printf '%s' "$1" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\
 }
 
 @test "integration (VETDD_REAL_STRYKER=1): the fixed lastDayOfMonth, its mutants killed by the slice's test, judged OK by 10c (#20)" {
-  [ "${VETDD_REAL_STRYKER:-}" = 1 ] || skip "set VETDD_REAL_STRYKER=1 to run the real Stryker"
+  [ "${REAL_STRYKER_TESTS:-}" = 1 ] || skip "set VETDD_REAL_STRYKER=1 to run the real Stryker"
   local kata="$VETDD_ROOT/fixtures/ts-kata"
-  [ -x "$kata/node_modules/.bin/stryker" ] || skip "fixtures/ts-kata/node_modules has no Stryker (npm ci there)"
+  needs_fixture stryker
   local K="$BATS_TEST_TMPDIR/kata" first last
   mkdir -p "$K" && cp -R "$kata/package.json" "$kata/tsconfig.json" "$kata/stryker.config.mjs" "$kata/.gitignore" "$kata/src" "$K/"
   ln -s "$kata/node_modules" "$K/node_modules"
@@ -474,11 +474,11 @@ SH
 # kata_cfg <VETDD_MUTATION_TESTS value or "-unset">: the command the ts-kata config builds, or its error,
 # evaluated in a scratch project that holds the ts-kata config, its node_modules, and each named test
 # file (with one test, so vitest lists it), so the paths a test makes up exist.
-# need_kata_vitest: skip a test that reaches vitest list when ts-kata's dependencies are not installed
-# (a clean checkout, CI); the checks the config makes before vitest list run without them.
+# need_kata_vitest: a test that reaches vitest list needs ts-kata's dependencies (needs_fixture: a skip
+# in a clean checkout, a failure under VETDD_REQUIRE_FIXTURES=1); the checks the config makes before
+# vitest list run without them.
 need_kata_vitest() {
-  command -v node >/dev/null || skip "node not installed"
-  [ -x "$VETDD_ROOT/fixtures/ts-kata/node_modules/.bin/vitest" ] || skip "fixtures/ts-kata/node_modules is missing (npm ci there)"
+  needs_fixture vitest
 }
 # fake_npx: print a directory holding an npx that plays `npx --no-install vitest list <path> --filesOnly
 # --json` (it lists <path> when it is a file of the current directory, else nothing), so the config's
