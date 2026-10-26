@@ -130,4 +130,8 @@ EVAL="$BATS_TEST_DIRNAME/../skills/vetdd/modes/eval.md"
   # B.1: the pre-change green is for an exempt or behavior-preserving change only (review r4).
   local b; b="$(grep -- '^1\. Record `before` for each feature' "$VERIFY")"
   [[ "$b" == *'after a defect'*'record no `after` before the change'* ]] || { echo "$b"; false; }
+  # The wrapper and the Stryker config are committed before B.1, so A.4's red is not taken for an
+  # unfix of them (review r5); exit 2 names the same-tree case.
+  [[ "$m" == *'commit them before'* ]] || { echo "$m"; false; }
+  [[ "$m" == *'exit 2'*'"the same tree"'* ]] || { echo "$m"; false; }
 }

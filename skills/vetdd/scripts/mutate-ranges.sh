@@ -14,11 +14,11 @@
 # are not, and an `after` recorded again within a version moves nothing. A version whose red
 # calibrate.sh planted (its run records planted: {patch, sha256, files}) starts at that red's tree
 # before the plant (the planted patch taken back out), so the line its `after` puts back is not the
-# slice's. A slice without a `before` starts at the latest red not planted before the first passing
-# `after` that follows a red, when calibrate.sh unfix took it (a red with no planted record whose
-# changed files hold HEAD's content, HEAD the same at that after: an older planted red without the
-# record can be taken for one), even after an earlier `after` on the fixed tree (modes/test.md, a
-# surface slice; stderr names what such an `after` held that the red's does not); otherwise (a refactor, a behavior-preserving change, its
+# slice's. A slice without a `before` starts at its first red that a passing `after` follows, when
+# calibrate.sh unfix took it (a red with no planted record whose changed files hold HEAD's content,
+# HEAD the same at that after: an older planted red without the record can be taken for one), even
+# after an earlier `after` on the fixed tree (modes/test.md, a surface slice; stderr names what such
+# an `after` held that the red's does not); otherwise (a refactor, a behavior-preserving change, its
 # red planted) it has one step, its first passing `after` to its last. The lines each step wrote are
 # taken exactly (plain blame of its `after`); the edits after it are followed with -w -M10 -C10 -C10, so
 # another slice between two versions, a later slice, or a refactor moves the lines without adding its
@@ -38,9 +38,10 @@
 # !), one a shell reads (' " ` $ ; & | < >), or one with a newline or another control, bidirectional,
 # or invisible character is refused (exit 2), so the value is one line and safe inside single quotes.
 # Exit 0 when ranges were printed; 2 on usage errors and when the evidence cannot be attributed (no
-# before run or unfix red and fewer than two passing afters, no passing after after the red, malformed
-# evidence, a tree object git gc removed); 3 when there is nothing to mutate (nothing printed: a
-# slice that changed only its oracle files, or no line of the slice is left): record why with
+# before run or unfix red and fewer than two passing afters, no passing after after the red, every
+# red-to-green on one tree, malformed evidence, a tree object git gc removed); 3 when there is nothing to mutate (nothing printed: a
+# slice that changed only its oracle files, an empty refactor, no file Stryker mutates, or no line of
+# the slice is left; stderr says which): record why with
 # audit-note.sh <slice> --kind mutation --not-applicable --reason-file <path> (modes/test.md).
 set -u
 
@@ -154,8 +155,8 @@ unfix_red() {
   [ "$n" -gt 0 ]
 }
 
-# Where the slice's own change starts: its first accepted before; without one, the latest red
-# calibration not planted before the first passing after that follows a red, when that red is an unfix (the fix taken
+# Where the slice's own change starts: its first accepted before; without one, its first red
+# calibration that a passing after follows, when that red is an unfix (the fix taken
 # out), even when an after came before it (an after on the fixed tree, then the red with calibrate.sh unfix: a surface
 # slice, #82); otherwise (a refactor or a behavior-preserving change, its red planted) one step from
 # its first passing after to its last.
@@ -168,20 +169,14 @@ shape="$(jq -r '
   | if $b != null then "before \($b.seq | val)"
     else
       [$r[] | select(ok)] as $a
-      # The first passing after that follows a red, and the latest red before it that calibrate.sh did
-      # not plant (no passing after lies between them): an older red (the A.4 red of verify mode, reused
-      # before an oracle bump and its new red) is not the start, and a red planted for a later version
-      # before the first green passes the start on to the unfix red before it. Only planted reds: the
-      # latest of them, so the reason says so. The red is compared with that after; the older reds not
-      # planted, newest first ("<tree>:<seq>:<head>,..."), extend an unfix start back while each is an
-      # unfix red too (unfix reds of two versions before the first green).
-      | ([$r[] | select(red) | .seq as $s | $a[] | select(.seq > $s)] | first) as $f
-      | (if $f == null then null else [$r[] | select(red and .seq < $f.seq)] end) as $rs
-      | (if $f == null then null else (([$rs[] | select(has("planted") | not)] | last) // ($rs | last)) end) as $c
-      | (if $c == null then [] else [$rs[] | select(.seq < $c.seq and (has("planted") | not))] | reverse end) as $older
-      | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val) \(if $c != null and ($c | has("planted")) then "planted" else "-" end) \($f.tree.tree_hash | val) \($f.seq | val) \($f.tree.head_sha | val) \(if ($older | length) == 0 then "-" else ([$older[] | "\(.tree.tree_hash | val):\(.seq | val):\(.tree.head_sha | val)"] | join(",")) end)"
+      # The first red that a passing after follows (also after an earlier after: #82), and that after,
+      # which the red is compared with. The first one: later reds of other versions before the first
+      # green (planted, plain, or unfix ones) pass the start on (the segments below).
+      | ([$r[] | select(red) | .seq as $s | select(any($a[]; .seq > $s))] | first) as $c
+      | (if $c == null then null else ([$a[] | select(.seq > $c.seq)] | first) end) as $f
+      | "nobefore \($a | length) \($a[0].tree.tree_hash | val) \($a[0].seq | val) \($a[-1].tree.tree_hash | val) \($a[-1].seq | val) \($c.tree.tree_hash | val) \($c.seq | val) \($c.tree.head_sha | val) \(if $c != null and ($c | has("planted")) then "planted" else "-" end) \($f.tree.tree_hash | val) \($f.seq | val) \($f.tree.head_sha | val)"
     end' "$meta")" || die "cannot read the runs of $rel"
-read -r kind n_after a0t a0s alt als ct cs ch cp ft fs fh older <<EOF
+read -r kind n_after a0t a0s alt als ct cs ch cp ft fs fh <<EOF
 $shape
 EOF
 first=""; refactor=0; why="no passing after follows a red calibration of it"
@@ -196,22 +191,12 @@ else
     if [ "$cp" = planted ]; then why="its red calibration (run $cs) was planted (calibrate.sh plant and planted, as its record says)"
     # Compared with the first passing after that follows the red.
     elif unfix_red "$ct" "$ft" "$ch" "$fh" "$fs"; then
-      first="$cs"; st0="$ct"
-      # An older red not planted that is an unfix red too (an earlier version's, before the first
-      # green) moves the start back to it, so the lines unfixed there count as well.
-      if [ "$older" != - ]; then
-        for o in $(printf '%s' "$older" | tr ',' ' '); do
-          ot="${o%%:*}"; rest="${o#*:}"; os="${rest%%:*}"; oh="${rest#*:}"
-          check_tree "$ot" "red calibration (run $os)"
-          unfix_red "$ot" "$ft" "$oh" "$fh" "$fs" || break
-          first="$os"; st0="$ot"
-        done
-      fi
+      first="$cs"
       # An after before the red is ignored: say what it held that is not counted, the files where it
       # differs from the after that follows the red and the red does not (the fix the red took out is
       # counted). Only a warning: a tree git gc removed skips it.
       if [ "$a0s" -lt "$first" ] && [ "$(git cat-file -t "$a0t" 2>/dev/null)" = tree ]; then
-        git diff-tree -r -z --no-renames --name-only "$st0" "$ft" | tr '\0' '\n' > "$tmp/redfix"
+        git diff-tree -r -z --no-renames --name-only "$ct" "$ft" | tr '\0' '\n' > "$tmp/redfix"
         early="$(git diff-tree -r -z --no-renames --name-only "$a0t" "$ft" | tr '\0' '\n' \
           | while IFS= read -r p; do
               case "$p" in ''|.vetdd/*) continue ;; esac
@@ -360,10 +345,12 @@ if [ ${#changed[@]} -gt 1 ]; then
 fi
 
 if [ "$product" -eq 0 ]; then
-  if [ "$same" -eq 1 ]; then
-    say "each red-to-green of slice '$slice' recorded the same tree at its start and its end: its first passing after was recorded on the unchanged tree (before the change, or before the test), so the slice's change is not on file; when it changed product code since, take a red of a new oracle version (oracle-version.sh, then calibrate.sh unfix <slice> --file <product file> --oracle-version <new>) and record its after"
+  if [ "$same" -eq 1 ] && [ "$refactor" -eq 1 ]; then
+    say "slice '$slice' recorded all its passing afters on the same tree: an empty refactor; record why there is nothing to mutate with audit-note.sh $slice --kind mutation --not-applicable --reason-file <path> (modes/test.md, Audits › Mutation)"
     exit 3
   fi
+  # Not "nothing to mutate": the change is not on file, so the not-applicable note would skip it.
+  [ "$same" -eq 0 ] || die "each red-to-green of slice '$slice' recorded the same tree at its start and its end: its first passing after was recorded on the unchanged tree (before the change, or before the test), so the slice's change is not on file; take a red of a new oracle version (oracle-version.sh, then calibrate.sh unfix $slice --file <product file> --oracle-version <new>) and record its after"
   say "slice '$slice' changed no product file (only its oracle files): there is nothing to mutate; record why with audit-note.sh $slice --kind mutation --not-applicable --reason-file <path> (modes/test.md, Audits › Mutation: a slice that only adds tests)"
   exit 3
 fi

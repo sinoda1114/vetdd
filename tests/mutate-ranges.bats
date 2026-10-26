@@ -152,9 +152,11 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   # A.4 on a clean tree.
   ev s1-verify calibration --oracle-version 1 --oracle-file test.sh --infra-exit 2 -- false >/dev/null 2>&1
   ev s1-verify calibration -- true >/dev/null 2>&1
-  # The wrapper (an oracle file) and the Stryker config, not committed: a new oracle version.
+  # The wrapper (an oracle file) and the Stryker config, committed before B.1 as verify.md says: a
+  # new oracle version. HEAD moved since A.4, so A.4's red is not an unfix of them.
   printf 'exit 0\n' > wrap.sh
   printf '%s\n' 'export default { testRunner: "command" };' > stryker.config.mjs
+  git add wrap.sh stryker.config.mjs && git commit -q -m 'verify wrapper and Stryker config'
   ev s1-verify calibration --oracle-version 2 --oracle-file test.sh --oracle-file wrap.sh --infra-exit 2 -- false >/dev/null 2>&1
   green s1-verify
   printf '%s\n' a1 a2 a3 X4 a5 > src/a.js
@@ -164,7 +166,7 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [ "$output" = "src/a.js:4-4" ]
 }
 
-@test "the start is the red right before the first passing after: an unfix red of a later version after an earlier one" {
+@test "the start is the first red that a passing after follows: an unfix red of a later version after an earlier one" {
   printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
   cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
   printf '%s\n' a1 F2 F3 a4 a5 > src/a.js
@@ -216,6 +218,20 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   run --separate-stderr mr s2
   [ "$output" = "src/a.js:2-2,src/b.js:2-2" ] || { echo "$status $output $stderr"; false; }
   [[ "$stderr" != *"not counted"* ]] || { echo "$stderr"; false; }
+}
+
+@test "a v1 unfix red, then a plain v2 red on the fixed tree, then an after: the start stays the unfix red (review r5, Codex P2)" {
+  printf '%s\n' a1 F2 a3 a4 a5 > src/a.js
+  cal unfix s1 --file src/a.js --oracle-version v1 --oracle-file test.sh -- false
+  printf 'echo stronger\n' >> test.sh
+  ev s1 calibration --oracle-version v2 -- false >/dev/null 2>&1
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 0 ] || { echo "$status $output $stderr"; false; }
+  [ "$output" = "src/a.js:2-2" ]
+  green s1
+  run --separate-stderr mr s1
+  [ "$output" = "src/a.js:2-2" ] || { echo "$status $output $stderr"; false; }
 }
 
 @test "unfix reds of two versions before the first green: the lines of both count (review r4, Codex P2)" {
@@ -672,7 +688,7 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   printf '%s\n' a1 a2 a3 Y4 a5 > src/a.js
   green s2-verify
   run --separate-stderr mr s2-verify
-  [ "$status" -eq 3 ]
+  [ "$status" -eq 2 ]
   [[ "$stderr" == *"same tree"* ]] || { echo "$stderr"; false; }
   grep -- '- \*\*Mutation\.\*\*' "$SCRIPTS/../modes/verify.md" | grep -q '"the same tree"'
 }
@@ -690,14 +706,24 @@ cal() { "$SCRIPTS/calibrate.sh" "$@" >/dev/null 2>&1; }
   [[ "$stderr" == *"modes/test.md"* ]]
 }
 
-@test "a slice whose before and after trees are the same says so, and points to a new red rather than the note (review r4)" {
+@test "a slice whose before and after trees are the same cannot be attributed: exit 2, pointing to a new red rather than the note (review r4, r5)" {
   red s1
   green s1
   run --separate-stderr mr s1
-  [ "$status" -eq 3 ]
+  [ "$status" -eq 2 ]
+  [ -z "$output" ]
   [[ "$stderr" == *"same tree"* ]] || { echo "$stderr"; false; }
   [[ "$stderr" == *"unchanged tree"*"--oracle-version"* ]] || { echo "$stderr"; false; }
   [[ "$stderr" != *"audit-note.sh"* ]] || { echo "$stderr"; false; }
+}
+
+@test "an empty refactor (its afters all on one tree): exit 3, and the note is right (review r5)" {
+  green s1
+  green s1
+  run --separate-stderr mr s1
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"empty refactor"*"audit-note.sh s1 --kind mutation --not-applicable"* ]] || { echo "$stderr"; false; }
 }
 
 # --- 8. errors ----------------------------------------------------------------------------------
@@ -936,5 +962,5 @@ b.js"
   grep -q '^VETDD_STRYKER_RE=' "$SCRIPTS/lib/common.sh"
   sec="$(sed -n '/^### Mutation/,/^## /p' "$doc" | tr '\n' ' ')"
   [[ "$sec" == *'only files Stryker mutates'*'.vue'* ]] || { echo "$sec"; false; }
-  [[ "$sec" == *'the latest one before the first passing `after` that follows a red'* ]] || { echo "$sec"; false; }
+  [[ "$sec" == *'the first red that a passing `after` follows'* ]] || { echo "$sec"; false; }
 }
