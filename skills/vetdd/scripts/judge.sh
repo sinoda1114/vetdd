@@ -46,7 +46,7 @@
 # VETDD_JUDGE_KEEP_ENV), with HOME and CODEX_HOME the private ones.
 # Exit: 0 verdict written and checked; 1 a local step failed (temporary directory, copy, write);
 #       2 usage error; 3 codex missing, unable to start with the private HOME, without the isolation
-#       flags, or not logged in, or an environment entry that cannot be cleared for it;
+#       flags, too old for the model, or not logged in, or an environment entry that cannot be cleared for it;
 #       4 the judge's input is not blind;
 #       5 the verdict failed its checks (left at <out>); 6 codex exec failed;
 #       7 check-verdict.sh could not run (the verdict is left at <out>, unchecked);
@@ -265,13 +265,18 @@ codex_private() ( clear_codex_env && exec "$codex" "$@" )
 started="$(codex_private --version < /dev/null 2>&1)" \
   || die "codex ($codex) does not start with the judge's private HOME ($(printf '%s' "$started" | tail -n 1 | vetdd_printable)); a codex started through a node version manager's shim needs HOME. Install the standalone codex, or set VETDD_CODEX_BIN to a codex that starts without HOME" 3
 # gpt-6.2 models need codex 0.169.0 or later (an older one answers model_not_found). Stop here with what to
-# do; a version that cannot be read is not refused, so exec reports it as before.
-case "$model" in
-  gpt-6.2*)
-    have="$(printf '%s\n' "$started" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
-    if [ -n "$have" ] && [ "$have" != 0.169.0 ] \
-      && [ "$(printf '%s\n%s\n' "$have" 0.169.0 | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)" = "$have" ]; then
-      die "codex $have is too old for $model, which needs codex 0.169.0 or later; update it (codex update), or pass --model / VETDD_MODEL_JUDGE with an older model" 3
+# do. The version is read from codex's own "codex-cli X.Y.Z" line only (a wrapper's warning can carry
+# other numbers); a pre-release of 0.169.0 counts as older; a version that cannot be read is not
+# refused, so exec reports it as before.
+case "$(printf '%s' "$model" | tr 'A-Z' 'a-z')" in
+  *gpt-6.2*)
+    raw="$(printf '%s\n' "$started" | sed -n 's/^codex-cli \([^ ]*\).*/\1/p' | head -n 1)"
+    core="${raw%%-*}"
+    if printf '%s\n' "$core" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+      lowest="$(printf '%s\n%s\n' "$core" 0.169.0 | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)"
+      if { [ "$core" != 0.169.0 ] && [ "$lowest" = "$core" ]; } || { [ "$core" = 0.169.0 ] && [ "$raw" != "$core" ]; }; then
+        die "codex $raw is too old for $model, which needs codex 0.169.0 or later; update it (npm install -g @openai/codex), or pass --model / VETDD_MODEL_JUDGE with an older model" 3
+      fi
     fi ;;
 esac
 # The flags (codex 0.159 and later) are checked on the codex that runs, so an older one stops here, not in exec.
