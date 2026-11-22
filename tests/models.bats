@@ -9,7 +9,7 @@ m() { "$SCRIPTS/models.sh" "$@"; }
   unset VETDD_MODEL_JUDGE
   run m judge
   [ "$status" -eq 0 ]
-  [ "$output" = "gpt-6-sol" ]
+  [ "$output" = "gpt-6.2-sol" ]
 }
 
 @test "an environment override replaces the default for a known role" {
@@ -141,7 +141,7 @@ m() { "$SCRIPTS/models.sh" "$@"; }
   for s in "$BATS_TEST_TMPDIR/models.sh" "$BATS_TEST_TMPDIR/models-link.sh"; do
     run "$s" judge
     [ "$status" -eq 0 ] || { echo "$s: $output"; false; }
-    [ "$output" = "gpt-6-sol" ]
+    [ "$output" = "gpt-6.2-sol" ]
   done
   local mine theirs
   mine="$(sed -n 's/^VETDD_ALNUM=//p' "$SCRIPTS/models.sh")"

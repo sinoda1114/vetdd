@@ -17,7 +17,7 @@ setup() {
   printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
   cat > "$BATS_TEST_TMPDIR/fake/codex" <<'FAKE'
 #!/bin/sh
-[ "$1" != --version ] || { echo "codex-cli 0.0.0-fake"; exit 0; }
+[ "$1" != --version ] || { echo "codex-cli 0.171.0"; exit 0; }
 if [ "$1" = exec ] && [ "${2:-}" = --help ]; then printf '  --ephemeral\n  --ignore-user-config\n  --ignore-rules\n'; exit 0; fi
 if [ "$1" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 out=""; prev=""

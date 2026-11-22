@@ -38,7 +38,7 @@ if [ -n "${FAKE_SHIM:-}" ] && [ ! -d "${MISE_DATA_DIR:-${HOME:-/nonexistent}/$FA
   echo "mise ERROR No version is set for shim: codex" >&2; exit 1
 fi
 # FAKE_VERSION_READS: a codex that reads stdin when asked its version (what it got is recorded).
-[ "$1" != --version ] || { [ -z "${FAKE_VERSION_READS:-}" ] || cat > "$FAKE_SEEN.version_stdin"; echo "codex-cli 0.0.0-fake"; exit 0; }
+[ "$1" != --version ] || { [ -z "${FAKE_VERSION_READS:-}" ] || cat > "$FAKE_SEEN.version_stdin"; [ -z "${FAKE_VERSION_NOISE:-}" ] || echo "$FAKE_VERSION_NOISE" >&2; echo "codex-cli ${FAKE_CODEX_VERSION:-0.171.0}"; exit 0; }
 if [ "$1" = exec ] && [ "${2:-}" = --help ]; then
   printf '%s\n' "${HOME:-unset}" > "$FAKE_SEEN.home_env.help"
   [ -n "${FAKE_OLD_CODEX:-}" ] || printf '      --ephemeral\n      --ignore-user-config\n      --ignore-rules\n'
@@ -86,7 +86,7 @@ FAKE
   chmod +x "$BATS_TEST_TMPDIR/fake/codex"
   export VETDD_CODEX_BIN="$BATS_TEST_TMPDIR/fake/codex"
   # codex runs with an allowlisted environment: the fake's own variables are kept by name.
-  export VETDD_JUDGE_KEEP_ENV="FAKE_LOGIN_ESC FAKE_VERSION_READS FAKE_ARGS FAKE_EDIT_RUBRIC FAKE_EXEC_FAIL FAKE_LOGGED_OUT FAKE_OLD_CODEX FAKE_REFRESH FAKE_REPLY FAKE_SEEN FAKE_SHIM FAKE_STDIN FAKE_USER_AUTH"
+  export VETDD_JUDGE_KEEP_ENV="FAKE_LOGIN_ESC FAKE_VERSION_READS FAKE_ARGS FAKE_CODEX_VERSION FAKE_VERSION_NOISE FAKE_EDIT_RUBRIC FAKE_EXEC_FAIL FAKE_LOGGED_OUT FAKE_OLD_CODEX FAKE_REFRESH FAKE_REPLY FAKE_SEEN FAKE_SHIM FAKE_STDIN FAKE_USER_AUTH"
   unset VETDD_MODEL_JUDGE VETDD_MODEL_JUDGE_EFFORT CODEX_HOME
   # The user's file login (isolate_git set HOME to a private directory).
   mkdir -p "$HOME/.codex" && printf '{"token":"t"}\n' > "$HOME/.codex/auth.json"
@@ -682,6 +682,46 @@ user_codex_home() {
   [ "$status" -eq 3 ] || { echo "$output"; false; }
   [[ "$output" == *--ignore-rules* ]]
   [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "a codex older than 0.169.0 stops with exit 3 before exec when the model is gpt-6.2" {
+  export FAKE_CODEX_VERSION=0.168.2
+  run judge
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
+  [[ "$output" == *0.169.0* ]]
+  [[ "$output" == *0.168.2* ]]
+  [ ! -e "$FAKE_ARGS" ]
+}
+
+@test "the codex version is read from its codex-cli line only, and a 0.169.0 pre-release counts as older" {
+  local v
+  for v in 0.169.0 0.169.1 1.0.0; do
+    FAKE_CODEX_VERSION=$v run judge
+    [ "$status" -eq 0 ] || { echo "$v: $output"; false; }
+  done
+  FAKE_CODEX_VERSION=0.169.0-alpha.3 run judge
+  [ "$status" -eq 3 ] || { echo "alpha: $output"; false; }
+  FAKE_CODEX_VERSION=0.168.2+local run judge
+  [ "$status" -eq 3 ] || { echo "build metadata, old: $output"; false; }
+  FAKE_CODEX_VERSION=0.169.0+local run judge
+  [ "$status" -eq 0 ] || { echo "build metadata, new: $output"; false; }
+  FAKE_VERSION_NOISE="node v9.9.9 is deprecated" FAKE_CODEX_VERSION=0.168.2 run judge
+  [ "$status" -eq 3 ] || { echo "noise, old: $output"; false; }
+  FAKE_VERSION_NOISE="update 0.1.0 -> 0.171.0" FAKE_CODEX_VERSION=0.171.0 run judge
+  [ "$status" -eq 0 ] || { echo "noise, new: $output"; false; }
+  FAKE_CODEX_VERSION=0.168.2 run judge --model GPT-6.2-sol
+  [ "$status" -eq 3 ] || { echo "upper case: $output"; false; }
+  FAKE_CODEX_VERSION=0.168.2 run judge --model gpt-6.25
+  [ "$status" -eq 0 ] || { echo "gpt-6.25 is not gpt-6.2: $output"; false; }
+}
+
+@test "an older codex still runs a model that does not need 0.169.0, and an unreadable version is not refused" {
+  export FAKE_CODEX_VERSION=0.168.2
+  run judge --model gpt-6.1-sol
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  export FAKE_CODEX_VERSION=dev
+  run judge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
 @test "#2 r1: a token codex refreshed during the run is written back to the user's auth.json" {
