@@ -271,10 +271,10 @@ started="$(codex_private --version < /dev/null 2>&1)" \
 case "$(printf '%s' "$model" | tr 'A-Z' 'a-z')" in
   *gpt-6.2|*gpt-6.2-*)
     raw="$(printf '%s\n' "$started" | sed -n 's/^codex-cli \([^ ]*\).*/\1/p' | head -n 1)"
-    core="${raw%%-*}"
+    noplus="${raw%%+*}"; core="${noplus%%-*}"  # +build metadata does not count; -pre-release does
     if printf '%s\n' "$core" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
       lowest="$(printf '%s\n%s\n' "$core" 0.169.0 | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)"
-      if { [ "$core" != 0.169.0 ] && [ "$lowest" = "$core" ]; } || { [ "$core" = 0.169.0 ] && [ "$raw" != "$core" ]; }; then
+      if { [ "$core" != 0.169.0 ] && [ "$lowest" = "$core" ]; } || { [ "$core" = 0.169.0 ] && [ "$noplus" != "$core" ]; }; then
         die "codex $(printf '%s' "$raw" | vetdd_printable) is too old for $model, which needs codex 0.169.0 or later; update it (npm install -g @openai/codex), or pass --model / VETDD_MODEL_JUDGE with an older model" 3
       fi
     fi ;;

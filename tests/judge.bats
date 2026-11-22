@@ -688,7 +688,8 @@ user_codex_home() {
   export FAKE_CODEX_VERSION=0.168.2
   run judge
   [ "$status" -eq 3 ] || { echo "$output"; false; }
-  [[ "$output" == *0.169.0* ]] && [[ "$output" == *0.168.2* ]]
+  [[ "$output" == *0.169.0* ]]
+  [[ "$output" == *0.168.2* ]]
   [ ! -e "$FAKE_ARGS" ]
 }
 
@@ -700,6 +701,10 @@ user_codex_home() {
   done
   FAKE_CODEX_VERSION=0.169.0-alpha.3 run judge
   [ "$status" -eq 3 ] || { echo "alpha: $output"; false; }
+  FAKE_CODEX_VERSION=0.168.2+local run judge
+  [ "$status" -eq 3 ] || { echo "build metadata, old: $output"; false; }
+  FAKE_CODEX_VERSION=0.169.0+local run judge
+  [ "$status" -eq 0 ] || { echo "build metadata, new: $output"; false; }
   FAKE_VERSION_NOISE="node v9.9.9 is deprecated" FAKE_CODEX_VERSION=0.168.2 run judge
   [ "$status" -eq 3 ] || { echo "noise, old: $output"; false; }
   FAKE_VERSION_NOISE="update 0.1.0 -> 0.171.0" FAKE_CODEX_VERSION=0.171.0 run judge
