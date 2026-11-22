@@ -14,7 +14,7 @@
 #
 # The judge is always a different family from the author (principle 6).
 # Override any role with VETDD_MODEL_<ROLE> (dashes become underscores, upper case),
-# e.g. VETDD_MODEL_JUDGE=gpt-6-astra. Invalid overrides exit 2.
+# e.g. VETDD_MODEL_JUDGE=gpt-6.2-astra. Invalid overrides exit 2.
 
 set -euo pipefail
 # The ASCII letters and digits, spelled out (#50): the same list as lib/common.sh, which models.sh
@@ -29,7 +29,7 @@ declare_default() {
     refactorer)    echo "opus" ;;
     explorer)      echo "haiku" ;;
     arena-runner)  echo "opus,fable,sonnet" ;;
-    judge)         echo "gpt-6-sol" ;;
+    judge)         echo "gpt-6.2-sol" ;;
     judge-effort)  echo "high" ;;
     *) return 1 ;;
   esac

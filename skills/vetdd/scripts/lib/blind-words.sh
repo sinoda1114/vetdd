@@ -3,7 +3,7 @@
 
 # modes/eval.md rule 1: words that reveal an evaluation to a candidate.
 VETDD_FORBIDDEN_WORDS="eval test judge experiment rubric score compare benchmark candidate arena variant baseline"
-# Model and vendor names; a word ending in "-" is a prefix (gpt-6-sol).
+# Model and vendor names; a word ending in "-" is a prefix (gpt-6.2-sol).
 VETDD_MODEL_WORDS="claude opus sonnet haiku fable codex gpt- grok anthropic openai"
 # Words that reveal a candidate's origin or the expected outcome to the judge (principle 6).
 # The judge knows it is judging, so the evaluation words above are not hidden from it.
