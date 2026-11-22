@@ -706,6 +706,8 @@ user_codex_home() {
   [ "$status" -eq 0 ] || { echo "noise, new: $output"; false; }
   FAKE_CODEX_VERSION=0.168.2 run judge --model GPT-6.2-sol
   [ "$status" -eq 3 ] || { echo "upper case: $output"; false; }
+  FAKE_CODEX_VERSION=0.168.2 run judge --model gpt-6.25
+  [ "$status" -eq 0 ] || { echo "gpt-6.25 is not gpt-6.2: $output"; false; }
 }
 
 @test "an older codex still runs a model that does not need 0.169.0, and an unreadable version is not refused" {
